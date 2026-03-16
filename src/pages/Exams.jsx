@@ -29,45 +29,49 @@ const Exams = () => {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 10, color: "#8A8FA8", fontWeight: 600, textTransform: "uppercase" }}>Stream</span>
-          <select value={selectedStream} onChange={(e) => setSelectedStream(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 12, outline: "none" }}>
-            <option value="A">Stream A</option>
-            <option value="B">Stream B</option>
-          </select>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 10, color: "#8A8FA8", fontWeight: 600, textTransform: "uppercase" }}>Exam</span>
-          <select value={examType} onChange={(e) => setExamType(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 12, outline: "none" }}>
-            <option value="cat1">CAT 1</option>
-            <option value="cat2">CAT 2</option>
-            <option value="endterm">End-Term</option>
-          </select>
-        </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <button style={{ padding: "7px 16px", borderRadius: 8, background: "#1A5F9C", color: "#fff", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-            📥 Export Template
-          </button>
-          <button style={{ padding: "7px 16px", borderRadius: 8, background: "#1B6B3A", color: "#fff", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-            ☁️ Upload Marks
-          </button>
-        </div>
+      <div 
+        className="responsive-grid"
+        style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 12, marginBottom: 18 }}
+      >
+        <select
+          value={selectedClass}
+          onChange={(e) => setSelectedClass(e.target.value)}
+          style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none" }}
+        >
+          {CLASSES.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <select
+          value={selectedSubject}
+          onChange={(e) => setSelectedSubject(e.target.value)}
+          style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none" }}
+        >
+          {availableSubjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <select
+          value={selectedExam}
+          onChange={(e) => setSelectedExam(e.target.value)}
+          style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none" }}
+        >
+          <option value="cat1">CAT 1</option>
+          <option value="cat2">CAT 2</option>
+          <option value="endterm">End Term</option>
+        </select>
+        <button style={{ padding: "8px 16px", background: "#1B6B3A", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+          💾 Save Marks
+        </button>
       </div>
 
-      <div style={{ background: "#fff", border: "1px solid #E8EAF0", borderRadius: 12, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-            <thead style={{ background: "#FAFBFC", borderBottom: "1px solid #E8EAF0" }}>
-              <tr>
-                <th style={{ padding: "12px 18px", textAlign: "left", color: "#8A8FA8", fontWeight: 700, fontSize: 10.5 }}>ADM NO.</th>
-                <th style={{ padding: "12px 18px", textAlign: "left", color: "#8A8FA8", fontWeight: 700, fontSize: 10.5 }}>STUDENT NAME</th>
-                {subjects.map(sub => (
-                  <th key={sub} style={{ padding: "12px 12px", textAlign: "center", color: "#1A1A2E", fontWeight: 700 }}>
-                    <div style={{ fontSize: 10, color: "#8A8FA8", fontWeight: 600, marginBottom: 2 }}>{sub.slice(0, 3).toUpperCase()}</div>
-                    {sub}
-                  </th>
-                ))}
-                <th style={{ padding: "12px 18px", textAlign: "center", color: "#1B6B3A", fontWeight: 800 }}>MEAN</th>
-              </tr>
-            </thead>
+      <div className="table-container" style={{ background: "#fff", border: "1px solid #E8EAF0", borderRadius: 12, overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
+          <thead style={{ background: "#FAFBFC", borderBottom: "1px solid #E8EAF0" }}>
+            <tr>
+              <th style={{ padding: "12px 18px", fontWeight: 700, color: "#8A8FA8", fontSize: 11, textTransform: "uppercase" }}>ADM No.</th>
+              <th style={{ padding: "12px 18px", fontWeight: 700, color: "#8A8FA8", fontSize: 11, textTransform: "uppercase" }}>Student Name</th>
+              <th style={{ padding: "12px 18px", fontWeight: 700, color: "#8A8FA8", fontSize: 11, textTransform: "uppercase", textAlign: "center" }}>Score (%)</th>
+              <th className="hide-mobile" style={{ padding: "12px 18px", fontWeight: 700, color: "#8A8FA8", fontSize: 11, textTransform: "uppercase", textAlign: "center" }}>Grade</th>
+              <th className="hide-mobile" style={{ padding: "12px 18px", fontWeight: 700, color: "#8A8FA8", fontSize: 11, textTransform: "uppercase" }}>Remarks</th>
+            </tr>
+          </thead>
             <tbody>
               {students.map((s, idx) => {
                 const marks = subjects.map(() => 45 + Math.floor(Math.random() * 50));

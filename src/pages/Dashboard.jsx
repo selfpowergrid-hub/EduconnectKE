@@ -107,6 +107,7 @@ const Dashboard = () => {
 
       {/* Stat Cards */}
       <div
+        className="stat-grid"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(4, 1fr)",
@@ -162,7 +163,7 @@ const Dashboard = () => {
           <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A2E" }}>
             Term 1, 2026 — Week Progress
           </div>
-          <div style={{ fontSize: 12, color: "#8A8FA8" }}>
+          <div className="hide-mobile" style={{ fontSize: 12, color: "#8A8FA8" }}>
             Week 9 of 13 · CAT 2 Due Next Week
           </div>
         </div>
@@ -182,14 +183,17 @@ const Dashboard = () => {
           ))}
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#8A8FA8", marginTop: 6 }}>
-          <span>Jan 6 (Term opens)</span>
-          <span style={{ color: "#D4A017", fontWeight: 600 }}>▲ Wk 9 — CAT 2</span>
-          <span>Apr 4 (End-term Exams)</span>
+          <span>Jan 6</span>
+          <span style={{ color: "#D4A017", fontWeight: 600 }}>▲ Wk 9</span>
+          <span>Apr 4</span>
         </div>
       </div>
 
       {/* Charts Section */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
+      <div 
+        className="responsive-grid"
+        style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}
+      >
         <div style={{ background: "#fff", border: "1px solid #E8EAF0", borderRadius: 12, padding: "14px 18px" }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A2E", marginBottom: 14 }}>
             Class Mean Scores — CAT 1
@@ -201,8 +205,8 @@ const Dashboard = () => {
 
         <div style={{ background: "#fff", border: "1px solid #E8EAF0", borderRadius: 12, padding: "14px 18px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A2E" }}>CBC Competency Distribution</div>
-            <span style={{ fontSize: 10.5, color: "#8A8FA8" }}>Grade 6 · Mathematics</span>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A2E" }}>CBC Competency</div>
+            <span style={{ fontSize: 10.5, color: "#8A8FA8" }}>Gr 6 · Math</span>
           </div>
           {competencyDist.map(item => (
             <div key={item.code} style={{ marginBottom: 12 }}>
@@ -213,21 +217,20 @@ const Dashboard = () => {
                   </span>
                   {item.label}
                 </span>
-                <span style={{ color: "#8A8FA8" }}>{item.count} learners · {item.pct}%</span>
               </div>
               <div style={{ height: 9, background: "#F0F2F5", borderRadius: 4, overflow: "hidden" }}>
                 <div style={{ width: `${item.pct}%`, height: "100%", background: item.color, borderRadius: 4 }} />
               </div>
             </div>
           ))}
-          <div style={{ marginTop: 10, padding: "8px 10px", background: "#FDEDEC", borderRadius: 8, fontSize: 11, color: "#C0392B", border: "1px solid #F1948A" }}>
-            5 learners in BE zone flagged for remedial support
-          </div>
         </div>
       </div>
 
       {/* Lower Section */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 18 }}>
+      <div 
+        className="responsive-grid"
+        style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 18 }}
+      >
         {/* Subject Champions */}
         <div style={{ background: "#fff", border: "1px solid #E8EAF0", borderRadius: 12, padding: "14px 18px" }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A2E", marginBottom: 12 }}>

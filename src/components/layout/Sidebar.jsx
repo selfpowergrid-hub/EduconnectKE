@@ -14,19 +14,20 @@ const navigation = [
   { id: "settings", label: "School Settings", icon: "⚙️" },
 ];
 
-const Sidebar = ({ activeTab, setActiveTab, isCollapsed, setIsCollapsed }) => {
+const Sidebar = ({ activeTab, setActiveTab, isCollapsed, setIsCollapsed, isMobileOpen }) => {
   return (
     <aside
+      className={`sidebar-scroll sidebar-overlay ${isMobileOpen ? 'active' : ''}`}
       style={{
         width: isCollapsed ? 240 : 60,
         background: "linear-gradient(180deg, #0F4C2A 0%, #1B6B3A 60%, #1E7A42 100%)",
         display: "flex",
         flexDirection: "column",
-        transition: "width 0.25s ease",
+        transition: "width 0.25s ease, transform 0.3s ease",
         overflow: "hidden",
         flexShrink: 0,
         position: "relative",
-        zIndex: 10,
+        zIndex: 1001,
         boxShadow: "4px 0 20px rgba(0,0,0,0.15)",
       }}
     >

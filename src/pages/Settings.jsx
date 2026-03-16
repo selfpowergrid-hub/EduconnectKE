@@ -14,32 +14,37 @@ const Settings = () => {
   ];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 20, height: "100%" }}>
+    <div 
+      className="responsive-grid"
+      style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 20, height: "100%" }}
+    >
       {/* Settings Navigation */}
-      <div style={{ background: "#fff", border: "1px solid #E8EAF0", borderRadius: 12, padding: "12px" }}>
-        {tabs.map(tab => (
-          <div
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 8,
-              cursor: "pointer",
-              marginBottom: 4,
-              fontSize: 13,
-              fontWeight: activeTab === tab.id ? 700 : 500,
-              background: activeTab === tab.id ? "#E8F5EE" : "transparent",
-              color: activeTab === tab.id ? "#1B6B3A" : "#4A4A6A",
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              transition: "all 0.2s"
-            }}
-          >
-            <span>{tab.icon}</span>
-            {tab.label}
-          </div>
-        ))}
+      <div style={{ background: "#fff", border: "1px solid #E8EAF0", borderRadius: 12, padding: "12px", height: "fit-content" }}>
+        <div className="show-mobile" style={{ fontSize: 13, fontWeight: 700, color: "#1B6B3A", marginBottom: 12, padding: "0 4px" }}>Settings Menu</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {tabs.map(tab => (
+            <div
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 8,
+                cursor: "pointer",
+                fontSize: 13,
+                fontWeight: activeTab === tab.id ? 700 : 500,
+                background: activeTab === tab.id ? "#E8F5EE" : "transparent",
+                color: activeTab === tab.id ? "#1B6B3A" : "#4A4A6A",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                transition: "all 0.2s"
+              }}
+            >
+              <span>{tab.icon}</span>
+              {tab.label}
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Settings Content */}
@@ -47,7 +52,7 @@ const Settings = () => {
         {activeTab === "school" && (
           <div>
             <h3 style={{ margin: "0 0 20px", fontSize: 16 }}>School Configuration</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+            <div className="responsive-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
               {[
                 { label: "School Name", value: "Mwanga Academy" },
                 { label: "Phone Number", value: "0712345678" },
@@ -61,7 +66,7 @@ const Settings = () => {
                   <input 
                     type="text" 
                     defaultValue={field.value} 
-                    style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13 }}
+                    style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, outline: "none" }}
                   />
                 </div>
               ))}
@@ -75,38 +80,40 @@ const Settings = () => {
         {activeTab === "fees" && (
           <div>
             <h3 style={{ margin: "0 0 20px", fontSize: 16 }}>Fee Structure Configuration</h3>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead style={{ background: "#FAFBFC", borderBottom: "1px solid #E8EAF0" }}>
-                <tr>
-                  <th style={{ padding: "12px", textAlign: "left" }}>Level</th>
-                  <th style={{ padding: "12px", textAlign: "center" }}>Tuition</th>
-                  <th style={{ padding: "12px", textAlign: "center" }}>Activity</th>
-                  <th style={{ padding: "12px", textAlign: "center" }}>Building</th>
-                  <th style={{ padding: "12px", textAlign: "center" }}>Lunch</th>
-                  <th style={{ padding: "12px", textAlign: "center" }}>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(FEE_STRUCTURE).map(([level, fees]) => (
-                  <tr key={level} style={{ borderBottom: "1px solid #F7F8FA" }}>
-                    <td style={{ padding: "12px", fontWeight: 700, textTransform: "capitalize" }}>{level.replace('_', ' ')}</td>
-                    <td style={{ padding: "12px", textAlign: "center" }}>
-                      <input type="text" defaultValue={fees.tuition} style={{ width: 60, padding: "4px", textAlign: "center", border: "1px solid #E8EAF0", borderRadius: 4 }} />
-                    </td>
-                    <td style={{ padding: "12px", textAlign: "center" }}>
-                      <input type="text" defaultValue={fees.activity} style={{ width: 60, padding: "4px", textAlign: "center", border: "1px solid #E8EAF0", borderRadius: 4 }} />
-                    </td>
-                    <td style={{ padding: "12px", textAlign: "center" }}>
-                      <input type="text" defaultValue={fees.building} style={{ width: 60, padding: "4px", textAlign: "center", border: "1px solid #E8EAF0", borderRadius: 4 }} />
-                    </td>
-                    <td style={{ padding: "12px", textAlign: "center" }}>
-                      <input type="text" defaultValue={fees.lunch} style={{ width: 60, padding: "4px", textAlign: "center", border: "1px solid #E8EAF0", borderRadius: 4 }} />
-                    </td>
-                    <td style={{ padding: "12px", textAlign: "center", fontWeight: 700, color: "#1B6B3A" }}>{fees.total}</td>
+            <div className="table-container">
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead style={{ background: "#FAFBFC", borderBottom: "1px solid #E8EAF0" }}>
+                  <tr>
+                    <th style={{ padding: "12px", textAlign: "left" }}>Level</th>
+                    <th style={{ padding: "12px", textAlign: "center" }}>Tuition</th>
+                    <th style={{ padding: "12px", textAlign: "center" }}>Activity</th>
+                    <th style={{ padding: "12px", textAlign: "center" }}>Building</th>
+                    <th style={{ padding: "12px", textAlign: "center" }}>Lunch</th>
+                    <th style={{ padding: "12px", textAlign: "center" }}>Total</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {Object.entries(FEE_STRUCTURE).map(([level, fees]) => (
+                    <tr key={level} style={{ borderBottom: "1px solid #F7F8FA" }}>
+                      <td style={{ padding: "12px", fontWeight: 700, textTransform: "capitalize" }}>{level.replace('_', ' ')}</td>
+                      <td style={{ padding: "12px", textAlign: "center" }}>
+                        <input type="text" defaultValue={fees.tuition} style={{ width: 60, padding: "4px", textAlign: "center", border: "1px solid #E8EAF0", borderRadius: 4 }} />
+                      </td>
+                      <td style={{ padding: "12px", textAlign: "center" }}>
+                        <input type="text" defaultValue={fees.activity} style={{ width: 60, padding: "4px", textAlign: "center", border: "1px solid #E8EAF0", borderRadius: 4 }} />
+                      </td>
+                      <td style={{ padding: "12px", textAlign: "center" }}>
+                        <input type="text" defaultValue={fees.building} style={{ width: 60, padding: "4px", textAlign: "center", border: "1px solid #E8EAF0", borderRadius: 4 }} />
+                      </td>
+                      <td style={{ padding: "12px", textAlign: "center" }}>
+                        <input type="text" defaultValue={fees.lunch} style={{ width: 60, padding: "4px", textAlign: "center", border: "1px solid #E8EAF0", borderRadius: 4 }} />
+                      </td>
+                      <td style={{ padding: "12px", textAlign: "center", fontWeight: 700, color: "#1B6B3A" }}>{fees.total}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 

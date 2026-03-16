@@ -12,6 +12,7 @@ import Settings from './pages/Settings';
 function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const navigation = [
     { id: "dashboard", label: "Dashboard", component: Dashboard },
@@ -26,6 +27,15 @@ function App() {
   const activeNavLink = navigation.find(n => n.id === activeTab) || navigation[0];
   const ActivePage = activeNavLink.component;
 
+  const toggleMobileMenu = () => {
+    setIsMobileMenuOpen(!isMobileMenuOpen);
+  };
+
+  const handlePageChange = (tabId) => {
+    setActiveTab(tabId);
+    setIsMobileMenuOpen(false); // Close mobile menu when page changes
+  };
+
   return (
     <div 
       style={{ 
@@ -36,15 +46,25 @@ function App() {
         overflow: "hidden" 
       }}
     >
+      {/* Mobile Backdrop */}
+      <div 
+        className={`overlay-backdrop ${isMobileMenuOpen ? 'active' : ''}`}
+        onClick={() => setIsMobileMenuOpen(false)}
+      />
+
       <Sidebar 
         activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
+        setActiveTab={handlePageChange} 
         isCollapsed={isSidebarOpen} 
-        setIsCollapsed={setIsSidebarOpen} 
+        setIsCollapsed={setIsSidebarOpen}
+        isMobileOpen={isMobileMenuOpen}
       />
       
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <Header activeTabLabel={activeNavLink.label} />
+        <Header 
+          activeTabLabel={activeNavLink.label} 
+          toggleMobileMenu={toggleMobileMenu}
+        />
         
         <main 
           style={{ 
@@ -53,7 +73,7 @@ function App() {
             padding: "20px 24px",
             scrollBehavior: "smooth"
           }}
-          className="main-scroll"
+          className="main-scroll main-content"
         >
           <ActivePage />
         </main>
