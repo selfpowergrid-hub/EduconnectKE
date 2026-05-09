@@ -4,22 +4,27 @@ export const CURRENT_YEAR = "2026";
 export const PAYBILL_NO = "123456";
 
 export const CLASSES = [
-  { id: "pg", name: "Playgroup", age: "3-4 yrs", color: "#E67E22", bg: "#FEF0E6" },
-  { id: "pp1", name: "PP1", age: "4-5 yrs", color: "#E67E22", bg: "#FEF0E6" },
-  { id: "pp2", name: "PP2", age: "5-6 yrs", color: "#E67E22", bg: "#FEF0E6" },
-  { id: "g1", name: "Grade 1", age: "6-7 yrs", color: "#1B6B3A", bg: "#E8F5EE" },
-  { id: "g2", name: "Grade 2", age: "7-8 yrs", color: "#1B6B3A", bg: "#E8F5EE" },
-  { id: "g3", name: "Grade 3", age: "8-9 yrs", color: "#1B6B3A", bg: "#E8F5EE" },
-  { id: "g4", name: "Grade 4", age: "9-10 yrs", color: "#1B6B3A", bg: "#E8F5EE" },
-  { id: "g5", name: "Grade 5", age: "10-11 yrs", color: "#1B6B3A", bg: "#E8F5EE" },
-  { id: "g6", name: "Grade 6", age: "11-12 yrs", color: "#1B6B3A", bg: "#E8F5EE" },
-  { id: "g7", name: "Grade 7", age: "12-13 yrs", color: "#1A5F9C", bg: "#EBF3FB" },
-  { id: "g8", name: "Grade 8", age: "13-14 yrs", color: "#1A5F9C", bg: "#EBF3FB" },
-  { id: "g9", name: "Grade 9", age: "14-15 yrs", color: "#1A5F9C", bg: "#EBF3FB" },
-  { id: "g10", name: "Grade 10", age: "15-16 yrs", color: "#6C3483", bg: "#F5EEF8" },
-  { id: "g11", name: "Grade 11", age: "16-17 yrs", color: "#6C3483", bg: "#F5EEF8" },
-  { id: "g12", name: "Grade 12", age: "17-18 yrs", color: "#6C3483", bg: "#F5EEF8" },
+  { id: "pp1", name: "PP1", age: "4-5 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "pp2", name: "PP2", age: "5-6 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "p1", name: "P1", age: "6-7 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "p2", name: "P2", age: "7-8 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "p3", name: "P3", age: "8-9 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "p4", name: "P4", age: "9-10 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "p5", name: "P5", age: "10-11 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "p6", name: "P6", age: "11-12 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "p7", name: "P7", age: "12-13 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "p8", name: "P8", age: "13-14 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "g7", name: "Grade 7", age: "12-13 yrs", color: "#1A5F9C", bg: "#EBF3FB", type: "JSS" },
+  { id: "g8", name: "Grade 8", age: "13-14 yrs", color: "#1A5F9C", bg: "#EBF3FB", type: "JSS" },
+  { id: "g9", name: "Grade 9", age: "14-15 yrs", color: "#1A5F9C", bg: "#EBF3FB", type: "JSS" },
+  { id: "g10", name: "Grade 10", age: "15-16 yrs", color: "#6C3483", bg: "#F5EEF8", type: "SS" },
+  { id: "g11", name: "Grade 11", age: "16-17 yrs", color: "#6C3483", bg: "#F5EEF8", type: "SS" },
+  { id: "g12", name: "Grade 12", age: "17-18 yrs", color: "#6C3483", bg: "#F5EEF8", type: "SS" },
 ];
+
+export const getClassesByType = (type) => {
+  return CLASSES.filter(c => c.type === type);
+};
 
 export const SUBJECTS_BY_LEVEL = {
   ecde: [
@@ -80,10 +85,14 @@ export const SUBJECTS_BY_LEVEL = {
 };
 
 export const COMPETENCY_GRADES = [
-  { code: "EE", label: "Exceeds Expectation", min: 75, color: "#1B6B3A", bg: "#E8F5EE" },
-  { code: "ME", label: "Meets Expectation", min: 50, color: "#1A5F9C", bg: "#EBF3FB" },
-  { code: "AE", label: "Approaching Expectation", min: 25, color: "#D35400", bg: "#FEF0E6" },
-  { code: "BE", label: "Below Expectation", min: 0, color: "#C0392B", bg: "#FDEDEC" },
+  { code: "EE1", label: "Exceeding Expectations (Distinction)", min: 90, color: "#1B6B3A", bg: "#E8F5EE" },
+  { code: "EE2", label: "Exceeding Expectations (Credit)", min: 80, color: "#1B6B3A", bg: "#E8F5EE" },
+  { code: "ME1", label: "Meeting Expectations (Very Good)", min: 70, color: "#1A5F9C", bg: "#EBF3FB" },
+  { code: "ME2", label: "Meeting Expectations (Good)", min: 60, color: "#1A5F9C", bg: "#EBF3FB" },
+  { code: "AE1", label: "Approaching Expectations (Satisfactory)", min: 50, color: "#D35400", bg: "#FEF0E6" },
+  { code: "AE2", label: "Approaching Expectations (Fair)", min: 40, color: "#D35400", bg: "#FEF0E6" },
+  { code: "BE1", label: "Below Expectations (Weak)", min: 20, color: "#C0392B", bg: "#FDEDEC" },
+  { code: "BE2", label: "Below Expectations (Very Weak)", min: 0, color: "#C0392B", bg: "#FDEDEC" },
 ];
 
 export const ACADEMIC_GRADES = [
@@ -121,8 +130,8 @@ function generateStudent(gradeId, stream) {
   const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
   const id = nextId++;
   
-  const baseFees = gradeId.startsWith("g1") || gradeId.startsWith("g2") ? 45000 :
-                   gradeId.startsWith("g") ? (parseInt(gradeId.replace("g", "")) >= 10 ? 55000 : 35000) :
+  const baseFees = gradeId.startsWith("g1") && gradeId.length > 2 ? 55000 : // g10, g11, g12
+                   gradeId.startsWith("g") ? 35000 : // g7, g8, g9
                    gradeId.startsWith("pp") ? 25000 : 20000;
                    
   const paidFactor = Math.random();
@@ -149,23 +158,33 @@ function generateStudent(gradeId, stream) {
 }
 
 export const STUDENTS = [];
-const activeGrades = ["g6", "g7", "g8", "g9", "g10", "g11", "g12", "g1", "g2", "g3", "g4", "g5"];
+const activeGrades = CLASSES.map(c => c.id);
 
 activeGrades.forEach(grade => {
   ["A", "B"].forEach(stream => {
-    const count = 35 + Math.floor(Math.random() * 10);
+    const count = 25 + Math.floor(Math.random() * 10);
     for (let i = 0; i < count; i++) {
       STUDENTS.push(generateStudent(grade, stream));
     }
   });
 });
 
-["pg", "pp1", "pp2"].forEach(grade => {
-  const count = 20 + Math.floor(Math.random() * 10);
-  for (let i = 0; i < count; i++) {
-    STUDENTS.push(generateStudent(grade, "A"));
-  }
-});
+export const STAFF_ROLES = [
+  "School Principal",
+  "Deputy Principal",
+  "Senior Teacher",
+  "Class Teacher",
+  "Subject Teacher",
+  "Librarian",
+  "School Bursar",
+  "Secretary",
+  "Lab Technician",
+  "School Nurse",
+  "Security Officer",
+  "Cook",
+  "Groundsman/Cleaner",
+  "Storekeeper"
+];
 
 export const STAFF = [
   {
@@ -177,6 +196,7 @@ export const STAFF = [
     phone: "0712345678",
     classes: ["g9A", "g10A", "g11A"],
     type: "Teaching",
+    role: "School Principal",
   },
   {
     id: 2,
@@ -187,6 +207,7 @@ export const STAFF = [
     phone: "0722345678",
     classes: ["g9B", "g10B", "g12A"],
     type: "Teaching",
+    role: "Deputy Principal",
   },
   {
     id: 3,
@@ -197,6 +218,7 @@ export const STAFF = [
     phone: "0733345678",
     classes: ["g10A", "g11A", "g12A"],
     type: "Teaching",
+    role: "Senior Teacher",
   },
   {
     id: 4,
@@ -207,6 +229,7 @@ export const STAFF = [
     phone: "0744345678",
     classes: ["g10B", "g11B", "g12B"],
     type: "Teaching",
+    role: "Class Teacher",
   },
   {
     id: 5,
@@ -217,6 +240,7 @@ export const STAFF = [
     phone: "0755345678",
     classes: ["g10A", "g11B", "g12A"],
     type: "Teaching",
+    role: "Subject Teacher",
   },
   {
     id: 6,
@@ -227,6 +251,7 @@ export const STAFF = [
     phone: "0766345678",
     classes: ["g7A", "g8A", "g9A"],
     type: "Teaching",
+    role: "Subject Teacher",
   },
   {
     id: 7,

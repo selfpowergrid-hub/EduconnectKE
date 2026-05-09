@@ -1,22 +1,35 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400..800;1,400..800&family=Inter:wght@100..900&display=swap');
 
 :root {
-  font-family: 'DM Sans', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  /* DESIGN.md Color Palette (Claude Inspired) */
+  --canvas: #f5f2eb;
+  --ink: #2a2421;
+  --primary: #cc785c;
+  --primary-hover: #b5644a;
+  --hairline: #e6dfd8;
+  --white: #ffffff;
+  --gray-subtle: #8a8fa8;
+  
+  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color-scheme: light;
-  background-color: #F0F2F5;
+  color: var(--ink);
+  background-color: var(--canvas);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+h1, h2, h3, h4, .serif {
+  font-family: 'EB Garamond', serif;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
   min-height: 100vh;
-  overflow: hidden;
+  background-color: var(--canvas);
 }
 
 #root {
@@ -27,7 +40,7 @@ body {
 /* Custom Scrollbars */
 .main-scroll::-webkit-scrollbar,
 .sidebar-scroll::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
 }
 
 .main-scroll::-webkit-scrollbar-track,
@@ -36,17 +49,54 @@ body {
 }
 
 .main-scroll::-webkit-scrollbar-thumb {
-  background: #D1D5DB;
+  background: var(--hairline);
   border-radius: 10px;
 }
 
 .sidebar-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(20, 20, 19, 0.1);
   border-radius: 10px;
 }
 
-.main-scroll::-webkit-scrollbar-thumb:hover {
-  background: #9CA3AF;
+/* Design MD Card Style */
+.d-card {
+  background: var(--white);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+}
+
+/* Design MD Button */
+.d-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 20px;
+  background: var(--primary);
+  color: var(--white);
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.d-button:hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+}
+
+.d-button-outline {
+  background: transparent;
+  border: 1px solid var(--hairline);
+  color: var(--ink);
+}
+
+.d-button-outline:hover {
+  background: rgba(20, 20, 19, 0.03);
+  border-color: var(--gray-subtle);
 }
 
 /* Mobile responsiveness utilities */
@@ -72,15 +122,29 @@ body {
     gap: 10px !important;
   }
 
+  .grid-3 {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+
+  .grid-2 {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  .grid-1 {
+    grid-template-columns: 1fr !important;
+  }
+
   .sidebar-overlay {
     position: fixed !important;
     top: 0;
     left: 0;
-    width: 260px !important;
+    width: 280px !important;
     height: 100vh;
-    transform: translateX(-100%);
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    z-index: 1000 !important;
+    transform: translateX(-110%);
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    z-index: 2000 !important;
+    background: var(--canvas) !important;
+    border-right: 1px solid var(--hairline) !important;
   }
 
   .sidebar-overlay.active {
@@ -93,19 +157,24 @@ body {
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(2px);
-    z-index: 999;
-    display: none;
+    background: rgba(20, 20, 19, 0.2);
+    backdrop-filter: blur(4px);
+    z-index: 1999;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
   }
 
   .overlay-backdrop.active {
-    display: block;
+    opacity: 1;
+    visibility: visible;
   }
   
   .table-container {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    margin: 0 -16px;
+    padding: 0 16px;
   }
 }
 
@@ -120,9 +189,20 @@ table {
 }
 
 /* Input resets */
-input:focus, select:focus {
-  border-color: #1B6B3A !important;
-  box-shadow: 0 0 0 2px rgba(27, 107, 58, 0.1);
+input, select, textarea {
+  border: 1px solid var(--hairline);
+  background: var(--white);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 3px rgba(204, 120, 92, 0.1);
 }
 
 /* Accessibility */
@@ -136,4 +216,14 @@ input:focus, select:focus {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border-width: 0;
+}
+
+/* Spinner Animation */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.spinner {
+  animation: spin 0.8s linear infinite;
 }

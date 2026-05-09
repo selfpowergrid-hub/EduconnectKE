@@ -1,183 +1,425 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { CLASSES, FEE_STRUCTURE, ACADEMIC_GRADES } from '../data/mockData';
+import { supabase } from '../lib/supabase';
 
-const Settings = () => {
-  const [activeTab, setActiveTab] = useState("school");
+const Settings = ({ schoolConfig, initialTab }) => {
+  const [activeTab, setActiveTab] = useState(initialTab || "school");
+  const [isLoading, setIsLoading] = useState(false);
+
+  // School Information state
+  const [schoolInfo, setSchoolInfo] = useState({
+    motto: "",
+    vision: "",
+    mission: "",
+    principal_name: "",
+    website: "",
+    logo_url: ""
+  });
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (schoolConfig?.id) {
+      fetchSchoolInfo();
+      fetchStreams();
+      fetchDorms();
+      fetchSubjects();
+      fetchGradingSystems();
+    }
+  }, [schoolConfig?.id]);
+
+  const fetchSubjects = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('subjects')
+        .select('*')
+        .eq('school_id', schoolConfig.id);
+      if (error) throw error;
+      
+      // Re-structure data into the subjectsByGrade format
+      const subjectsMap = {};
+      data.forEach(sub => {
+        if (!subjectsMap[sub.level_category]) subjectsMap[sub.level_category] = [];
+        subjectsMap[sub.level_category].push({
+          id: sub.id,
+          name: sub.name,
+          code: sub.code,
+          type: sub.type
+        });
+      });
+      setSubjectsByGrade(prev => ({ ...prev, ...subjectsMap }));
+    } catch (err) {
+      console.error('Error fetching subjects:', err);
+    }
+  };
+
+  const fetchGradingSystems = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('grading_systems')
+        .select('*')
+        .eq('school_id', schoolConfig.id);
+      if (error) throw error;
+      
+      const pp_g3 = data.filter(g => g.level_group === "pp_g3");
+      const g4_g6 = data.filter(g => g.level_group === "g4_g6");
+      const g7_g9 = data.filter(g => g.level_group === "g7_g9");
+      const g10_g12 = data.filter(g => g.level_group === "g10_g12");
+      
+      if (pp_g3.length) setGradesPPG3(pp_g3);
+      if (g4_g6.length) setGradesG4G6(g4_g6);
+      if (g7_g9.length) setGradesG7G9(g7_g9);
+      if (g10_g12.length) setGradesG10G12(g10_g12);
+    } catch (err) {
+      console.error('Error fetching grading:', err);
+    }
+  };
+
+  const fetchSchoolInfo = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('school_information')
+        .select('*')
+        .eq('school_id', schoolConfig.id)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error; // PGRST116 is "no rows found"
+      if (data) setSchoolInfo(data);
+    } catch (err) {
+      console.error('Error fetching school info:', err);
+    }
+  };
+
   const [schoolLevels, setSchoolLevels] = useState({
-    primary: true,
-    junior: false,
-    senior: false
+    primary: schoolConfig?.schoolType === "Primary",
+    junior: schoolConfig?.schoolType === "JSS",
+    senior: schoolConfig?.schoolType === "SS"
   });
   const [logoPreview, setLogoPreview] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
 
   // Streams & Dorms state
-  const [streams, setStreams] = useState([
-    { id: 1, name: "East", capacity: 45 },
-    { id: 2, name: "West", capacity: 45 },
-    { id: 3, name: "North", capacity: 40 },
-  ]);
+  const [streams, setStreams] = useState([]);
   const [newStreamName, setNewStreamName] = useState("");
   const [newStreamCapacity, setNewStreamCapacity] = useState("");
 
-  const [dorms, setDorms] = useState([
-    { id: 1, name: "Elgon House", capacity: 60, gender: "Boys" },
-    { id: 2, name: "Kenya House", capacity: 60, gender: "Girls" },
-    { id: 3, name: "Nyayo House", capacity: 50, gender: "Mixed" },
-  ]);
+  const [dorms, setDorms] = useState([]);
   const [newDormName, setNewDormName] = useState("");
   const [newDormCapacity, setNewDormCapacity] = useState("");
   const [newDormGender, setNewDormGender] = useState("Mixed");
   const [streamsExpanded, setStreamsExpanded] = useState(false);
   const [dormsExpanded, setDormsExpanded] = useState(false);
 
+  const fetchStreams = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('streams')
+        .select('*')
+        .eq('school_id', schoolConfig.id)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      setStreams(data || []);
+    } catch (err) {
+      console.error('Error fetching streams:', err);
+    }
+  };
+
+  const fetchDorms = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('dorms')
+        .select('*')
+        .eq('school_id', schoolConfig.id)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      setDorms(data || []);
+    } catch (err) {
+      console.error('Error fetching dorms:', err);
+    }
+  };
+
+  const handleAddStream = async () => {
+    if (!newStreamName.trim()) return;
+    try {
+      const { data, error } = await supabase
+        .from('streams')
+        .insert([{
+          school_id: schoolConfig.id,
+          name: newStreamName,
+          capacity: parseInt(newStreamCapacity) || 45
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+      setStreams(prev => [...prev, data]);
+      setNewStreamName("");
+      setNewStreamCapacity("");
+    } catch (err) {
+      alert('Failed to add stream: ' + err.message);
+    }
+  };
+
+  const handleAddDorm = async () => {
+    if (!newDormName.trim()) return;
+    try {
+      const { data, error } = await supabase
+        .from('dorms')
+        .insert([{
+          school_id: schoolConfig.id,
+          name: newDormName,
+          capacity: parseInt(newDormCapacity) || 60,
+          gender: newDormGender
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+      setDorms(prev => [...prev, data]);
+      setNewDormName("");
+      setNewDormCapacity("");
+      setNewDormGender("Mixed");
+    } catch (err) {
+      alert('Failed to add dorm: ' + err.message);
+    }
+  };
+
+  const handleDeleteStream = async (id) => {
+    if (!confirm('Are you sure you want to delete this stream?')) return;
+    try {
+      const { error } = await supabase
+        .from('streams')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      setStreams(prev => prev.filter(s => s.id !== id));
+    } catch (err) {
+      alert('Failed to delete stream: ' + err.message);
+    }
+  };
+
+  const handleDeleteDorm = async (id) => {
+    if (!confirm('Are you sure you want to delete this dorm?')) return;
+    try {
+      const { error } = await supabase
+        .from('dorms')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      setDorms(prev => prev.filter(d => d.id !== id));
+    } catch (err) {
+      alert('Failed to delete dorm: ' + err.message);
+    }
+  };
+
+  const handleSaveSchoolInfo = async () => {
+    setIsLoading(true);
+    try {
+      const payload = {
+        school_id: schoolConfig.id,
+        ...schoolInfo
+      };
+
+      const { error } = await supabase
+        .from('school_information')
+        .upsert(payload, { onConflict: 'school_id' });
+
+      if (error) throw error;
+      alert('School information saved successfully!');
+    } catch (err) {
+      alert('Failed to save school info: ' + err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Grading System state
   const [gradingLevel, setGradingLevel] = useState("pp_g3");
   const [gradingExpanded, setGradingExpanded] = useState(false);
 
-  const [gradesPPG3, setGradesPPG3] = useState([
-    { id: 1, grade: "EE", label: "Exceeding Expectations", description: "Learner surpasses the expected competency level" },
-    { id: 2, grade: "ME", label: "Meeting Expectations", description: "Learner has achieved the expected competency" },
-    { id: 3, grade: "AE", label: "Approaching Expectations", description: "Learner is progressing towards competency" },
-    { id: 4, grade: "BE", label: "Below Expectations", description: "Learner needs significant support" },
-  ]);
-  const [gradesG4G6, setGradesG4G6] = useState([
-    { id: 1, grade: "EE", label: "Exceeding Expectations", min: 76, max: 100 },
-    { id: 2, grade: "ME", label: "Meeting Expectations", min: 51, max: 75 },
-    { id: 3, grade: "AE", label: "Approaching Expectations", min: 26, max: 50 },
-    { id: 4, grade: "BE", label: "Below Expectations", min: 1, max: 25 },
-  ]);
-  const [gradesG7G9, setGradesG7G9] = useState([
-    { id: 1, grade: "EE1", label: "Exceeding Expectations (Distinction)", min: 90, max: 100, points: 8 },
-    { id: 2, grade: "EE2", label: "Exceeding Expectations (Credit)", min: 80, max: 89, points: 7 },
-    { id: 3, grade: "ME1", label: "Meeting Expectations (Very Good)", min: 70, max: 79, points: 6 },
-    { id: 4, grade: "ME2", label: "Meeting Expectations (Good)", min: 60, max: 69, points: 5 },
-    { id: 5, grade: "AE1", label: "Approaching Expectations (Satisfactory)", min: 50, max: 59, points: 4 },
-    { id: 6, grade: "AE2", label: "Approaching Expectations (Developing)", min: 30, max: 49, points: 3 },
-    { id: 7, grade: "BE1", label: "Below Expectations (Partially Achieved)", min: 11, max: 29, points: 2 },
-    { id: 8, grade: "BE2", label: "Below Expectations (Not Achieved)", min: 1, max: 10, points: 1 },
-  ]);
-  const [gradesG10G12, setGradesG10G12] = useState([
-    { id: 1, grade: "A", min: 80, max: 100, points: 12 },
-    { id: 2, grade: "A-", min: 75, max: 79, points: 11 },
-    { id: 3, grade: "B+", min: 70, max: 74, points: 10 },
-    { id: 4, grade: "B", min: 65, max: 69, points: 9 },
-    { id: 5, grade: "B-", min: 60, max: 64, points: 8 },
-    { id: 6, grade: "C+", min: 55, max: 59, points: 7 },
-    { id: 7, grade: "C", min: 50, max: 54, points: 6 },
-    { id: 8, grade: "C-", min: 45, max: 49, points: 5 },
-    { id: 9, grade: "D+", min: 40, max: 44, points: 4 },
-    { id: 10, grade: "D", min: 35, max: 39, points: 3 },
-    { id: 11, grade: "D-", min: 30, max: 34, points: 2 },
-    { id: 12, grade: "E", min: 0, max: 29, points: 1 },
-  ]);
+  const [gradesPPG3, setGradesPPG3] = useState([]);
+  const [gradesG4G6, setGradesG4G6] = useState([]);
+  const [gradesG7G9, setGradesG7G9] = useState([]);
+  const [gradesG10G12, setGradesG10G12] = useState([]);
 
   const [newGrade, setNewGrade] = useState({ grade: "", label: "", description: "", min: "", max: "", points: "" });
 
-  const handleAddGrade = () => {
+  const handleAddGrade = async () => {
     if (!newGrade.grade.trim()) return;
-    const gradeObj = { id: Date.now(), ...newGrade };
-    
-    if (gradingLevel === "pp_g3") setGradesPPG3(prev => [...prev, gradeObj]);
-    if (gradingLevel === "g4_g6") setGradesG4G6(prev => [...prev, gradeObj]);
-    if (gradingLevel === "g7_g9") setGradesG7G9(prev => [...prev, gradeObj]);
-    if (gradingLevel === "g10_g12") setGradesG10G12(prev => [...prev, gradeObj]);
-    
-    setNewGrade({ grade: "", label: "", description: "", min: "", max: "", points: "" });
+    try {
+      const payload = {
+        school_id: schoolConfig.id,
+        level_group: gradingLevel,
+        grade: newGrade.grade,
+        label: newGrade.label,
+        min_score: parseInt(newGrade.min) || 0,
+        max_score: parseInt(newGrade.max) || 0,
+        points: parseInt(newGrade.points) || 0,
+        remarks: newGrade.description
+      };
+
+      const { data, error } = await supabase
+        .from('grading_systems')
+        .insert([payload])
+        .select()
+        .single();
+
+      if (error) throw error;
+      
+      if (gradingLevel === "pp_g3") setGradesPPG3(prev => [...prev, data]);
+      if (gradingLevel === "g4_g6") setGradesG4G6(prev => [...prev, data]);
+      if (gradingLevel === "g7_g9") setGradesG7G9(prev => [...prev, data]);
+      if (gradingLevel === "g10_g12") setGradesG10G12(prev => [...prev, data]);
+      
+      setNewGrade({ grade: "", label: "", description: "", min: "", max: "", points: "" });
+    } catch (err) {
+      alert('Failed to add grade: ' + err.message);
+    }
   };
 
-  const removeGrade = (id, level) => {
-    if (level === "pp_g3") setGradesPPG3(prev => prev.filter(g => g.id !== id));
-    if (level === "g4_g6") setGradesG4G6(prev => prev.filter(g => g.id !== id));
-    if (level === "g7_g9") setGradesG7G9(prev => prev.filter(g => g.id !== id));
-    if (level === "g10_g12") setGradesG10G12(prev => prev.filter(g => g.id !== id));
+  const removeGrade = async (id, level) => {
+    try {
+      const { error } = await supabase
+        .from('grading_systems')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+
+      if (level === "pp_g3") setGradesPPG3(prev => prev.filter(g => g.id !== id));
+      if (level === "g4_g6") setGradesG4G6(prev => prev.filter(g => g.id !== id));
+      if (level === "g7_g9") setGradesG7G9(prev => prev.filter(g => g.id !== id));
+      if (level === "g10_g12") setGradesG10G12(prev => prev.filter(g => g.id !== id));
+    } catch (err) {
+      alert('Failed to remove grade: ' + err.message);
+    }
   };
 
   const getBadgeColors = (grade) => {
     const g = grade.toUpperCase();
-    if (g.startsWith("EE") || g.startsWith("A") || g === "B+") return { bg: "#E8F5EE", text: "#1B6B3A" };
-    if (g.startsWith("ME") || g === "B" || g === "B-" || g === "C+") return { bg: "#EBF3FB", text: "#1A5F9C" };
+    if (g.startsWith("EE") || g.startsWith("A") || g === "B+") return { bg: "#E8F5EE", text: "#cc785c" };
+    if (g.startsWith("ME") || g === "B" || g === "B-" || g === "C+") return { bg: "#f5f2eb", text: "#2a2421" };
     if (g.startsWith("AE") || g === "C" || g === "C-" || g === "D+") return { bg: "#FEF0E6", text: "#D35400" };
     return { bg: "#FCE8E8", text: "#C0392B" }; // BE, D, D-, E
   };
 
   // Subjects state
   const [subjectLevel, setSubjectLevel] = useState("jss");
+  const [selectedSubjectGrade, setSelectedSubjectGrade] = useState("");
   const [subjectsExpanded, setSubjectsExpanded] = useState(false);
 
-  const [subjectsPP, setSubjectsPP] = useState([
-    { id: 1, name: "Language Activities", code: "LANG", type: "Core" },
-    { id: 2, name: "Mathematical Activities", code: "MATH", type: "Core" },
-    { id: 3, name: "Environmental Activities", code: "ENV", type: "Core" },
-    { id: 4, name: "Psychomotor & Creative Activities", code: "PCA", type: "Core" },
-    { id: 5, name: "Religious Education", code: "RE", type: "Core" },
-  ]);
+  // Initialize subjects per grade
+  const initialSubjectsByGrade = {};
+  CLASSES.forEach(c => {
+    if (c.id.startsWith("pp")) initialSubjectsByGrade[c.id] = [
+      { id: 1, name: "Language Activities", code: "LANG", type: "Core" },
+      { id: 2, name: "Mathematical Activities", code: "MATH", type: "Core" },
+      { id: 3, name: "Environmental Activities", code: "ENV", type: "Core" },
+      { id: 4, name: "Psychomotor & Creative Activities", code: "PCA", type: "Core" },
+      { id: 5, name: "Religious Education", code: "RE", type: "Core" },
+    ];
+    else if (["p1", "p2", "p3"].includes(c.id)) initialSubjectsByGrade[c.id] = [
+      { id: 1, name: "English", code: "ENG", type: "Core" },
+      { id: 2, name: "Kiswahili / KSL", code: "KIS", type: "Core" },
+      { id: 3, name: "Mathematical Activities", code: "MATH", type: "Core" },
+      { id: 4, name: "Environmental Activities", code: "ENV", type: "Core" },
+      { id: 5, name: "Movement & Creative Activities", code: "MCA", type: "Core" },
+      { id: 6, name: "Religious Education", code: "RE", type: "Core" },
+      { id: 7, name: "Indigenous Language", code: "IND", type: "Optional" },
+    ];
+    else if (["p4", "p5", "p6", "p7", "p8"].includes(c.id)) initialSubjectsByGrade[c.id] = [
+      { id: 1, name: "English", code: "ENG", type: "Core" },
+      { id: 2, name: "Kiswahili / KSL", code: "KIS", type: "Core" },
+      { id: 3, name: "Mathematics", code: "MATH", type: "Core" },
+      { id: 4, name: "Science & Technology", code: "SCT", type: "Core" },
+      { id: 5, name: "Agriculture & Nutrition", code: "AGN", type: "Core" },
+      { id: 6, name: "Social Studies", code: "SST", type: "Core" },
+      { id: 7, name: "Religious Education", code: "RE", type: "Core" },
+      { id: 8, name: "Creative Arts & Sports", code: "CAS", type: "Core" },
+    ];
+    else if (c.type === "JSS") initialSubjectsByGrade[c.id] = [
+      { id: 1, name: "English", code: "ENG", type: "Core" },
+      { id: 2, name: "Kiswahili / KSL", code: "KIS", type: "Core" },
+      { id: 3, name: "Mathematics", code: "MATH", type: "Core" },
+      { id: 4, name: "Integrated Science", code: "ISC", type: "Core" },
+      { id: 5, name: "Health Education", code: "HE", type: "Core" },
+      { id: 6, name: "Pre-Tech & Pre-Career Education", code: "PTE", type: "Core" },
+      { id: 7, name: "Social Studies", code: "SST", type: "Core" },
+      { id: 8, name: "Religious Education", code: "RE", type: "Core" },
+      { id: 9, name: "Business Studies", code: "BST", type: "Core" },
+    ];
+    else if (c.type === "SS") initialSubjectsByGrade[c.id] = [
+      { id: 1, name: "English", code: "ENG", type: "Compulsory" },
+      { id: 2, name: "Kiswahili / KSL", code: "KIS", type: "Compulsory" },
+      { id: 3, name: "Core Mathematics", code: "CMATH", type: "Compulsory" },
+      { id: 4, name: "Essential Mathematics", code: "EMATH", type: "Compulsory" },
+      { id: 5, name: "Community Service Learning", code: "CSL", type: "Compulsory" },
+      { id: 6, name: "Physical Education (PE)", code: "PE", type: "Elective" },
+      { id: 7, name: "ICT", code: "ICT", type: "Elective" },
+    ];
+  });
 
-  const [subjectsLowerPri, setSubjectsLowerPri] = useState([
-    { id: 1, name: "English", code: "ENG", type: "Core" },
-    { id: 2, name: "Kiswahili / KSL", code: "KIS", type: "Core" },
-    { id: 3, name: "Mathematical Activities", code: "MATH", type: "Core" },
-    { id: 4, name: "Environmental Activities", code: "ENV", type: "Core" },
-    { id: 5, name: "Movement & Creative Activities", code: "MCA", type: "Core" },
-    { id: 6, name: "Religious Education", code: "RE", type: "Core" },
-    { id: 7, name: "Indigenous Language", code: "IND", type: "Optional" },
-  ]);
-
-  const [subjectsUpperPri, setSubjectsUpperPri] = useState([
-    { id: 1, name: "English", code: "ENG", type: "Core" },
-    { id: 2, name: "Kiswahili / KSL", code: "KIS", type: "Core" },
-    { id: 3, name: "Mathematics", code: "MATH", type: "Core" },
-    { id: 4, name: "Science & Technology", code: "SCT", type: "Core" },
-    { id: 5, name: "Agriculture & Nutrition", code: "AGN", type: "Core" },
-    { id: 6, name: "Social Studies", code: "SST", type: "Core" },
-    { id: 7, name: "Religious Education", code: "RE", type: "Core" },
-    { id: 8, name: "Creative Arts & Sports", code: "CAS", type: "Core" },
-  ]);
-
-  const [subjectsJSS, setSubjectsJSS] = useState([
-    { id: 1, name: "English", code: "ENG", type: "Core" },
-    { id: 2, name: "Kiswahili / KSL", code: "KIS", type: "Core" },
-    { id: 3, name: "Mathematics", code: "MATH", type: "Core" },
-    { id: 4, name: "Integrated Science", code: "ISC", type: "Core" },
-    { id: 5, name: "Health Education", code: "HE", type: "Core" },
-    { id: 6, name: "Pre-Tech & Pre-Career Education", code: "PTE", type: "Core" },
-    { id: 7, name: "Social Studies", code: "SST", type: "Core" },
-    { id: 8, name: "Religious Education", code: "RE", type: "Core" },
-    { id: 9, name: "Business Studies", code: "BST", type: "Core" },
-  ]);
-
-  const [subjectsSSS, setSubjectsSSS] = useState([
-    { id: 1, name: "English", code: "ENG", type: "Compulsory" },
-    { id: 2, name: "Kiswahili / KSL", code: "KIS", type: "Compulsory" },
-    { id: 3, name: "Core Mathematics", code: "CMATH", type: "Compulsory" },
-    { id: 4, name: "Essential Mathematics", code: "EMATH", type: "Compulsory" },
-    { id: 5, name: "Community Service Learning", code: "CSL", type: "Compulsory" },
-    { id: 6, name: "Physical Education (PE)", code: "PE", type: "Elective" },
-    { id: 7, name: "ICT", code: "ICT", type: "Elective" },
-  ]);
-
+  const [subjectsByGrade, setSubjectsByGrade] = useState({});
   const [newSubject, setNewSubject] = useState({ name: "", code: "", type: "Core" });
 
-  const handleAddSubject = () => {
-    if (!newSubject.name.trim()) return;
-    const subObj = { id: Date.now(), ...newSubject };
-    
-    if (subjectLevel === "pp") setSubjectsPP(prev => [...prev, subObj]);
-    if (subjectLevel === "lower_pri") setSubjectsLowerPri(prev => [...prev, subObj]);
-    if (subjectLevel === "upper_pri") setSubjectsUpperPri(prev => [...prev, subObj]);
-    if (subjectLevel === "jss") setSubjectsJSS(prev => [...prev, subObj]);
-    if (subjectLevel === "sss") setSubjectsSSS(prev => [...prev, subObj]);
-    
-    setNewSubject({ name: "", code: "", type: subjectLevel === "sss" ? "Compulsory" : "Core" });
+  const handleAddSubject = async () => {
+    if (!newSubject.name.trim() || !selectedSubjectGrade) return;
+    try {
+      const payload = {
+        school_id: schoolConfig.id,
+        name: newSubject.name,
+        code: newSubject.code,
+        level_category: selectedSubjectGrade,
+        type: newSubject.type
+      };
+
+      const { data, error } = await supabase
+        .from('subjects')
+        .insert([payload])
+        .select()
+        .single();
+
+      if (error) throw error;
+      
+      setSubjectsByGrade(prev => ({
+        ...prev,
+        [selectedSubjectGrade]: [...(prev[selectedSubjectGrade] || []), {
+          id: data.id,
+          name: data.name,
+          code: data.code,
+          type: data.type
+        }]
+      }));
+      
+      setNewSubject({ name: "", code: "", type: subjectLevel === "sss" ? "Compulsory" : "Core" });
+    } catch (err) {
+      alert('Failed to add subject: ' + err.message);
+    }
   };
 
-  const removeSubject = (id, level) => {
-    if (level === "pp") setSubjectsPP(prev => prev.filter(s => s.id !== id));
-    if (level === "lower_pri") setSubjectsLowerPri(prev => prev.filter(s => s.id !== id));
-    if (level === "upper_pri") setSubjectsUpperPri(prev => prev.filter(s => s.id !== id));
-    if (level === "jss") setSubjectsJSS(prev => prev.filter(s => s.id !== id));
-    if (level === "sss") setSubjectsSSS(prev => prev.filter(s => s.id !== id));
+  const removeSubject = async (id, gradeId) => {
+    try {
+      const { error } = await supabase
+        .from('subjects')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+
+      setSubjectsByGrade(prev => ({
+        ...prev,
+        [gradeId]: prev[gradeId].filter(s => s.id !== id)
+      }));
+    } catch (err) {
+      alert('Failed to remove subject: ' + err.message);
+    }
   };
 
   // --- User Management State ---
@@ -380,37 +622,38 @@ const Settings = () => {
   /* Shared styles */
   const sectionCardStyle = {
     background: "#FFFFFF",
-    border: "1px solid #E8EAF0",
+    border: "1px solid #e6dfd8",
     borderRadius: 16,
     padding: "24px 28px",
     boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
   };
 
   const sectionTitleStyle = {
-    margin: "0 0 6px",
-    fontSize: 15,
-    fontWeight: 700,
-    color: "#1A1A2E",
+    margin: "0 0 8px",
+    fontSize: 18,
+    fontWeight: 800,
+    color: "#2a2421",
     letterSpacing: "-0.01em",
   };
 
   const sectionSubtitleStyle = {
-    margin: "0 0 20px",
-    fontSize: 12.5,
-    color: "#8A8FA8",
+    margin: "0 0 28px",
+    fontSize: 13,
+    color: "#8a8fa8",
     fontWeight: 500,
+    lineHeight: 1.5
   };
 
   const inputStyle = {
     width: "100%",
-    padding: "11px 14px 11px 42px",
-    borderRadius: 10,
-    border: "1.5px solid #E8EAF0",
+    padding: "14px 16px 14px 44px",
+    borderRadius: 12,
+    border: "1.5px solid #e6dfd8",
     fontSize: 14,
-    color: "#1A1A2E",
-    background: "#FAFBFC",
+    color: "#2a2421",
+    background: "#ffffff",
     outline: "none",
-    transition: "all 0.2s ease",
+    transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
     boxSizing: "border-box",
     fontFamily: "inherit",
   };
@@ -418,10 +661,11 @@ const Settings = () => {
   const labelStyle = {
     display: "block",
     fontSize: 12,
-    fontWeight: 600,
+    fontWeight: 700,
     color: "#4A4A6A",
-    marginBottom: 7,
-    letterSpacing: "0.02em",
+    marginBottom: 10,
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
   };
 
   const iconStyle = {
@@ -434,41 +678,9 @@ const Settings = () => {
   };
 
   return (
-    <div 
-      className="responsive-grid"
-      style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 20, height: "100%" }}
-    >
-      {/* Settings Navigation */}
-      <div style={{ background: "#fff", border: "1px solid #E8EAF0", borderRadius: 12, padding: "12px", height: "fit-content" }}>
-        <div className="show-mobile" style={{ fontSize: 13, fontWeight: 700, color: "#1B6B3A", marginBottom: 12, padding: "0 4px" }}>Settings Menu</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {tabs.map(tab => (
-            <div
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 8,
-                cursor: "pointer",
-                fontSize: 13,
-                fontWeight: activeTab === tab.id ? 700 : 500,
-                background: activeTab === tab.id ? "#E8F5EE" : "transparent",
-                color: activeTab === tab.id ? "#1B6B3A" : "#4A4A6A",
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                transition: "all 0.2s"
-              }}
-            >
-              <span>{tab.icon}</span>
-              {tab.label}
-            </div>
-          ))}
-        </div>
-      </div>
-
+    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       {/* Settings Content */}
-      <div style={{ background: "#fff", border: "1px solid #E8EAF0", borderRadius: 12, padding: "28px", overflowY: "auto" }}>
+      <div style={{ background: "#fff", border: "1px solid #e6dfd8", borderRadius: 12, padding: "28px", overflowY: "auto", flex: 1 }} className="main-scroll">
         {activeTab === "school" && (
           <div>
             {/* Page Header */}
@@ -478,94 +690,96 @@ const Settings = () => {
               alignItems: "flex-start",
               marginBottom: 28,
               paddingBottom: 20,
-              borderBottom: "1px solid #F0F2F5",
+              borderBottom: "1px solid #e6dfd8",
               flexWrap: "wrap",
               gap: 16,
             }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: 20, color: "#1A1A2E", fontWeight: 800, letterSpacing: "-0.02em" }}>School Configuration</h3>
-                <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "#8A8FA8", lineHeight: 1.5 }}>
+                <h3 style={{ margin: 0, fontSize: 20, color: "#2a2421", fontWeight: 800, letterSpacing: "-0.02em" }}>School Configuration</h3>
+                <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "#8a8fa8", lineHeight: 1.5 }}>
                   Manage your institution's profile, branding, contact details, and academic setup.
                 </p>
               </div>
-              <button style={{
-                padding: "11px 28px",
-                background: "linear-gradient(135deg, #1B6B3A, #28a05f)",
-                color: "#fff",
-                border: "none",
-                borderRadius: 10,
-                fontWeight: 700,
-                cursor: "pointer",
-                fontSize: 13.5,
-                boxShadow: "0 2px 8px rgba(27,107,58,0.25)",
-                transition: "all 0.2s ease",
-                letterSpacing: "0.02em",
-              }}
-                onMouseEnter={(e) => { e.target.style.transform = "translateY(-1px)"; e.target.style.boxShadow = "0 4px 12px rgba(27,107,58,0.35)"; }}
-                onMouseLeave={(e) => { e.target.style.transform = "translateY(0)"; e.target.style.boxShadow = "0 2px 8px rgba(27,107,58,0.25)"; }}
+              <button 
+                onClick={handleSaveSchoolInfo}
+                disabled={isLoading}
+                style={{
+                  padding: "11px 28px",
+                  background: isLoading ? "#8a8fa8" : "linear-gradient(135deg, #cc785c, #28a05f)",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 10,
+                  fontWeight: 700,
+                  cursor: isLoading ? "not-allowed" : "pointer",
+                  fontSize: 13.5,
+                  boxShadow: "0 2px 8px rgba(27,107,58,0.25)",
+                  transition: "all 0.2s ease",
+                  letterSpacing: "0.02em",
+                }}
+                onMouseEnter={(e) => { if(!isLoading) { e.target.style.transform = "translateY(-1px)"; e.target.style.boxShadow = "0 4px 12px rgba(27,107,58,0.35)"; } }}
+                onMouseLeave={(e) => { if(!isLoading) { e.target.style.transform = "translateY(0)"; e.target.style.boxShadow = "0 2px 8px rgba(27,107,58,0.25)"; } }}
               >
-                💾 Save Changes
+                {isLoading ? "⌛ Saving..." : "💾 Save Changes"}
               </button>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
 
               {/* ─── Section 1: School Identity & Branding ─── */}
               <section style={sectionCardStyle}>
                 <h4 style={sectionTitleStyle}>🏫 School Identity & Branding</h4>
                 <p style={sectionSubtitleStyle}>Define how your school is recognized — name, logo, and motto.</p>
 
-                <div style={{ display: "flex", gap: 28, alignItems: "flex-start", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 40, alignItems: "flex-start", flexWrap: "wrap" }}>
                   {/* Logo Upload */}
-                  <div style={{ flexShrink: 0 }}>
-                    <label style={{ ...labelStyle, marginBottom: 10 }}>School Logo</label>
+                  <div style={{ flexShrink: 0, margin: "0" }}>
+                    <label style={{ ...labelStyle, marginBottom: 12 }}>School Logo</label>
                     <div
                       onClick={() => fileInputRef.current?.click()}
                       onDrop={handleDrop}
                       onDragOver={handleDragOver}
                       onDragLeave={handleDragLeave}
                       style={{
-                        width: 140,
-                        height: 140,
-                        borderRadius: 16,
-                        border: isDragging ? "2.5px dashed #1B6B3A" : "2px dashed #D0D5DD",
-                        background: isDragging ? "#E8F5EE" : "#F9FAFB",
+                        width: 160,
+                        height: 160,
+                        borderRadius: 20,
+                        border: isDragging ? "2.5px dashed #cc785c" : "2px dashed #D0D5DD",
+                        background: isDragging ? "#FFF9F6" : "#FAFAFA",
                         display: "flex",
                         flexDirection: "column",
                         alignItems: "center",
                         justifyContent: "center",
                         cursor: "pointer",
-                        transition: "all 0.25s ease",
+                        transition: "all 0.3s ease",
                         overflow: "hidden",
                         position: "relative",
+                        boxShadow: "inset 0 2px 4px rgba(0,0,0,0.02)"
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#1B6B3A"; e.currentTarget.style.background = "#F0FAF4"; }}
-                      onMouseLeave={(e) => { if (!isDragging) { e.currentTarget.style.borderColor = "#D0D5DD"; e.currentTarget.style.background = "#F9FAFB"; } }}
                     >
                       {logoPreview ? (
                         <>
-                          <img src={logoPreview} alt="School Logo" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 14 }} />
+                          <img src={logoPreview} alt="School Logo" style={{ width: "100%", height: "100%", objectFit: "contain", padding: 10 }} />
                           <div style={{
                             position: "absolute",
                             bottom: 0,
                             left: 0,
                             right: 0,
-                            background: "linear-gradient(transparent, rgba(0,0,0,0.6))",
-                            color: "#fff",
+                            background: "rgba(255,255,255,0.9)",
+                            color: "#cc785c",
                             fontSize: 10,
-                            fontWeight: 600,
+                            fontWeight: 700,
                             textAlign: "center",
-                            padding: "16px 4px 6px",
-                            letterSpacing: "0.03em",
+                            padding: "8px 0",
+                            borderTop: "1px solid #e6dfd8"
                           }}>
-                            Change Logo
+                            EDIT LOGO
                           </div>
                         </>
                       ) : (
                         <>
-                          <div style={{ fontSize: 32, marginBottom: 6, opacity: 0.5 }}>📷</div>
-                          <span style={{ fontSize: 11, color: "#8A8FA8", fontWeight: 600, textAlign: "center", lineHeight: 1.3, padding: "0 8px" }}>
-                            Drop image or click to upload
+                          <div style={{ fontSize: 32, marginBottom: 8 }}>🎨</div>
+                          <span style={{ fontSize: 11, color: "#8a8fa8", fontWeight: 600, textAlign: "center", lineHeight: 1.4, padding: "0 12px" }}>
+                            Upload Institution Logo
                           </span>
                         </>
                       )}
@@ -577,36 +791,90 @@ const Settings = () => {
                         onChange={(e) => handleLogoUpload(e.target.files[0])}
                       />
                     </div>
-                    <p style={{ fontSize: 10.5, color: "#A0A5B8", marginTop: 8, textAlign: "center", width: 140, lineHeight: 1.4 }}>PNG, JPG or SVG. Max 2MB.</p>
+                    <p style={{ fontSize: 10.5, color: "#A0A5B8", marginTop: 12, textAlign: "left", maxWidth: 160, lineHeight: 1.5 }}>PNG, JPG or SVG format. Recommended: 512x512px.</p>
                   </div>
 
                   {/* Name & Motto */}
-                  <div style={{ flex: 1, minWidth: 220, display: "flex", flexDirection: "column", gap: 18 }}>
+                  <div style={{ flex: 1, minWidth: "300px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px 32px" }}>
                     {/* School Name */}
-                    <div>
-                      <label style={labelStyle}>School Name</label>
+                    <div style={{ gridColumn: "span 2" }}>
+                      <label style={labelStyle}>Full Institution Name</label>
                       <div style={{ position: "relative" }}>
-                        <span style={iconStyle}>🏢</span>
+                        <span style={iconStyle}>🏛️</span>
                         <input
                           type="text"
-                          defaultValue="Mwanga Academy"
+                          defaultValue={schoolConfig?.schoolName || "My Institution"}
+                          placeholder="Enter school name"
                           style={inputStyle}
-                          onFocus={(e) => { e.target.style.borderColor = "#1B6B3A"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
-                          onBlur={(e) => { e.target.style.borderColor = "#E8EAF0"; e.target.style.background = "#FAFBFC"; e.target.style.boxShadow = "none"; }}
+                        />
+                      </div>
+                    </div>
+                    {/* Registration Number */}
+                    <div>
+                      <label style={labelStyle}>MoE Registration No.</label>
+                      <div style={{ position: "relative" }}>
+                        <span style={iconStyle}>📜</span>
+                        <input
+                          type="text"
+                          defaultValue={schoolConfig?.regNumber || ""}
+                          placeholder="e.g. MOE/PVT/001"
+                          style={inputStyle}
+                        />
+                      </div>
+                    </div>
+                    {/* Principal Name */}
+                    <div>
+                      <label style={labelStyle}>Principal's Name</label>
+                      <div style={{ position: "relative" }}>
+                        <span style={iconStyle}>🧑‍🏫</span>
+                        <input
+                          type="text"
+                          value={schoolInfo.principal_name}
+                          onChange={(e) => setSchoolInfo({...schoolInfo, principal_name: e.target.value})}
+                          placeholder="e.g. Dr. Jane Doe"
+                          style={inputStyle}
                         />
                       </div>
                     </div>
                     {/* School Motto */}
-                    <div>
+                    <div style={{ gridColumn: "span 2" }}>
                       <label style={labelStyle}>School Motto</label>
                       <div style={{ position: "relative" }}>
                         <span style={iconStyle}>✨</span>
                         <input
                           type="text"
-                          defaultValue="Excellence Through Knowledge"
+                          value={schoolInfo.motto}
+                          onChange={(e) => setSchoolInfo({...schoolInfo, motto: e.target.value})}
+                          placeholder="e.g. Excellence Through Diligence"
                           style={inputStyle}
-                          onFocus={(e) => { e.target.style.borderColor = "#1B6B3A"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
-                          onBlur={(e) => { e.target.style.borderColor = "#E8EAF0"; e.target.style.background = "#FAFBFC"; e.target.style.boxShadow = "none"; }}
+                        />
+                      </div>
+                    </div>
+                    {/* Vision */}
+                    <div>
+                      <label style={labelStyle}>Our Vision</label>
+                      <div style={{ position: "relative" }}>
+                        <span style={iconStyle}>🔭</span>
+                        <input
+                          type="text"
+                          value={schoolInfo.vision}
+                          onChange={(e) => setSchoolInfo({...schoolInfo, vision: e.target.value})}
+                          placeholder="Our long-term goal..."
+                          style={inputStyle}
+                        />
+                      </div>
+                    </div>
+                    {/* Mission */}
+                    <div>
+                      <label style={labelStyle}>Our Mission</label>
+                      <div style={{ position: "relative" }}>
+                        <span style={iconStyle}>🎯</span>
+                        <input
+                          type="text"
+                          value={schoolInfo.mission}
+                          onChange={(e) => setSchoolInfo({...schoolInfo, mission: e.target.value})}
+                          placeholder="Our daily commitment..."
+                          style={inputStyle}
                         />
                       </div>
                     </div>
@@ -619,14 +887,15 @@ const Settings = () => {
                 <h4 style={sectionTitleStyle}>📍 Contact & Location</h4>
                 <p style={sectionSubtitleStyle}>How parents, students, and stakeholders can reach or locate the school.</p>
 
-                <div className="responsive-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "18px 24px" }}>
+                <div className="grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px 32px" }}>
                   {[
                     { label: "Phone Number", value: "0712345678", icon: "📞", type: "tel" },
-                    { label: "Email Address", value: "info@mwanga.ac.ke", icon: "✉️", type: "email" },
-                    { label: "Postal Address", value: "P.O. Box 12345 - 00100, Nairobi", icon: "📮", type: "text" },
-                    { label: "Physical Location", value: "Mwanga Road, Westlands", icon: "📍", type: "text" },
-                    { label: "County", value: "Nairobi", icon: "🗺️", type: "text" },
-                    { label: "Website", value: "www.mwanga.ac.ke", icon: "🌐", type: "url" },
+                    { label: "Email Address", value: "info@school.ac.ke", icon: "✉️", type: "email" },
+                    { label: "Postal Address", value: "P.O. Box 12345 - 00100", icon: "📮", type: "text" },
+                    { label: "Physical Location", value: "School Road, Main City", icon: "📍", type: "text" },
+                    { label: "County", value: "", icon: "🗺️", type: "text" },
+                    { label: "Sub-County", value: "", icon: "🗺️", type: "text" },
+                    { label: "Website", value: "www.school.ac.ke", icon: "🌐", type: "url" },
                   ].map(field => (
                     <div key={field.label}>
                       <label style={labelStyle}>{field.label}</label>
@@ -634,10 +903,15 @@ const Settings = () => {
                         <span style={iconStyle}>{field.icon}</span>
                         <input
                           type={field.type}
-                          defaultValue={field.value}
+                          defaultValue={
+                            field.label === "Phone Number" ? schoolConfig?.phone :
+                            field.label === "Email Address" ? schoolConfig?.email :
+                            field.label === "Postal Address" ? schoolConfig?.address :
+                            field.label === "County" ? schoolConfig?.county :
+                            field.label === "Sub-County" ? schoolConfig?.subCounty :
+                            field.value
+                          }
                           style={inputStyle}
-                          onFocus={(e) => { e.target.style.borderColor = "#1B6B3A"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
-                          onBlur={(e) => { e.target.style.borderColor = "#E8EAF0"; e.target.style.background = "#FAFBFC"; e.target.style.boxShadow = "none"; }}
                         />
                       </div>
                     </div>
@@ -650,12 +924,12 @@ const Settings = () => {
                 <h4 style={sectionTitleStyle}>💳 Financial & Payments</h4>
                 <p style={sectionSubtitleStyle}>Payment channels and financial identifiers for the school.</p>
 
-                <div className="responsive-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "18px 24px" }}>
+                <div className="grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px 32px" }}>
                   {[
-                    { label: "M-Pesa Paybill Number", value: "123456", icon: "💸" },
-                    { label: "Account Name", value: "Mwanga Academy", icon: "🏦" },
-                    { label: "Bank Name", value: "KCB Bank", icon: "🏛️" },
-                    { label: "Bank Account No.", value: "1234567890", icon: "💳" },
+                    { label: "M-Pesa Paybill Number", value: "", icon: "💸" },
+                    { label: "Account Name", value: "", icon: "🏦" },
+                    { label: "Bank Name", value: "", icon: "🏛️" },
+                    { label: "Bank Account No.", value: "", icon: "💳" },
                   ].map(field => (
                     <div key={field.label}>
                       <label style={labelStyle}>{field.label}</label>
@@ -665,8 +939,6 @@ const Settings = () => {
                           type="text"
                           defaultValue={field.value}
                           style={inputStyle}
-                          onFocus={(e) => { e.target.style.borderColor = "#1B6B3A"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
-                          onBlur={(e) => { e.target.style.borderColor = "#E8EAF0"; e.target.style.background = "#FAFBFC"; e.target.style.boxShadow = "none"; }}
                         />
                       </div>
                     </div>
@@ -679,7 +951,7 @@ const Settings = () => {
                 <h4 style={sectionTitleStyle}>📅 Academic Configuration</h4>
                 <p style={sectionSubtitleStyle}>Configure terms, academic year, and institutional levels.</p>
 
-                <div className="responsive-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "18px 24px", marginBottom: 24 }}>
+                <div className="grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px 32px", marginBottom: 32 }}>
                   {[
                     { label: "Current Term", value: "Term 1", icon: "📅", options: ["Term 1", "Term 2", "Term 3"] },
                     { label: "Academic Year", value: "2026", icon: "🗓️", options: Array.from({length: 10}, (_, i) => (2024 + i).toString()) },
@@ -691,14 +963,12 @@ const Settings = () => {
                         <select
                           defaultValue={field.value}
                           style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}
-                          onFocus={(e) => { e.target.style.borderColor = "#1B6B3A"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
-                          onBlur={(e) => { e.target.style.borderColor = "#E8EAF0"; e.target.style.background = "#FAFBFC"; e.target.style.boxShadow = "none"; }}
                         >
                           {field.options.map(opt => (
                             <option key={opt} value={opt}>{opt}</option>
                           ))}
                         </select>
-                        <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8A8FA8" }}>
+                        <span style={{ position: "absolute", right: 16, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 10, color: "#8a8fa8" }}>
                           ▼
                         </span>
                       </div>
@@ -708,7 +978,7 @@ const Settings = () => {
 
                 {/* Institutional Levels */}
                 <div>
-                  <label style={{ ...labelStyle, marginBottom: 12 }}>Institutional Levels</label>
+                  <label style={{ ...labelStyle, marginBottom: 16 }}>Institutional Levels</label>
                   <div style={{
                     display: "flex",
                     gap: 16,
@@ -724,17 +994,18 @@ const Settings = () => {
                         style={{
                           display: "flex",
                           alignItems: "center",
-                          gap: 10,
+                          gap: 12,
                           cursor: "pointer",
-                          fontSize: 13.5,
-                          fontWeight: 600,
-                          color: schoolLevels[level.id] ? "#1B6B3A" : "#6B7280",
-                          padding: "10px 18px",
-                          borderRadius: 10,
-                          border: schoolLevels[level.id] ? "1.5px solid #1B6B3A" : "1.5px solid #E8EAF0",
-                          background: schoolLevels[level.id] ? "#E8F5EE" : "#FAFBFC",
-                          transition: "all 0.2s ease",
+                          fontSize: 13,
+                          fontWeight: 700,
+                          color: schoolLevels[level.id] ? "#cc785c" : "#6B7280",
+                          padding: "12px 24px",
+                          borderRadius: 12,
+                          border: schoolLevels[level.id] ? "2px solid #cc785c" : "1.5px solid #e6dfd8",
+                          background: schoolLevels[level.id] ? "#FFF9F6" : "#ffffff",
+                          transition: "all 0.3s ease",
                           userSelect: "none",
+                          boxShadow: schoolLevels[level.id] ? "0 4px 12px rgba(204,120,92,0.1)" : "none"
                         }}
                       >
                         <input
@@ -743,10 +1014,10 @@ const Settings = () => {
                           onChange={() => handleLevelChange(level.id)}
                           style={{ display: "none" }}
                         />
-                        <span style={{ fontSize: 11 }}>{level.icon}</span>
+                        <span style={{ fontSize: 12 }}>{level.icon}</span>
                         {level.label}
                         {schoolLevels[level.id] && (
-                          <span style={{ fontSize: 14, marginLeft: 2 }}>✓</span>
+                          <span style={{ fontSize: 14, marginLeft: 4 }}>✓</span>
                         )}
                       </label>
                     ))}
@@ -767,19 +1038,19 @@ const Settings = () => {
               alignItems: "flex-start",
               marginBottom: 28,
               paddingBottom: 20,
-              borderBottom: "1px solid #F0F2F5",
+              borderBottom: "1px solid #e6dfd8",
               flexWrap: "wrap",
               gap: 16,
             }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: 20, color: "#1A1A2E", fontWeight: 800, letterSpacing: "-0.02em" }}>Streams & Dormitories</h3>
-                <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "#8A8FA8", lineHeight: 1.5 }}>
+                <h3 style={{ margin: 0, fontSize: 20, color: "#2a2421", fontWeight: 800, letterSpacing: "-0.02em" }}>Streams & Dormitories</h3>
+                <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "#8a8fa8", lineHeight: 1.5 }}>
                   Manage class streams and boarding dormitories for your institution.
                 </p>
               </div>
               <button style={{
                 padding: "11px 28px",
-                background: "linear-gradient(135deg, #1B6B3A, #28a05f)",
+                background: "linear-gradient(135deg, #cc785c, #28a05f)",
                 color: "#fff",
                 border: "none",
                 borderRadius: 10,
@@ -798,12 +1069,11 @@ const Settings = () => {
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-
               {/* ─── Class Streams Section ─── */}
               <section style={sectionCardStyle}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                   <h4 style={sectionTitleStyle}>📚 Class Streams</h4>
-                  <span style={{ fontSize: 12, color: "#8A8FA8", fontWeight: 600, background: "#F0F2F5", padding: "4px 12px", borderRadius: 20 }}>
+                  <span style={{ fontSize: 12, color: "#8a8fa8", fontWeight: 600, background: "#e6dfd8", padding: "4px 12px", borderRadius: 20 }}>
                     {streams.length} stream{streams.length !== 1 ? "s" : ""}
                   </span>
                 </div>
@@ -811,7 +1081,7 @@ const Settings = () => {
 
                 {/* Add Stream Form */}
                 <div style={{
-                  background: "#F8FAFC",
+                  background: "#f5f2eb",
                   border: "1.5px dashed #D0D5DD",
                   borderRadius: 14,
                   padding: "18px 20px",
@@ -830,8 +1100,8 @@ const Settings = () => {
                       onChange={(e) => setNewStreamName(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && addStream()}
                       style={{ ...inputStyle, paddingLeft: 14 }}
-                      onFocus={(e) => { e.target.style.borderColor = "#1B6B3A"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
-                      onBlur={(e) => { e.target.style.borderColor = "#E8EAF0"; e.target.style.background = "#FAFBFC"; e.target.style.boxShadow = "none"; }}
+                      onFocus={(e) => { e.target.style.borderColor = "#cc785c"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
+                      onBlur={(e) => { e.target.style.borderColor = "#e6dfd8"; e.target.style.background = "#f5f2eb"; e.target.style.boxShadow = "none"; }}
                     />
                   </div>
                   <div style={{ width: 120 }}>
@@ -841,17 +1111,17 @@ const Settings = () => {
                       placeholder="40"
                       value={newStreamCapacity}
                       onChange={(e) => setNewStreamCapacity(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && addStream()}
+                      onKeyDown={(e) => e.key === "Enter" && handleAddStream()}
                       style={{ ...inputStyle, paddingLeft: 14 }}
-                      onFocus={(e) => { e.target.style.borderColor = "#1B6B3A"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
-                      onBlur={(e) => { e.target.style.borderColor = "#E8EAF0"; e.target.style.background = "#FAFBFC"; e.target.style.boxShadow = "none"; }}
+                      onFocus={(e) => { e.target.style.borderColor = "#cc785c"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
+                      onBlur={(e) => { e.target.style.borderColor = "#e6dfd8"; e.target.style.background = "#f5f2eb"; e.target.style.boxShadow = "none"; }}
                     />
                   </div>
                   <button
-                    onClick={addStream}
+                    onClick={handleAddStream}
                     style={{
                       padding: "11px 22px",
-                      background: "linear-gradient(135deg, #1B6B3A, #28a05f)",
+                      background: "linear-gradient(135deg, #cc785c, #28a05f)",
                       color: "#fff",
                       border: "none",
                       borderRadius: 10,
@@ -879,22 +1149,22 @@ const Settings = () => {
                         alignItems: "center",
                         justifyContent: "space-between",
                         padding: "10px 16px",
-                        background: "#F8FAFC",
-                        border: "1px solid #E8EAF0",
+                        background: "#f5f2eb",
+                        border: "1px solid #e6dfd8",
                         borderRadius: streamsExpanded ? "12px 12px 0 0" : 12,
                         cursor: "pointer",
                         transition: "all 0.2s ease",
                         userSelect: "none",
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = "#F0F2F5"; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = "#F8FAFC"; }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "#e6dfd8"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "#f5f2eb"; }}
                     >
-                      <span style={{ fontSize: 13, fontWeight: 600, color: "#4A4A6A" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#8a8fa8" }}>
                         📋 View All Streams ({streams.length})
                       </span>
                       <span style={{
                         fontSize: 12,
-                        color: "#8A8FA8",
+                        color: "#8a8fa8",
                         transition: "transform 0.25s ease",
                         transform: streamsExpanded ? "rotate(180deg)" : "rotate(0deg)",
                         display: "inline-block",
@@ -903,31 +1173,31 @@ const Settings = () => {
                       </span>
                     </div>
                     {streamsExpanded && (
-                      <div style={{ borderRadius: "0 0 12px 12px", border: "1px solid #E8EAF0", borderTop: "none", overflow: "hidden" }}>
+                      <div style={{ borderRadius: "0 0 12px 12px", border: "1px solid #e6dfd8", borderTop: "none", overflow: "hidden" }}>
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
                           <thead>
-                            <tr style={{ background: "#F8FAFC" }}>
-                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12, letterSpacing: "0.03em" }}>#</th>
-                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12, letterSpacing: "0.03em" }}>Stream Name</th>
-                              <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#4A4A6A", fontSize: 12, letterSpacing: "0.03em" }}>Capacity</th>
-                              <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#4A4A6A", fontSize: 12, letterSpacing: "0.03em", width: 50 }}></th>
+                            <tr style={{ background: "#f5f2eb" }}>
+                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12, letterSpacing: "0.03em" }}>#</th>
+                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12, letterSpacing: "0.03em" }}>Stream Name</th>
+                              <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, letterSpacing: "0.03em" }}>Capacity</th>
+                              <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, letterSpacing: "0.03em", width: 50 }}></th>
                             </tr>
                           </thead>
                           <tbody>
                             {streams.map((stream, idx) => (
-                              <tr key={stream.id} style={{ borderTop: "1px solid #F0F2F5", background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
-                                <td style={{ padding: "12px 16px", color: "#8A8FA8", fontSize: 12, fontWeight: 600 }}>{idx + 1}</td>
-                                <td style={{ padding: "12px 16px", fontWeight: 600, color: "#1A1A2E" }}>
+                              <tr key={stream.id} style={{ borderTop: "1px solid #e6dfd8", background: idx % 2 === 0 ? "#fff" : "#f5f2eb" }}>
+                                <td style={{ padding: "12px 16px", color: "#8a8fa8", fontSize: 12, fontWeight: 600 }}>{idx + 1}</td>
+                                <td style={{ padding: "12px 16px", fontWeight: 600, color: "#2a2421" }}>
                                   <span style={{ marginRight: 8 }}>📗</span>{stream.name}
                                 </td>
-                                <td style={{ padding: "12px 16px", textAlign: "center", color: "#4A4A6A", fontWeight: 600 }}>
-                                  <span style={{ background: "#E8F5EE", padding: "3px 10px", borderRadius: 6, fontSize: 12.5, color: "#1B6B3A" }}>
+                                <td style={{ padding: "12px 16px", textAlign: "center", color: "#8a8fa8", fontWeight: 600 }}>
+                                  <span style={{ background: "#E8F5EE", padding: "3px 10px", borderRadius: 6, fontSize: 12.5, color: "#cc785c" }}>
                                     {stream.capacity} students
                                   </span>
                                 </td>
                                 <td style={{ padding: "12px 16px", textAlign: "center" }}>
                                   <button
-                                    onClick={() => removeStream(stream.id)}
+                                    onClick={() => handleDeleteStream(stream.id)}
                                     style={{
                                       background: "none",
                                       border: "none",
@@ -959,7 +1229,7 @@ const Settings = () => {
               <section style={sectionCardStyle}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                   <h4 style={sectionTitleStyle}>🏠 Dormitories</h4>
-                  <span style={{ fontSize: 12, color: "#8A8FA8", fontWeight: 600, background: "#F0F2F5", padding: "4px 12px", borderRadius: 20 }}>
+                  <span style={{ fontSize: 12, color: "#8a8fa8", fontWeight: 600, background: "#e6dfd8", padding: "4px 12px", borderRadius: 20 }}>
                     {dorms.length} dorm{dorms.length !== 1 ? "s" : ""}
                   </span>
                 </div>
@@ -967,7 +1237,7 @@ const Settings = () => {
 
                 {/* Add Dorm Form */}
                 <div style={{
-                  background: "#F8FAFC",
+                  background: "#f5f2eb",
                   border: "1.5px dashed #D0D5DD",
                   borderRadius: 14,
                   padding: "18px 20px",
@@ -984,10 +1254,10 @@ const Settings = () => {
                       placeholder="e.g. Kilimanjaro House"
                       value={newDormName}
                       onChange={(e) => setNewDormName(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && addDorm()}
+                      onKeyDown={(e) => e.key === "Enter" && handleAddDorm()}
                       style={{ ...inputStyle, paddingLeft: 14 }}
-                      onFocus={(e) => { e.target.style.borderColor = "#1B6B3A"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
-                      onBlur={(e) => { e.target.style.borderColor = "#E8EAF0"; e.target.style.background = "#FAFBFC"; e.target.style.boxShadow = "none"; }}
+                      onFocus={(e) => { e.target.style.borderColor = "#cc785c"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
+                      onBlur={(e) => { e.target.style.borderColor = "#e6dfd8"; e.target.style.background = "#f5f2eb"; e.target.style.boxShadow = "none"; }}
                     />
                   </div>
                   <div style={{ width: 110 }}>
@@ -997,10 +1267,10 @@ const Settings = () => {
                       placeholder="50"
                       value={newDormCapacity}
                       onChange={(e) => setNewDormCapacity(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && addDorm()}
+                      onKeyDown={(e) => e.key === "Enter" && handleAddDorm()}
                       style={{ ...inputStyle, paddingLeft: 14 }}
-                      onFocus={(e) => { e.target.style.borderColor = "#1B6B3A"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
-                      onBlur={(e) => { e.target.style.borderColor = "#E8EAF0"; e.target.style.background = "#FAFBFC"; e.target.style.boxShadow = "none"; }}
+                      onFocus={(e) => { e.target.style.borderColor = "#cc785c"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
+                      onBlur={(e) => { e.target.style.borderColor = "#e6dfd8"; e.target.style.background = "#f5f2eb"; e.target.style.boxShadow = "none"; }}
                     />
                   </div>
                   <div style={{ width: 120 }}>
@@ -1010,21 +1280,21 @@ const Settings = () => {
                         value={newDormGender}
                         onChange={(e) => setNewDormGender(e.target.value)}
                         style={{ ...inputStyle, paddingLeft: 14, appearance: "none", cursor: "pointer" }}
-                        onFocus={(e) => { e.target.style.borderColor = "#1B6B3A"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
-                        onBlur={(e) => { e.target.style.borderColor = "#E8EAF0"; e.target.style.background = "#FAFBFC"; e.target.style.boxShadow = "none"; }}
+                        onFocus={(e) => { e.target.style.borderColor = "#cc785c"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
+                        onBlur={(e) => { e.target.style.borderColor = "#e6dfd8"; e.target.style.background = "#f5f2eb"; e.target.style.boxShadow = "none"; }}
                       >
                         <option value="Boys">Boys</option>
                         <option value="Girls">Girls</option>
                         <option value="Mixed">Mixed</option>
                       </select>
-                      <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8A8FA8" }}>▼</span>
+                      <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
                     </div>
                   </div>
                   <button
-                    onClick={addDorm}
+                    onClick={handleAddDorm}
                     style={{
                       padding: "11px 22px",
-                      background: "linear-gradient(135deg, #1B6B3A, #28a05f)",
+                      background: "linear-gradient(135deg, #cc785c, #28a05f)",
                       color: "#fff",
                       border: "none",
                       borderRadius: 10,
@@ -1052,22 +1322,22 @@ const Settings = () => {
                         alignItems: "center",
                         justifyContent: "space-between",
                         padding: "10px 16px",
-                        background: "#F8FAFC",
-                        border: "1px solid #E8EAF0",
+                        background: "#f5f2eb",
+                        border: "1px solid #e6dfd8",
                         borderRadius: dormsExpanded ? "12px 12px 0 0" : 12,
                         cursor: "pointer",
                         transition: "all 0.2s ease",
                         userSelect: "none",
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = "#F0F2F5"; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = "#F8FAFC"; }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "#e6dfd8"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "#f5f2eb"; }}
                     >
-                      <span style={{ fontSize: 13, fontWeight: 600, color: "#4A4A6A" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#8a8fa8" }}>
                         📋 View All Dormitories ({dorms.length})
                       </span>
                       <span style={{
                         fontSize: 12,
-                        color: "#8A8FA8",
+                        color: "#8a8fa8",
                         transition: "transform 0.25s ease",
                         transform: dormsExpanded ? "rotate(180deg)" : "rotate(0deg)",
                         display: "inline-block",
@@ -1076,26 +1346,26 @@ const Settings = () => {
                       </span>
                     </div>
                     {dormsExpanded && (
-                      <div style={{ borderRadius: "0 0 12px 12px", border: "1px solid #E8EAF0", borderTop: "none", overflow: "hidden" }}>
+                      <div style={{ borderRadius: "0 0 12px 12px", border: "1px solid #e6dfd8", borderTop: "none", overflow: "hidden" }}>
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
                           <thead>
-                            <tr style={{ background: "#F8FAFC" }}>
-                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12, letterSpacing: "0.03em" }}>#</th>
-                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12, letterSpacing: "0.03em" }}>Dormitory Name</th>
-                              <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#4A4A6A", fontSize: 12, letterSpacing: "0.03em" }}>Capacity</th>
-                              <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#4A4A6A", fontSize: 12, letterSpacing: "0.03em" }}>Gender</th>
-                              <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#4A4A6A", fontSize: 12, letterSpacing: "0.03em", width: 50 }}></th>
+                            <tr style={{ background: "#f5f2eb" }}>
+                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12, letterSpacing: "0.03em" }}>#</th>
+                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12, letterSpacing: "0.03em" }}>Dormitory Name</th>
+                              <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, letterSpacing: "0.03em" }}>Capacity</th>
+                              <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, letterSpacing: "0.03em" }}>Gender</th>
+                              <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, letterSpacing: "0.03em", width: 50 }}></th>
                             </tr>
                           </thead>
                           <tbody>
                             {dorms.map((dorm, idx) => (
-                              <tr key={dorm.id} style={{ borderTop: "1px solid #F0F2F5", background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
-                                <td style={{ padding: "12px 16px", color: "#8A8FA8", fontSize: 12, fontWeight: 600 }}>{idx + 1}</td>
-                                <td style={{ padding: "12px 16px", fontWeight: 600, color: "#1A1A2E" }}>
+                              <tr key={dorm.id} style={{ borderTop: "1px solid #e6dfd8", background: idx % 2 === 0 ? "#fff" : "#f5f2eb" }}>
+                                <td style={{ padding: "12px 16px", color: "#8a8fa8", fontSize: 12, fontWeight: 600 }}>{idx + 1}</td>
+                                <td style={{ padding: "12px 16px", fontWeight: 600, color: "#2a2421" }}>
                                   <span style={{ marginRight: 8 }}>🏠</span>{dorm.name}
                                 </td>
-                                <td style={{ padding: "12px 16px", textAlign: "center", color: "#4A4A6A", fontWeight: 600 }}>
-                                  <span style={{ background: "#EBF3FB", padding: "3px 10px", borderRadius: 6, fontSize: 12.5, color: "#1A5F9C" }}>
+                                <td style={{ padding: "12px 16px", textAlign: "center", color: "#8a8fa8", fontWeight: 600 }}>
+                                  <span style={{ background: "#f5f2eb", padding: "3px 10px", borderRadius: 6, fontSize: 12.5, color: "#2a2421" }}>
                                     {dorm.capacity} beds
                                   </span>
                                 </td>
@@ -1105,15 +1375,15 @@ const Settings = () => {
                                     borderRadius: 6,
                                     fontSize: 12.5,
                                     fontWeight: 600,
-                                    background: dorm.gender === "Boys" ? "#EBF3FB" : dorm.gender === "Girls" ? "#F5EEF8" : "#FEF0E6",
-                                    color: dorm.gender === "Boys" ? "#1A5F9C" : dorm.gender === "Girls" ? "#6C3483" : "#D35400",
+                                    background: dorm.gender === "Boys" ? "#f5f2eb" : dorm.gender === "Girls" ? "#F5EEF8" : "#FEF0E6",
+                                    color: dorm.gender === "Boys" ? "#2a2421" : dorm.gender === "Girls" ? "#6C3483" : "#D35400",
                                   }}>
                                     {dorm.gender}
                                   </span>
                                 </td>
                                 <td style={{ padding: "12px 16px", textAlign: "center" }}>
                                   <button
-                                    onClick={() => removeDorm(dorm.id)}
+                                    onClick={() => handleDeleteDorm(dorm.id)}
                                     style={{
                                       background: "none",
                                       border: "none",
@@ -1154,19 +1424,19 @@ const Settings = () => {
               alignItems: "flex-start",
               marginBottom: 24,
               paddingBottom: 20,
-              borderBottom: "1px solid #F0F2F5",
+              borderBottom: "1px solid #e6dfd8",
               flexWrap: "wrap",
               gap: 16,
             }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: 20, color: "#1A1A2E", fontWeight: 800, letterSpacing: "-0.02em" }}>Grading System</h3>
-                <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "#8A8FA8", lineHeight: 1.5 }}>
+                <h3 style={{ margin: 0, fontSize: 20, color: "#2a2421", fontWeight: 800, letterSpacing: "-0.02em" }}>Grading System</h3>
+                <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "#8a8fa8", lineHeight: 1.5 }}>
                   CBC-aligned grading scales, categories, and mark boundaries per academic level.
                 </p>
               </div>
               <button style={{
                 padding: "11px 28px",
-                background: "linear-gradient(135deg, #1B6B3A, #28a05f)",
+                background: "linear-gradient(135deg, #cc785c, #28a05f)",
                 color: "#fff",
                 border: "none",
                 borderRadius: 10,
@@ -1195,9 +1465,9 @@ const Settings = () => {
                   onClick={() => { setGradingLevel(level.id); setGradingExpanded(false); setNewGrade({ grade: "", label: "", description: "", min: "", max: "", points: "" }); }}
                   style={{
                     padding: "10px 18px",
-                    background: gradingLevel === level.id ? "#1B6B3A" : "#fff",
-                    color: gradingLevel === level.id ? "#fff" : "#4A4A6A",
-                    border: gradingLevel === level.id ? "1px solid #1B6B3A" : "1px solid #E8EAF0",
+                    background: gradingLevel === level.id ? "#cc785c" : "#fff",
+                    color: gradingLevel === level.id ? "#fff" : "#8a8fa8",
+                    border: gradingLevel === level.id ? "1px solid #cc785c" : "1px solid #e6dfd8",
                     borderRadius: 30,
                     fontSize: 13.5,
                     fontWeight: 600,
@@ -1208,14 +1478,14 @@ const Settings = () => {
                     transition: "all 0.2s",
                     whiteSpace: "nowrap"
                   }}
-                  onMouseEnter={(e) => { if (gradingLevel !== level.id) e.target.style.background = "#F8FAFC"; }}
+                  onMouseEnter={(e) => { if (gradingLevel !== level.id) e.target.style.background = "#f5f2eb"; }}
                   onMouseLeave={(e) => { if (gradingLevel !== level.id) e.target.style.background = "#fff"; }}
                 >
                   <span>{level.icon}</span>
                   {level.label}
                   <span style={{
-                    background: gradingLevel === level.id ? "rgba(255,255,255,0.2)" : "#F0F2F5",
-                    color: gradingLevel === level.id ? "#fff" : "#8A8FA8",
+                    background: gradingLevel === level.id ? "rgba(255,255,255,0.2)" : "#e6dfd8",
+                    color: gradingLevel === level.id ? "#fff" : "#8a8fa8",
                     padding: "2px 8px",
                     borderRadius: 12,
                     fontSize: 11
@@ -1226,7 +1496,7 @@ const Settings = () => {
 
             {/* Info Banner */}
             <div style={{
-              background: "#EBF3FB",
+              background: "#f5f2eb",
               border: "1px solid #C4E1FA",
               borderRadius: 12,
               padding: "14px 20px",
@@ -1237,17 +1507,17 @@ const Settings = () => {
             }}>
               <span style={{ fontSize: 20 }}>💡</span>
               <div>
-                <h4 style={{ margin: "0 0 4px", fontSize: 13.5, color: "#1A5F9C", fontWeight: 700 }}>
+                <h4 style={{ margin: "0 0 4px", fontSize: 13.5, color: "#2a2421", fontWeight: 700 }}>
                   {gradingLevel === "pp_g3" && "Observation Rubric (Formative Assessment)"}
                   {gradingLevel === "g4_g6" && "4-Level Competency Scale (KPSEA)"}
                   {gradingLevel === "g7_g9" && "8-Point Achievement Levels (KJSEA)"}
-                  {gradingLevel === "g10_g12" && "12-Point Traditional Rating (KCSE)"}
+                  {gradingLevel === "g10_g12" && "8-Point Achievement Levels (Senior School)"}
                 </h4>
                 <p style={{ margin: 0, fontSize: 12.5, color: "#3B75A7", lineHeight: 1.5 }}>
                   {gradingLevel === "pp_g3" && "Pre-primary to Grade 3 uses purely formative assessment based on observation. There are no national exams, marks, or rankings, only qualitative rubric descriptions."}
                   {gradingLevel === "g4_g6" && "Grade 4–6 incorporates the first national assessment (KPSEA). It uses a 4-level EE/ME/AE/BE scale. Learners are not ranked."}
                   {gradingLevel === "g7_g9" && "Junior Secondary is pivotal. It uses an 8-point scale (EE1 down to BE2) ensuring every learner is recognized with at least 1 point. No zero marks exist."}
-                  {gradingLevel === "g10_g12" && "Senior School relies on the standard A–E scale. Mean grades determine university placement (minimum C+)."}
+                  {gradingLevel === "g10_g12" && "Senior Secondary follows the same competency-based 8-point scale (EE1 down to BE2) as JSS, focusing on holistic development and specialized pathways."}
                 </p>
               </div>
             </div>
@@ -1256,7 +1526,7 @@ const Settings = () => {
             <section style={sectionCardStyle}>
               {/* Dynamic Add Form */}
               <div style={{
-                background: "#F8FAFC",
+                background: "#f5f2eb",
                 border: "1.5px dashed #D0D5DD",
                 borderRadius: 14,
                 padding: "18px 20px",
@@ -1271,7 +1541,7 @@ const Settings = () => {
                   <input type="text" placeholder="e.g. EE" value={newGrade.grade} onChange={(e) => setNewGrade({ ...newGrade, grade: e.target.value })} style={{ ...inputStyle, paddingLeft: 12, textAlign: "center" }} />
                 </div>
                 
-                {gradingLevel !== "g10_g12" && (
+                {gradingLevel !== "pp_g3" && (
                   <div style={{ flex: 2, minWidth: 200 }}>
                     <label style={labelStyle}>Description / Label</label>
                     <input type="text" placeholder="e.g. Exceeding Expectations" value={newGrade.label} onChange={(e) => setNewGrade({ ...newGrade, label: e.target.value })} style={{ ...inputStyle, paddingLeft: 14 }} />
@@ -1309,7 +1579,7 @@ const Settings = () => {
                   onClick={handleAddGrade}
                   style={{
                     padding: "11px 22px",
-                    background: "linear-gradient(135deg, #1B6B3A, #28a05f)",
+                    background: "linear-gradient(135deg, #cc785c, #28a05f)",
                     color: "#fff",
                     border: "none",
                     borderRadius: 10,
@@ -1332,26 +1602,26 @@ const Settings = () => {
                   onClick={() => setGradingExpanded(!gradingExpanded)}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "space-between",
-                    padding: "10px 16px", background: "#F8FAFC", border: "1px solid #E8EAF0",
+                    padding: "10px 16px", background: "#f5f2eb", border: "1px solid #e6dfd8",
                     borderRadius: gradingExpanded ? "12px 12px 0 0" : 12, cursor: "pointer", transition: "all 0.2s ease", userSelect: "none",
                   }}
                 >
-                  <span style={{ fontSize: 13, fontWeight: 600, color: "#4A4A6A" }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "#8a8fa8" }}>
                     📋 View Settings
                   </span>
-                  <span style={{ fontSize: 12, color: "#8A8FA8", transition: "transform 0.25s", transform: gradingExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
+                  <span style={{ fontSize: 12, color: "#8a8fa8", transition: "transform 0.25s", transform: gradingExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
                 </div>
 
                 {gradingExpanded && (
-                  <div style={{ borderRadius: "0 0 12px 12px", border: "1px solid #E8EAF0", borderTop: "none", overflow: "hidden" }}>
+                  <div style={{ borderRadius: "0 0 12px 12px", border: "1px solid #e6dfd8", borderTop: "none", overflow: "hidden" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
                       <thead>
-                        <tr style={{ background: "#F8FAFC" }}>
-                          <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#4A4A6A", fontSize: 12, width: 80 }}>Grade</th>
-                          {gradingLevel !== "g10_g12" && <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12 }}>Label</th>}
-                          {gradingLevel === "pp_g3" && <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12 }}>Rubric Notes</th>}
-                          {gradingLevel !== "pp_g3" && <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#4A4A6A", fontSize: 12, width: 90 }}>Range %</th>}
-                          {(gradingLevel === "g7_g9" || gradingLevel === "g10_g12") && <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#4A4A6A", fontSize: 12, width: 80 }}>Points</th>}
+                        <tr style={{ background: "#f5f2eb" }}>
+                          <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 80 }}>Grade</th>
+                          {gradingLevel !== "pp_g3" && <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>Label</th>}
+                          {gradingLevel === "pp_g3" && <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>Rubric Notes</th>}
+                          {gradingLevel !== "pp_g3" && <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 90 }}>Range %</th>}
+                          {(gradingLevel === "g7_g9" || gradingLevel === "g10_g12") && <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 80 }}>Points</th>}
                           <th style={{ padding: "11px 16px", textAlign: "center", width: 50 }}></th>
                         </tr>
                       </thead>
@@ -1359,19 +1629,19 @@ const Settings = () => {
                         {(gradingLevel === "pp_g3" ? gradesPPG3 : gradingLevel === "g4_g6" ? gradesG4G6 : gradingLevel === "g7_g9" ? gradesG7G9 : gradesG10G12).map((g, idx) => {
                           const badge = getBadgeColors(g.grade);
                           return (
-                            <tr key={g.id} style={{ borderTop: "1px solid #F0F2F5", background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
+                            <tr key={g.id} style={{ borderTop: "1px solid #e6dfd8", background: idx % 2 === 0 ? "#fff" : "#f5f2eb" }}>
                               <td style={{ padding: "12px 16px", textAlign: "center", fontWeight: 700 }}>
                                 <span style={{ background: badge.bg, color: badge.text, padding: "4px 10px", borderRadius: 6, fontSize: 13 }}>{g.grade}</span>
                               </td>
-                              {gradingLevel !== "g10_g12" && <td style={{ padding: "12px 16px", fontWeight: 600, color: "#1A1A2E" }}>{g.label}</td>}
+                              {gradingLevel !== "pp_g3" && <td style={{ padding: "12px 16px", fontWeight: 600, color: "#2a2421" }}>{g.label}</td>}
                               {gradingLevel === "pp_g3" && <td style={{ padding: "12px 16px", color: "#6A6A8A", fontSize: 13 }}>{g.description}</td>}
                               {gradingLevel !== "pp_g3" && (
-                                <td style={{ padding: "12px 16px", textAlign: "center", color: "#4A4A6A", fontWeight: 600, fontSize: 12.5 }}>
+                                <td style={{ padding: "12px 16px", textAlign: "center", color: "#8a8fa8", fontWeight: 600, fontSize: 12.5 }}>
                                   {g.min} – {g.max}
                                 </td>
                               )}
                               {(gradingLevel === "g7_g9" || gradingLevel === "g10_g12") && (
-                                <td style={{ padding: "12px 16px", textAlign: "center", fontWeight: 700, color: "#1B6B3A" }}>{g.points}</td>
+                                <td style={{ padding: "12px 16px", textAlign: "center", fontWeight: 700, color: "#cc785c" }}>{g.points}</td>
                               )}
                               <td style={{ padding: "12px 16px", textAlign: "center" }}>
                                 <button onClick={() => removeGrade(g.id, gradingLevel)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: "#c0392b", opacity: 0.5, transition: "opacity 0.2s" }} onMouseEnter={(e) => e.target.style.opacity = 1} onMouseLeave={(e) => e.target.style.opacity = 0.5}>🗑️</button>
@@ -1395,16 +1665,16 @@ const Settings = () => {
           <div>
             {/* Page Header */}
             <div style={{
-              display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid #F0F2F5", flexWrap: "wrap", gap: 16,
+              display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid #e6dfd8", flexWrap: "wrap", gap: 16,
             }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: 20, color: "#1A1A2E", fontWeight: 800, letterSpacing: "-0.02em" }}>Fee Structure</h3>
-                <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "#8A8FA8", lineHeight: 1.5 }}>
+                <h3 style={{ margin: 0, fontSize: 20, color: "#2a2421", fontWeight: 800, letterSpacing: "-0.02em" }}>Fee Structure</h3>
+                <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "#8a8fa8", lineHeight: 1.5 }}>
                   Manage global Voteheads and map fee structures to CBC learning levels.
                 </p>
               </div>
               <button style={{
-                padding: "11px 28px", background: "linear-gradient(135deg, #1B6B3A, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13.5, boxShadow: "0 2px 8px rgba(27,107,58,0.25)", transition: "all 0.2s ease",
+                padding: "11px 28px", background: "linear-gradient(135deg, #cc785c, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13.5, boxShadow: "0 2px 8px rgba(27,107,58,0.25)", transition: "all 0.2s ease",
               }}>💾 Save Changes</button>
             </div>
 
@@ -1412,7 +1682,7 @@ const Settings = () => {
             <div style={{ marginBottom: 24 }}>
               {/* Add Votehead Form for populating the dictionary */}
               <div style={{
-                background: "#F8FAFC", border: "1.5px dashed #D0D5DD", borderRadius: 14, padding: "18px 20px", display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap"
+                background: "#f5f2eb", border: "1.5px dashed #D0D5DD", borderRadius: 14, padding: "18px 20px", display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap"
               }}>
                 <div style={{ width: 120 }}>
                   <label style={labelStyle}>Code</label>
@@ -1425,7 +1695,7 @@ const Settings = () => {
                 <button
                   onClick={handleAddVotehead}
                   style={{
-                    padding: "11px 22px", background: "linear-gradient(135deg, #1B6B3A, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13, boxShadow: "0 2px 6px rgba(27,107,58,0.2)",
+                    padding: "11px 22px", background: "linear-gradient(135deg, #cc785c, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13, boxShadow: "0 2px 6px rgba(27,107,58,0.2)",
                   }}
                 >+ Add Votehead</button>
               </div>
@@ -1436,11 +1706,11 @@ const Settings = () => {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                  <h4 style={sectionTitleStyle}>🏫 Level-Specific Fee Structure</h4>
                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                   <label style={{ fontSize: 13, fontWeight: 600, color: "#4A4A6A" }}>Select Level:</label>
+                   <label style={{ fontSize: 13, fontWeight: 600, color: "#8a8fa8" }}>Select Level:</label>
                    <select 
                      value={activeFeeLevel}
                      onChange={(e) => setActiveFeeLevel(e.target.value)}
-                     style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, fontWeight: 600, color: "#1A1A2E", background: "#FAFBFC", cursor: "pointer" }}
+                     style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #e6dfd8", fontSize: 13, fontWeight: 600, color: "#2a2421", background: "#f5f2eb", cursor: "pointer" }}
                    >
                      <option value="pp">Pre-Primary (PP1–PP2)</option>
                      <option value="lower_pri">Lower Primary (G1–G3)</option>
@@ -1453,10 +1723,10 @@ const Settings = () => {
 
               {/* Add Fee Item Form */}
               <div style={{
-                background: "#EBF3FB", border: "1px solid #C4E1FA", borderRadius: 14, padding: "18px 20px", display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap", marginBottom: 20,
+                background: "#f5f2eb", border: "1px solid #C4E1FA", borderRadius: 14, padding: "18px 20px", display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap", marginBottom: 20,
               }}>
                 <div style={{ flex: 2, minWidth: 200 }}>
-                  <label style={{ ...labelStyle, color: "#1A5F9C" }}>Select Votehead</label>
+                  <label style={{ ...labelStyle, color: "#2a2421" }}>Select Votehead</label>
                   <select
                     value={newFeeItem.voteheadId}
                     onChange={(e) => setNewFeeItem({ ...newFeeItem, voteheadId: e.target.value })}
@@ -1469,63 +1739,63 @@ const Settings = () => {
                   </select>
                 </div>
                 <div style={{ width: 110 }}>
-                  <label style={{ ...labelStyle, color: "#1A5F9C" }}>Term 1 (KES)</label>
+                  <label style={{ ...labelStyle, color: "#2a2421" }}>Term 1 (KES)</label>
                   <input type="number" placeholder="0" value={newFeeItem.t1} onChange={(e) => setNewFeeItem({ ...newFeeItem, t1: e.target.value })} style={{ ...inputStyle, borderColor: "#C4E1FA" }} />
                 </div>
                 <div style={{ width: 110 }}>
-                  <label style={{ ...labelStyle, color: "#1A5F9C" }}>Term 2 (KES)</label>
+                  <label style={{ ...labelStyle, color: "#2a2421" }}>Term 2 (KES)</label>
                   <input type="number" placeholder="0" value={newFeeItem.t2} onChange={(e) => setNewFeeItem({ ...newFeeItem, t2: e.target.value })} style={{ ...inputStyle, borderColor: "#C4E1FA" }} />
                 </div>
                 <div style={{ width: 110 }}>
-                  <label style={{ ...labelStyle, color: "#1A5F9C" }}>Term 3 (KES)</label>
+                  <label style={{ ...labelStyle, color: "#2a2421" }}>Term 3 (KES)</label>
                   <input type="number" placeholder="0" value={newFeeItem.t3} onChange={(e) => setNewFeeItem({ ...newFeeItem, t3: e.target.value })} style={{ ...inputStyle, borderColor: "#C4E1FA" }} />
                 </div>
                 <button
                   onClick={handleAddFeeItem}
                   style={{
-                    padding: "11px 20px", background: "#1A5F9C", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13, transition: "background 0.2s"
+                    padding: "11px 20px", background: "#2a2421", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13, transition: "background 0.2s"
                   }}
                   onMouseEnter={(e) => e.target.style.background = "#134a7a"}
-                  onMouseLeave={(e) => e.target.style.background = "#1A5F9C"}
+                  onMouseLeave={(e) => e.target.style.background = "#2a2421"}
                 >+ Add</button>
               </div>
 
               {/* Fee Structure Table */}
-              <div style={{ borderRadius: 12, border: "1px solid #E8EAF0", overflow: "hidden" }}>
+              <div style={{ borderRadius: 12, border: "1px solid #e6dfd8", overflow: "hidden" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
-                  <thead style={{ background: "#F8FAFC", borderBottom: "2px solid #E8EAF0" }}>
+                  <thead style={{ background: "#f5f2eb", borderBottom: "2px solid #e6dfd8" }}>
                     <tr>
-                      <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12, width: 40 }}>#</th>
-                      <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12 }}>Votehead</th>
-                      <th style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: "#4A4A6A", fontSize: 12, width: 120 }}>Term 1</th>
-                      <th style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: "#4A4A6A", fontSize: 12, width: 120 }}>Term 2</th>
-                      <th style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: "#4A4A6A", fontSize: 12, width: 120 }}>Term 3</th>
-                      <th style={{ padding: "12px 16px", textAlign: "right", fontWeight: 800, color: "#1A1A2E", fontSize: 12, width: 130, background: "#f0f4f8" }}>Total (KES)</th>
+                      <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 40 }}>#</th>
+                      <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>Votehead</th>
+                      <th style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 120 }}>Term 1</th>
+                      <th style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 120 }}>Term 2</th>
+                      <th style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 120 }}>Term 3</th>
+                      <th style={{ padding: "12px 16px", textAlign: "right", fontWeight: 800, color: "#2a2421", fontSize: 12, width: 130, background: "#f0f4f8" }}>Total (KES)</th>
                       <th style={{ padding: "12px 16px", textAlign: "center", width: 50 }}></th>
                     </tr>
                   </thead>
                   <tbody>
                     {(!feeStructures[activeFeeLevel] || feeStructures[activeFeeLevel].length === 0) ? (
-                      <tr><td colSpan="7" style={{ textAlign: "center", padding: "30px", color: "#8A8FA8", fontSize: 13 }}>No fee items added for this level.</td></tr>
+                      <tr><td colSpan="7" style={{ textAlign: "center", padding: "30px", color: "#8a8fa8", fontSize: 13 }}>No fee items added for this level.</td></tr>
                     ) : (
                       feeStructures[activeFeeLevel].map((item, idx) => {
                         const vh = voteheads.find(v => v.id === item.voteheadId);
                         const rowTotal = item.t1 + item.t2 + item.t3;
                         return (
-                          <tr key={item.id} style={{ borderBottom: "1px solid #F0F2F5", background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
-                            <td style={{ padding: "12px 16px", color: "#8A8FA8", fontWeight: 600, fontSize: 12 }}>{idx + 1}</td>
+                          <tr key={item.id} style={{ borderBottom: "1px solid #e6dfd8", background: idx % 2 === 0 ? "#fff" : "#f5f2eb" }}>
+                            <td style={{ padding: "12px 16px", color: "#8a8fa8", fontWeight: 600, fontSize: 12 }}>{idx + 1}</td>
                             <td style={{ padding: "12px 16px" }}>
                               {vh ? (
                                 <div>
-                                  <span style={{ fontWeight: 700, color: "#1A5F9C", marginRight: 8, fontSize: 12 }}>{vh.code}</span>
-                                  <span style={{ fontWeight: 600, color: "#1A1A2E" }}>{vh.description}</span>
+                                  <span style={{ fontWeight: 700, color: "#2a2421", marginRight: 8, fontSize: 12 }}>{vh.code}</span>
+                                  <span style={{ fontWeight: 600, color: "#2a2421" }}>{vh.description}</span>
                                 </div>
                               ) : <span style={{ color: "red" }}>Warning: Deleted Votehead</span>}
                             </td>
-                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600, color: "#4A4A6A", fontFamily: "monospace", fontSize: 13 }}>{item.t1.toLocaleString()}</td>
-                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600, color: "#4A4A6A", fontFamily: "monospace", fontSize: 13 }}>{item.t2.toLocaleString()}</td>
-                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600, color: "#4A4A6A", fontFamily: "monospace", fontSize: 13 }}>{item.t3.toLocaleString()}</td>
-                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 800, color: "#1B6B3A", background: "#f0f4f8", fontFamily: "monospace", fontSize: 13.5 }}>{rowTotal.toLocaleString()}</td>
+                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600, color: "#8a8fa8", fontFamily: "monospace", fontSize: 13 }}>{item.t1.toLocaleString()}</td>
+                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600, color: "#8a8fa8", fontFamily: "monospace", fontSize: 13 }}>{item.t2.toLocaleString()}</td>
+                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600, color: "#8a8fa8", fontFamily: "monospace", fontSize: 13 }}>{item.t3.toLocaleString()}</td>
+                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 800, color: "#cc785c", background: "#f0f4f8", fontFamily: "monospace", fontSize: 13.5 }}>{rowTotal.toLocaleString()}</td>
                             <td style={{ padding: "12px 16px", textAlign: "center" }}>
                                <button onClick={() => removeFeeItem(item.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: "#c0392b" }}>🗑️</button>
                             </td>
@@ -1541,7 +1811,7 @@ const Settings = () => {
                      const totalT3 = feeStructures[activeFeeLevel].reduce((sum, item) => sum + item.t3, 0);
                      const grandTotal = totalT1 + totalT2 + totalT3;
                      return (
-                       <tfoot style={{ background: "#1A1A2E" }}>
+                       <tfoot style={{ background: "#2a2421" }}>
                          <tr>
                            <td colSpan="2" style={{ padding: "14px 16px", textAlign: "right", fontWeight: 800, color: "#fff", fontSize: 13, letterSpacing: "1px" }}>GRAND TOTALS:</td>
                            <td style={{ padding: "14px 16px", textAlign: "right", fontWeight: 700, color: "#C4E1FA", fontFamily: "monospace", fontSize: 13.5 }}>{totalT1.toLocaleString()}</td>
@@ -1571,19 +1841,16 @@ const Settings = () => {
               alignItems: "flex-start",
               marginBottom: 24,
               paddingBottom: 20,
-              borderBottom: "1px solid #F0F2F5",
+              borderBottom: "1px solid #e6dfd8",
               flexWrap: "wrap",
               gap: 16,
             }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: 20, color: "#1A1A2E", fontWeight: 800, letterSpacing: "-0.02em" }}>Subjects Configuration</h3>
-                <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "#8A8FA8", lineHeight: 1.5 }}>
-                  Manage the official KICD canonical subject lists across all CBC learning phases.
-                </p>
+                <h3 style={{ margin: 0, fontSize: 20, color: "#2a2421", fontWeight: 800, letterSpacing: "-0.02em" }}>Subjects Configuration</h3>
               </div>
               <button style={{
                 padding: "11px 28px",
-                background: "linear-gradient(135deg, #1B6B3A, #28a05f)",
+                background: "linear-gradient(135deg, #cc785c, #28a05f)",
                 color: "#fff",
                 border: "none",
                 borderRadius: 10,
@@ -1600,73 +1867,87 @@ const Settings = () => {
               </button>
             </div>
 
-            {/* Level Selector Dropdown */}
-            <div style={{ marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
-              <label style={{ fontSize: 13.5, fontWeight: 700, color: "#4A4A6A" }}>Select Learning Phase:</label>
-              <div style={{ position: "relative", width: 320 }}>
-                <select
-                  value={subjectLevel}
-                  onChange={(e) => {
-                    setSubjectLevel(e.target.value);
-                    setSubjectsExpanded(false);
-                    setNewSubject({ name: "", code: "", type: e.target.value === "sss" ? "Compulsory" : "Core" });
-                  }}
-                  style={{
-                    width: "100%",
-                    padding: "10px 14px",
-                    borderRadius: 10,
-                    border: "1px solid #D0D5DD",
-                    fontSize: 13.5,
-                    fontWeight: 600,
-                    color: "#1A1A2E",
-                    background: "#FAFBFC",
-                    appearance: "none",
-                    cursor: "pointer",
-                    boxShadow: "0 1px 2px rgba(0,0,0,0.02)"
-                  }}
-                >
-                  <option value="pp">👦 Pre-Primary (PP1–PP2) - {subjectsPP.length} Subjects</option>
-                  <option value="lower_pri">🎒 Lower Primary (G1–G3) - {subjectsLowerPri.length} Subjects</option>
-                  <option value="upper_pri">📚 Upper Primary (G4–G6) - {subjectsUpperPri.length} Subjects</option>
-                  <option value="jss">🏫 Junior Secondary (G7–G9) - {subjectsJSS.length} Subjects</option>
-                  <option value="sss">🎓 Senior Secondary (G10–G12) - {subjectsSSS.length} Subjects</option>
-                </select>
-                <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8A8FA8" }}>▼</span>
+            {/* Level & Grade Selector */}
+            <div style={{ marginBottom: 20, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <label style={{ fontSize: 13.5, fontWeight: 700, color: "#8a8fa8" }}>1. Learning Phase:</label>
+                <div style={{ position: "relative", width: 240 }}>
+                  <select
+                    value={subjectLevel}
+                    onChange={(e) => {
+                      setSubjectLevel(e.target.value);
+                      setSubjectsExpanded(false);
+                      setSelectedSubjectGrade(""); // Reset grade when phase changes
+                      setNewSubject({ name: "", code: "", type: e.target.value === "sss" ? "Compulsory" : "Core" });
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "10px 14px",
+                      borderRadius: 10,
+                      border: "1px solid #D0D5DD",
+                      fontSize: 13.5,
+                      fontWeight: 600,
+                      color: "#2a2421",
+                      background: "#f5f2eb",
+                      appearance: "none",
+                      cursor: "pointer",
+                      boxShadow: "0 1px 2px rgba(0,0,0,0.02)"
+                    }}
+                  >
+                    <option value="pp">👦 Pre-Primary (PP1–PP2)</option>
+                    <option value="lower_pri">🎒 Lower Primary (G1–G3)</option>
+                    <option value="upper_pri">📚 Upper Primary (G4–G8)</option>
+                    <option value="jss">🏫 Junior Secondary (G7–G9)</option>
+                    <option value="sss">🎓 Senior Secondary (G10–G12)</option>
+                  </select>
+                  <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <label style={{ fontSize: 13.5, fontWeight: 700, color: "#8a8fa8" }}>2. Specific Grade:</label>
+                <div style={{ position: "relative", width: 200 }}>
+                  <select
+                    value={selectedSubjectGrade}
+                    onChange={(e) => setSelectedSubjectGrade(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "10px 14px",
+                      borderRadius: 10,
+                      border: "1px solid #D0D5DD",
+                      fontSize: 13.5,
+                      fontWeight: 600,
+                      color: "#2a2421",
+                      background: "#f5f2eb",
+                      appearance: "none",
+                      cursor: "pointer",
+                      boxShadow: "0 1px 2px rgba(0,0,0,0.02)"
+                    }}
+                  >
+                    <option value="">-- Select Grade --</option>
+                    {CLASSES.filter(c => {
+                      if (subjectLevel === "pp") return c.id.startsWith("pp");
+                      if (subjectLevel === "lower_pri") return ["p1", "p2", "p3"].includes(c.id);
+                      if (subjectLevel === "upper_pri") return ["p4", "p5", "p6", "p7", "p8"].includes(c.id);
+                      if (subjectLevel === "jss") return c.type === "JSS";
+                      if (subjectLevel === "sss") return c.type === "SS";
+                      return false;
+                    }).map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
+                </div>
               </div>
             </div>
 
-            {/* Info Banner */}
-            <div style={{
-              background: "#EBF3FB",
-              border: "1px solid #C4E1FA",
-              borderRadius: 12,
-              padding: "14px 20px",
-              marginBottom: 24,
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 12,
-            }}>
-              <span style={{ fontSize: 20 }}>💡</span>
-              <div>
-                <h4 style={{ margin: "0 0 4px", fontSize: 13.5, color: "#1A5F9C", fontWeight: 700 }}>
-                  KICD Rationalisation Rules
-                </h4>
-                <p style={{ margin: 0, fontSize: 12.5, color: "#3B75A7", lineHeight: 1.5 }}>
-                  {subjectLevel === "pp" && "Pre-primary subjects should not exceed 5 learning areas."}
-                  {subjectLevel === "lower_pri" && "Lower Primary subjects should not exceed 7 learning areas. Indigenous language is optional."}
-                  {subjectLevel === "upper_pri" && "Upper Primary subjects should not exceed 8 learning areas. Science/Technology and Agriculture/Nutrition merged into core areas."}
-                  {subjectLevel === "jss" && "Junior Secondary subjects should not exceed 9 learning areas (Core + Optional). Business Studies and Health Education are newly introduced cores to prepare for SS pathways."}
-                  {subjectLevel === "sss" && "Senior School is pathway-based. Learners take 7 subjects: 4 Core Compulsory + 3 Pipeline Electives. STEM learners take Core Math, while Arts/Sports and Social Sciences take Essential Math."}
-                </p>
-              </div>
-            </div>
 
             {/* Subjects Content Block */}
             <section style={sectionCardStyle}>
 
               {/* Add Subject Form */}
               <div style={{
-                background: "#F8FAFC",
+                background: "#f5f2eb",
                 border: "1.5px dashed #D0D5DD",
                 borderRadius: 14,
                 padding: "18px 20px",
@@ -1706,7 +1987,7 @@ const Settings = () => {
                         </>
                       )}
                     </select>
-                    <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8A8FA8" }}>▼</span>
+                    <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
                   </div>
                 </div>
 
@@ -1714,7 +1995,7 @@ const Settings = () => {
                   onClick={handleAddSubject}
                   style={{
                     padding: "11px 22px",
-                    background: "linear-gradient(135deg, #1B6B3A, #28a05f)",
+                    background: "linear-gradient(135deg, #cc785c, #28a05f)",
                     color: "#fff",
                     border: "none",
                     borderRadius: 10,
@@ -1731,9 +2012,17 @@ const Settings = () => {
                 </button>
               </div>
 
-              {/* Render either a single table (PP - JSS) or dual tables (SSS) */}
+              {/* Render table based on selected grade */}
               {(() => {
-                const currentSubjects = subjectLevel === "pp" ? subjectsPP : subjectLevel === "lower_pri" ? subjectsLowerPri : subjectLevel === "upper_pri" ? subjectsUpperPri : subjectLevel === "jss" ? subjectsJSS : subjectsSSS;
+                if (!selectedSubjectGrade) return (
+                  <div style={{ textAlign: "center", padding: "40px", color: "#8a8fa8" }}>
+                    <div style={{ fontSize: 40, marginBottom: 12 }}>☝️</div>
+                    <p style={{ margin: 0 }}>Please select a learning phase and a specific grade to manage subjects.</p>
+                  </div>
+                );
+
+                const currentSubjects = subjectsByGrade[selectedSubjectGrade] || [];
+                const gradeName = CLASSES.find(c => c.id === selectedSubjectGrade)?.name || "";
 
                 const renderTable = (listTitle, listData) => (
                   <div style={{ marginBottom: 20 }}>
@@ -1741,47 +2030,47 @@ const Settings = () => {
                       onClick={() => setSubjectsExpanded(prev => ({ ...prev, [listTitle]: !prev[listTitle] }))}
                       style={{
                         display: "flex", alignItems: "center", justifyContent: "space-between",
-                        padding: "10px 16px", background: "#F8FAFC", border: "1px solid #E8EAF0",
+                        padding: "10px 16px", background: "#f5f2eb", border: "1px solid #e6dfd8",
                         borderRadius: (subjectsExpanded[listTitle] ?? true) ? "12px 12px 0 0" : 12, cursor: "pointer", transition: "all 0.2s ease", userSelect: "none",
                       }}
                     >
-                      <span style={{ fontSize: 13, fontWeight: 600, color: "#4A4A6A" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#8a8fa8" }}>
                         📋 {listTitle} ({listData.length})
                       </span>
-                      <span style={{ fontSize: 12, color: "#8A8FA8", transition: "transform 0.25s", transform: (subjectsExpanded[listTitle] ?? true) ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
+                      <span style={{ fontSize: 12, color: "#8a8fa8", transition: "transform 0.25s", transform: (subjectsExpanded[listTitle] ?? true) ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
                     </div>
 
                     {(subjectsExpanded[listTitle] ?? true) && (
-                      <div style={{ borderRadius: "0 0 12px 12px", border: "1px solid #E8EAF0", borderTop: "none", overflow: "hidden" }}>
+                      <div style={{ borderRadius: "0 0 12px 12px", border: "1px solid #e6dfd8", borderTop: "none", overflow: "hidden" }}>
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
                           <thead>
-                            <tr style={{ background: "#F8FAFC" }}>
-                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12, width: 40 }}>#</th>
-                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12, width: 90 }}>Code</th>
-                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12 }}>Subject Name</th>
-                              <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#4A4A6A", fontSize: 12, width: 120 }}>Type</th>
+                            <tr style={{ background: "#f5f2eb" }}>
+                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 40 }}>#</th>
+                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 90 }}>Code</th>
+                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>Subject Name</th>
+                              <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 120 }}>Type</th>
                               <th style={{ padding: "11px 16px", textAlign: "center", width: 50 }}></th>
                             </tr>
                           </thead>
                           <tbody>
                             {listData.length === 0 ? (
-                               <tr><td colSpan="5" style={{ textAlign: "center", padding: "20px", color: "#8A8FA8", fontSize: 13 }}>No subjects found.</td></tr>
+                               <tr><td colSpan="5" style={{ textAlign: "center", padding: "20px", color: "#8a8fa8", fontSize: 13 }}>No subjects found.</td></tr>
                             ) : listData.map((s, idx) => (
-                              <tr key={s.id} style={{ borderTop: "1px solid #F0F2F5", background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
-                                <td style={{ padding: "12px 16px", color: "#8A8FA8", fontSize: 12, fontWeight: 600 }}>{idx + 1}</td>
-                                <td style={{ padding: "12px 16px", fontWeight: 600, color: "#8A8FA8" }}>{s.code || "-"}</td>
-                                <td style={{ padding: "12px 16px", fontWeight: 600, color: "#1A1A2E" }}>{s.name}</td>
+                              <tr key={s.id} style={{ borderTop: "1px solid #e6dfd8", background: idx % 2 === 0 ? "#fff" : "#f5f2eb" }}>
+                                <td style={{ padding: "12px 16px", color: "#8a8fa8", fontSize: 12, fontWeight: 600 }}>{idx + 1}</td>
+                                <td style={{ padding: "12px 16px", fontWeight: 600, color: "#8a8fa8" }}>{s.code || "-"}</td>
+                                <td style={{ padding: "12px 16px", fontWeight: 600, color: "#2a2421" }}>{s.name}</td>
                                 <td style={{ padding: "12px 16px", textAlign: "center" }}>
                                   <span style={{
                                     padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                                    background: (s.type === "Core" || s.type === "Compulsory") ? "#E8F5EE" : "#EBF3FB",
-                                    color: (s.type === "Core" || s.type === "Compulsory") ? "#1B6B3A" : "#1A5F9C",
+                                    background: (s.type === "Core" || s.type === "Compulsory") ? "#E8F5EE" : "#f5f2eb",
+                                    color: (s.type === "Core" || s.type === "Compulsory") ? "#cc785c" : "#2a2421",
                                   }}>
                                     {s.type}
                                   </span>
                                 </td>
                                 <td style={{ padding: "12px 16px", textAlign: "center" }}>
-                                  <button onClick={() => removeSubject(s.id, subjectLevel)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: "#c0392b", opacity: 0.5, transition: "opacity 0.2s" }} onMouseEnter={(e) => e.target.style.opacity = 1} onMouseLeave={(e) => e.target.style.opacity = 0.5}>🗑️</button>
+                                  <button onClick={() => removeSubject(s.id, selectedSubjectGrade)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: "#c0392b", opacity: 0.5, transition: "opacity 0.2s" }} onMouseEnter={(e) => e.target.style.opacity = 1} onMouseLeave={(e) => e.target.style.opacity = 0.5}>🗑️</button>
                                 </td>
                               </tr>
                             ))}
@@ -1792,18 +2081,7 @@ const Settings = () => {
                   </div>
                 );
 
-                if (subjectLevel === "sss") {
-                  const compulsory = currentSubjects.filter(s => s.type === "Compulsory");
-                  const electives = currentSubjects.filter(s => s.type === "Elective");
-                  return (
-                    <>
-                      {renderTable("Core Compulsory Subjects", compulsory)}
-                      {renderTable("Pathway Electives", electives)}
-                    </>
-                  );
-                }
-                
-                return renderTable("All Subjects", currentSubjects);
+                return renderTable(`Subjects for ${gradeName}`, currentSubjects);
               })()}
 
             </section>
@@ -1816,16 +2094,16 @@ const Settings = () => {
           <div>
             {/* Page Header */}
             <div style={{
-              display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid #F0F2F5", flexWrap: "wrap", gap: 16,
+              display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid #e6dfd8", flexWrap: "wrap", gap: 16,
             }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: 20, color: "#1A1A2E", fontWeight: 800, letterSpacing: "-0.02em" }}>User Management & Roles</h3>
-                <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "#8A8FA8", lineHeight: 1.5 }}>
+                <h3 style={{ margin: 0, fontSize: 20, color: "#2a2421", fontWeight: 800, letterSpacing: "-0.02em" }}>User Management & Roles</h3>
+                <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "#8a8fa8", lineHeight: 1.5 }}>
                   Manage staff accounts and configure granular module permissions across learning phases.
                 </p>
               </div>
               <button style={{
-                padding: "11px 28px", background: "linear-gradient(135deg, #1B6B3A, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13.5, boxShadow: "0 2px 8px rgba(27,107,58,0.25)", transition: "all 0.2s ease",
+                padding: "11px 28px", background: "linear-gradient(135deg, #cc785c, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13.5, boxShadow: "0 2px 8px rgba(27,107,58,0.25)", transition: "all 0.2s ease",
               }}>💾 Save Settings</button>
             </div>
 
@@ -1834,13 +2112,13 @@ const Settings = () => {
               <button
                 onClick={() => setUserTab("roster")}
                 style={{
-                  padding: "10px 24px", background: userTab === "roster" ? "#1A5F9C" : "#EBF3FB", color: userTab === "roster" ? "#fff" : "#1A5F9C", border: "none", borderRadius: 30, fontSize: 13.5, fontWeight: 700, cursor: "pointer", transition: "all 0.2s ease"
+                  padding: "10px 24px", background: userTab === "roster" ? "#2a2421" : "#f5f2eb", color: userTab === "roster" ? "#fff" : "#2a2421", border: "none", borderRadius: 30, fontSize: 13.5, fontWeight: 700, cursor: "pointer", transition: "all 0.2s ease"
                 }}
               >👥 Active User Roster</button>
               <button
                 onClick={() => setUserTab("roles")}
                 style={{
-                  padding: "10px 24px", background: userTab === "roles" ? "#1A5F9C" : "#EBF3FB", color: userTab === "roles" ? "#fff" : "#1A5F9C", border: "none", borderRadius: 30, fontSize: 13.5, fontWeight: 700, cursor: "pointer", transition: "all 0.2s ease"
+                  padding: "10px 24px", background: userTab === "roles" ? "#2a2421" : "#f5f2eb", color: userTab === "roles" ? "#fff" : "#2a2421", border: "none", borderRadius: 30, fontSize: 13.5, fontWeight: 700, cursor: "pointer", transition: "all 0.2s ease"
                 }}
               >⚙️ Roles & Permissions (ACL)</button>
             </div>
@@ -1850,7 +2128,7 @@ const Settings = () => {
               <section style={sectionCardStyle}>
                 <h4 style={sectionTitleStyle}>Add New Staff Member</h4>
                 <div style={{
-                  background: "#FAFBFC", border: "1px solid #E8EAF0", borderRadius: 14, padding: "18px 20px", display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap", marginBottom: 24,
+                  background: "#f5f2eb", border: "1px solid #e6dfd8", borderRadius: 14, padding: "18px 20px", display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap", marginBottom: 24,
                 }}>
                   <div style={{ flex: 1.5, minWidth: 200 }}>
                     <label style={labelStyle}>Full Name</label>
@@ -1874,50 +2152,48 @@ const Settings = () => {
                         <option value="Teacher">Teacher</option>
                         <option value="Secretary">Secretary</option>
                       </select>
-                      <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8A8FA8" }}>▼</span>
+                      <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
                     </div>
                   </div>
                   <button
                     onClick={handleAddUser}
                     style={{
-                      padding: "11px 22px", background: "#1A5F9C", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13, transition: "background 0.2s"
+                      padding: "11px 22px", background: "#cc785c", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 13, transition: "background 0.2s"
                     }}
-                    onMouseEnter={(e) => e.target.style.background = "#134a7a"}
-                    onMouseLeave={(e) => e.target.style.background = "#1A5F9C"}
                   >+ Add User</button>
                 </div>
 
-                <div style={{ borderRadius: 12, border: "1px solid #E8EAF0", overflow: "hidden" }}>
+                <div style={{ borderRadius: 12, border: "1px solid #e6dfd8", overflow: "hidden" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
-                    <thead style={{ background: "#F8FAFC", borderBottom: "2px solid #E8EAF0" }}>
+                    <thead style={{ background: "#f5f2eb", borderBottom: "2px solid #e6dfd8" }}>
                       <tr>
-                        <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12, width: 40 }}>#</th>
-                        <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12 }}>Name & Email</th>
-                        <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700, color: "#4A4A6A", fontSize: 12 }}>Role</th>
-                        <th style={{ padding: "12px 16px", textAlign: "center", fontWeight: 700, color: "#4A4A6A", fontSize: 12 }}>Status</th>
+                        <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 40 }}>#</th>
+                        <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>Name & Email</th>
+                        <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>Role</th>
+                        <th style={{ padding: "12px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>Status</th>
                         <th style={{ padding: "12px 16px", textAlign: "center", width: 100 }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {systemUsers.map((u, idx) => (
-                        <tr key={u.id} style={{ borderBottom: "1px solid #F0F2F5", background: u.status === "Suspended" ? "#FDF8F8" : (idx % 2 === 0 ? "#fff" : "#FAFBFC") }}>
-                          <td style={{ padding: "14px 16px", color: "#8A8FA8", fontWeight: 600, fontSize: 12 }}>{idx + 1}</td>
+                        <tr key={u.id} style={{ borderBottom: "1px solid #e6dfd8", background: u.status === "Suspended" ? "#FDF8F8" : (idx % 2 === 0 ? "#fff" : "#f5f2eb") }}>
+                          <td style={{ padding: "14px 16px", color: "#8a8fa8", fontWeight: 600, fontSize: 12 }}>{idx + 1}</td>
                           <td style={{ padding: "14px 16px" }}>
-                            <div style={{ fontWeight: 700, color: "#1A1A2E", fontSize: 14 }}>{u.name}</div>
-                            <div style={{ color: "#8A8FA8", fontSize: 12, marginTop: 2 }}>{u.email}</div>
+                            <div style={{ fontWeight: 700, color: "#2a2421", fontSize: 14 }}>{u.name}</div>
+                            <div style={{ color: "#8a8fa8", fontSize: 12, marginTop: 2 }}>{u.email}</div>
                           </td>
                           <td style={{ padding: "14px 16px" }}>
                             <span style={{ 
                               padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                              background: u.role === "System Admin" ? "#EBF3FB" : "#F4F5F7", 
-                              color: u.role === "System Admin" ? "#1A5F9C" : "#4A4A6A"
+                              background: u.role === "System Admin" ? "#f5f2eb" : "#F4F5F7", 
+                              color: u.role === "System Admin" ? "#2a2421" : "#8a8fa8"
                             }}>{u.role}</span>
                           </td>
                           <td style={{ padding: "14px 16px", textAlign: "center" }}>
                             <span onClick={() => toggleUserStatus(u.id)} style={{
                               padding: "4px 12px", borderRadius: 12, fontSize: 11, fontWeight: 700, cursor: "pointer",
                               background: u.status === "Active" ? "#E8F5EE" : "#FDF0ED",
-                              color: u.status === "Active" ? "#1B6B3A" : "#c0392b",
+                              color: u.status === "Active" ? "#cc785c" : "#c0392b",
                               border: `1px solid ${u.status === "Active" ? "#C2E5D2" : "#F8D5CE"}`
                             }}>
                               {u.status}
@@ -1940,14 +2216,14 @@ const Settings = () => {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
                   <div>
                     <h4 style={sectionTitleStyle}>System Access Matrix</h4>
-                    <p style={{ margin: 0, fontSize: 13, color: "#8A8FA8" }}>Configure granular CRUD permissions exactly as needed per role.</p>
+                    <p style={{ margin: 0, fontSize: 13, color: "#8a8fa8" }}>Configure granular CRUD permissions exactly as needed per role.</p>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                   <label style={{ fontSize: 13, fontWeight: 600, color: "#4A4A6A" }}>Editing Role:</label>
+                   <label style={{ fontSize: 13, fontWeight: 600, color: "#8a8fa8" }}>Editing Role:</label>
                    <select 
                      value={activeRoleEdit}
                      onChange={(e) => setActiveRoleEdit(e.target.value)}
-                     style={{ padding: "8px 12px", borderRadius: 8, border: "2px solid #1A5F9C", fontSize: 13.5, fontWeight: 700, color: "#1A5F9C", background: "#EBF3FB", cursor: "pointer", outline: "none" }}
+                     style={{ padding: "8px 12px", borderRadius: 8, border: "2px solid #2a2421", fontSize: 13.5, fontWeight: 700, color: "#2a2421", background: "#f5f2eb", cursor: "pointer", outline: "none" }}
                    >
                      {Object.keys(userRolesConfig).map(role => (
                        <option key={role} value={role}>{role}</option>
@@ -1960,16 +2236,16 @@ const Settings = () => {
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
                     <thead style={{ background: "#F4F5F7", borderBottom: "2px solid #D0D5DD" }}>
                       <tr>
-                        <th style={{ padding: "14px 16px", textAlign: "left", fontWeight: 800, color: "#1A1A2E", fontSize: 13 }}>Module</th>
-                        <th style={{ padding: "14px 16px", textAlign: "center", fontWeight: 700, color: "#4A4A6A", fontSize: 12 }}>👀 View Access</th>
-                        <th style={{ padding: "14px 16px", textAlign: "center", fontWeight: 700, color: "#4A4A6A", fontSize: 12 }}>✍️ Create / Edit</th>
-                        <th style={{ padding: "14px 16px", textAlign: "center", fontWeight: 700, color: "#4A4A6A", fontSize: 12 }}>🗑️ Delete Data</th>
+                        <th style={{ padding: "14px 16px", textAlign: "left", fontWeight: 800, color: "#2a2421", fontSize: 13 }}>Module</th>
+                        <th style={{ padding: "14px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>👀 View Access</th>
+                        <th style={{ padding: "14px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>✍️ Create / Edit</th>
+                        <th style={{ padding: "14px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>🗑️ Delete Data</th>
                       </tr>
                     </thead>
                     <tbody>
                       {userRolesConfig[activeRoleEdit] && Object.entries(userRolesConfig[activeRoleEdit].modules).map(([modKey, perms], idx) => (
-                        <tr key={modKey} style={{ borderBottom: "1px solid #F0F2F5", background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
-                          <td style={{ padding: "14px 16px", fontWeight: 700, color: "#1A5F9C", textTransform: "capitalize" }}>{modKey.replace('_', ' ')}</td>
+                        <tr key={modKey} style={{ borderBottom: "1px solid #e6dfd8", background: idx % 2 === 0 ? "#fff" : "#f5f2eb" }}>
+                          <td style={{ padding: "14px 16px", fontWeight: 700, color: "#2a2421", textTransform: "capitalize" }}>{modKey.replace('_', ' ')}</td>
                           {['view', 'edit', 'delete'].map(action => (
                             <td key={action} style={{ padding: "14px 16px", textAlign: "center" }}>
                               <label style={{ display: "inline-flex", cursor: "pointer" }}>
@@ -2010,8 +2286,8 @@ const Settings = () => {
                           key={phase.id} 
                           onClick={() => !isAdmin && handleTogglePhase(activeRoleEdit, phase.id)}
                           style={{
-                            padding: "8px 16px", border: `1.5px solid ${isChecked ? "#D97706" : "#E8EAF0"}`, borderRadius: 30, fontSize: 13, fontWeight: 700,
-                            background: isChecked ? "#fff" : "#F4F5F7", color: isChecked ? "#D97706" : "#8A8FA8", cursor: isAdmin ? "not-allowed" : "pointer", transition: "all 0.2s", userSelect: "none", opacity: isAdmin ? 0.6 : 1
+                            padding: "8px 16px", border: `1.5px solid ${isChecked ? "#D97706" : "#e6dfd8"}`, borderRadius: 30, fontSize: 13, fontWeight: 700,
+                            background: isChecked ? "#fff" : "#F4F5F7", color: isChecked ? "#D97706" : "#8a8fa8", cursor: isAdmin ? "not-allowed" : "pointer", transition: "all 0.2s", userSelect: "none", opacity: isAdmin ? 0.6 : 1
                           }}
                         >
                           {isChecked ? "☑ " : "☐ "}{phase.label}
@@ -2028,9 +2304,9 @@ const Settings = () => {
 
         {(activeTab !== "school" && activeTab !== "fees" && activeTab !== "streams" && activeTab !== "grading" && activeTab !== "subjects" && activeTab !== "users") && (
 
-          <div style={{ textAlign: "center", padding: "60px 0", color: "#8A8FA8" }}>
+          <div style={{ textAlign: "center", padding: "60px 0", color: "#8a8fa8" }}>
             <div style={{ fontSize: 40, marginBottom: 16 }}>🚧</div>
-            <div style={{ fontWeight: 600, color: "#4A4A6A" }}>Module Under Construction</div>
+            <div style={{ fontWeight: 600, color: "#8a8fa8" }}>Module Under Construction</div>
             <div style={{ fontSize: 13, marginTop: 4 }}>The {activeTab} settings module is coming soon.</div>
           </div>
         )}

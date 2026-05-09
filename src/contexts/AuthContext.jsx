@@ -1,0 +1,161 @@
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
+
+const AuthContext = createContext(null);
+
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within an AuthProvider');
+  return ctx;
+}
+
+export function AuthProvider({ children }) {
+  const [session, setSession] = useState(null);
+  const [user, setUser] = useState(null);
+  const [schoolConfig, setSchoolConfig] = useState(null);
+  const [plan, setPlan] = useState('starter');
+  const [isLoading, setIsLoading] = useState(true);
+  const [needsRegistration, setNeedsRegistration] = useState(false);
+  const [needsPlanSelection, setNeedsPlanSelection] = useState(false);
+
+  // Fetch school data for the authenticated user
+  const fetchSchoolForUser = async (authUser) => {
+    try {
+      // Look up school by the user's email
+      const { data, error } = await supabase
+        .from('school_registrations')
+        .select('*')
+        .eq('email', authUser.email)
+        .single();
+
+      if (error && error.code === 'PGRST116') {
+        // No school found for this email — user needs to register
+        setNeedsRegistration(true);
+        setNeedsPlanSelection(true);
+        setSchoolConfig(null);
+        setPlan('starter');
+        return;
+      }
+
+      if (error) throw error;
+
+      if (data) {
+        const config = {
+          id: data.id,
+          schoolName: data.school_name,
+          regNumber: data.reg_number,
+          county: data.county,
+          subCounty: data.sub_county,
+          email: data.email,
+          phone: data.phone,
+          address: data.address,
+          schoolType: data.school_type,
+          modules: data.activated_modules,
+        };
+        setSchoolConfig(config);
+        setPlan(data.plan || 'starter');
+        setNeedsRegistration(false);
+        setNeedsPlanSelection(false);
+      }
+    } catch (err) {
+      console.error('Error fetching school for user:', err);
+    }
+  };
+
+  // Listen for auth state changes
+  useEffect(() => {
+    // Safety timeout: if auth takes more than 10 seconds, stop loading
+    const timeout = setTimeout(() => {
+      setIsLoading(false);
+    }, 10000);
+
+    // Get the initial session
+    supabase.auth.getSession()
+      .then(({ data: { session: s } }) => {
+        setSession(s);
+        setUser(s?.user ?? null);
+        if (s?.user) {
+          fetchSchoolForUser(s.user).finally(() => {
+            setIsLoading(false);
+            clearTimeout(timeout);
+          });
+        } else {
+          setIsLoading(false);
+          clearTimeout(timeout);
+        }
+      })
+      .catch(err => {
+        console.error('Initial session fetch error:', err);
+        setIsLoading(false);
+        clearTimeout(timeout);
+      });
+
+    // Subscribe to auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (_event, s) => {
+        setSession(s);
+        setUser(s?.user ?? null);
+        if (s?.user) {
+          await fetchSchoolForUser(s.user);
+        } else {
+          setSchoolConfig(null);
+          setPlan('starter');
+          setNeedsRegistration(false);
+          setNeedsPlanSelection(false);
+        }
+      }
+    );
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setSession(null);
+    setUser(null);
+    setSchoolConfig(null);
+    setPlan('starter');
+    setNeedsRegistration(false);
+    setNeedsPlanSelection(false);
+  };
+
+  const updateSchoolConfig = (config) => {
+    setSchoolConfig(config);
+    setNeedsRegistration(false);
+    setNeedsPlanSelection(false);
+  };
+
+  const updatePlan = async (newPlan) => {
+    setPlan(newPlan);
+    if (schoolConfig?.id) {
+      await supabase
+        .from('school_registrations')
+        .update({ plan: newPlan })
+        .eq('id', schoolConfig.id);
+    }
+  };
+
+  const value = {
+    session,
+    user,
+    schoolConfig,
+    plan,
+    isLoading,
+    needsRegistration,
+    needsPlanSelection,
+    signOut,
+    updateSchoolConfig,
+    updatePlan,
+    setNeedsRegistration,
+    setNeedsPlanSelection,
+    fetchSchoolForUser,
+  };
+
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export default AuthContext;

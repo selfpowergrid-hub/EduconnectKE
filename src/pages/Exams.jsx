@@ -1,27 +1,77 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { STUDENTS, CLASSES, SUBJECTS_BY_LEVEL, ACADEMIC_GRADES, COMPETENCY_GRADES } from '../data/mockData';
+import { STUDENTS, getClassesByType, SUBJECTS_BY_LEVEL, ACADEMIC_GRADES, COMPETENCY_GRADES } from '../data/mockData';
+import { supabase } from '../lib/supabase';
+
+const GRADES_BY_LEVEL = {
+  "Pre-Primary": ["PP1", "PP2"],
+  "Primary": ["Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6"],
+  "Junior Secondary": ["Grade 7", "Grade 8", "Grade 9"],
+  "Senior Secondary": ["Grade 10", "Grade 11", "Grade 12"]
+};
 
 const getGradeLevel = (classId) => {
-  if (classId.startsWith("pg") || classId.startsWith("pp")) return "ecde";
-  const gradeNum = parseInt(classId.replace("g", ""));
-  if (gradeNum >= 1 && gradeNum <= 3) return "lower_primary";
-  if (gradeNum >= 4 && gradeNum <= 6) return "upper_primary";
-  if (gradeNum >= 7 && gradeNum <= 9) return "jss";
-  if (gradeNum >= 10) return "senior";
+  if (classId.startsWith("p")) return "upper_primary"; // p1-p8
+  if (classId.startsWith("g")) return "jss"; // g7-g9
+  if (classId.startsWith("f")) return "senior"; // f1-f4
   return "upper_primary";
 };
 
-const Exams = () => {
+const Exams = ({ schoolConfig, examsList, setExamsList }) => {
   // Tab State: 'listings' | 'options' | 'entry'
   const [activeTab, setActiveTab] = useState("listings");
 
+  const currentTypeClasses = useMemo(() => {
+    return getClassesByType(schoolConfig?.schoolType || "Primary");
+  }, [schoolConfig]);
+
   // --- Exam Listings State ---
-  const [examsList, setExamsList] = useState([
-    { id: "e1", name: "Term 1 Opener Exam", term: "Term 1", levels: "All Phases", status: "Completed", date: "2026-01-10" },
-    { id: "e2", name: "Term 1 Mid-Term", term: "Term 1", levels: "JSS & Senior", status: "Ongoing", date: "2026-02-15" },
-    { id: "e3", name: "Term 1 End of Term", term: "Term 1", levels: "All Phases", status: "Upcoming", date: "2026-04-02" },
-  ]);
-  const [newExam, setNewExam] = useState({ name: "", term: "Term 1", levels: "All Phases", status: "Upcoming", date: "" });
+  // Received as props from App.jsx
+  const [newExam, setNewExam] = useState({ name: "", term: "Term 1", level: "Primary", grade: "Grade 4", subject: "Mathematics", weight: "" });
+
+  const [filterLevel, setFilterLevel] = useState("Senior Secondary");
+  const [filterGrade, setFilterGrade] = useState("Grade 10");
+  const [filterTerm, setFilterTerm] = useState("Term 1");
+
+  // Sync filterGrade when filterLevel changes
+  useEffect(() => {
+    setFilterGrade(GRADES_BY_LEVEL[filterLevel][0]);
+  }, [filterLevel]);
+
+  const filteredExams = useMemo(() => {
+    const gradeIdMap = {
+      "PP1": "pp1", "PP2": "pp2",
+      "Grade 1": "p1", "Grade 2": "p2", "Grade 3": "p3", "Grade 4": "p4", "Grade 5": "p5", "Grade 6": "p6",
+      "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
+      "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
+    };
+    const targetGid = gradeIdMap[filterGrade];
+    return examsList.filter(e => e.level_id === targetGid && e.term === filterTerm);
+  }, [examsList, filterGrade, filterTerm]);
+
+  // Sync newExam grade when level changes
+  useEffect(() => {
+    setNewExam(prev => ({ ...prev, grade: GRADES_BY_LEVEL[prev.level][0] }));
+  }, [newExam.level]);
+
+  const [gradingScope, setGradingScope] = useState("all");
+  const [subjectGrading, setSubjectGrading] = useState({});
+
+  const [selectedSubjectForGrading, setSelectedSubjectForGrading] = useState("");
+  const [newGradeEntry, setNewGradeEntry] = useState({ code: "", label: "", min: "", max: "", points: "" });
+  const [customGrades, setCustomGrades] = useState(COMPETENCY_GRADES);
+
+  const [isSettingsCollapsed, setIsSettingsCollapsed] = useState(false);
+
+  const levelToSubjectKey = {
+    "Pre-Primary": "ecde",
+    "Primary": "upper_primary",
+    "Junior Secondary": "jss",
+    "Senior Secondary": "senior"
+  };
+  
+  const currentSubjects = useMemo(() => {
+    return SUBJECTS_BY_LEVEL[levelToSubjectKey[filterLevel]] || [];
+  }, [filterLevel]);
 
   // --- Exam Options State ---
   const [examOptions, setExamOptions] = useState({
@@ -30,12 +80,11 @@ const Exams = () => {
     gradingScale: "cbc_standard" // cbc_standard | kcse_standard
   });
 
-  const [selectedClass, setSelectedClass] = useState("g6");
+  const [selectedClass, setSelectedClass] = useState(currentTypeClasses[0]?.id || "");
   const [selectedStream, setSelectedStream] = useState("A");
   const [selectedSubject, setSelectedSubject] = useState("");
   const [selectedTerm, setSelectedTerm] = useState("Term 1");
-  const [marksData, setMarksData] = useState({}); // { studentId: { examId: score } }
-
+  // const [marksData, setMarksData] = useState({}); // Moved to ExamEntries.jsx
 
   const gradeLevel = getGradeLevel(selectedClass);
   const availableSubjects = useMemo(() => SUBJECTS_BY_LEVEL[gradeLevel] || [], [gradeLevel]);
@@ -47,10 +96,13 @@ const Exams = () => {
     }
   }, [availableSubjects, selectedSubject]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const students = STUDENTS.filter(s => s.gradeId === selectedClass && s.stream === selectedStream);
+  const students = useMemo(() => {
+    return STUDENTS.filter(s => s.gradeId === selectedClass && s.stream === selectedStream);
+  }, [selectedClass, selectedStream]);
 
   const getGrade = (score, level) => {
-    const scale = level === "senior" ? ACADEMIC_GRADES : COMPETENCY_GRADES;
+    // Both JSS and Senior now use the competency-based 8-point scale
+    const scale = COMPETENCY_GRADES;
     for (const g of scale) {
       if (score >= g.min) return g;
     }
@@ -63,73 +115,122 @@ const Exams = () => {
     [examsList, selectedTerm]
   );
 
-  const handleScoreChange = (studentId, examId, value) => {
-    const val = parseInt(value) || 0;
-    setMarksData(prev => ({
-      ...prev,
-      [studentId]: {
-        ...(prev[studentId] || {}),
-        [examId]: val
-      }
-    }));
-  };
 
-  const navigateGrid = (e, studentIdx, examIdx, totalStudents, totalExams) => {
-    let nextRow = studentIdx;
-    let nextCol = examIdx;
 
-    if (e.key === "ArrowUp") nextRow--;
-    else if (e.key === "ArrowDown" || e.key === "Enter") nextRow++;
-    else if (e.key === "ArrowLeft") nextCol--;
-    else if (e.key === "ArrowRight") nextCol++;
-    else return;
+  const handleAddExam = async () => {
+    if (!newExam.name.trim()) return;
+    try {
+      const gradeIdMap = {
+        "PP1": "pp1", "PP2": "pp2",
+        "Grade 1": "p1", "Grade 2": "p2", "Grade 3": "p3", "Grade 4": "p4", "Grade 5": "p5", "Grade 6": "p6",
+        "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
+        "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
+      };
+      const gid = gradeIdMap[newExam.grade];
 
-    if (nextRow >= 0 && nextRow < totalStudents && nextCol >= 0 && nextCol < totalExams) {
-      e.preventDefault();
-      const nextInput = document.getElementById(`cell-${nextRow}-${nextCol}`);
-      if (nextInput) nextInput.focus();
+      const payload = {
+        school_id: schoolConfig.id,
+        name: newExam.name,
+        term: newExam.term,
+        year: new Date().getFullYear(),
+        level_id: gid,
+        status: "Upcoming"
+      };
+
+      const { data, error } = await supabase
+        .from('exams')
+        .insert([payload])
+        .select()
+        .single();
+
+      if (error) throw error;
+      
+      setExamsList(prev => [data, ...prev]);
+      setNewExam({ ...newExam, name: "", weight: "" });
+      alert('Exam registered successfully!');
+    } catch (err) {
+      alert('Failed to register exam: ' + err.message);
     }
   };
 
-  const handleAddExam = () => {
-    if (!newExam.name.trim()) return;
-    setExamsList(prev => [...prev, { id: `e${Date.now()}`, ...newExam }]);
-    setNewExam({ name: "", term: "Term 1", levels: "All Phases", status: "Upcoming", date: "" });
+  const updateExam = async (id, field, value) => {
+    try {
+      // Note: Our DB schema uses 'name', 'term', 'status' etc. 
+      // The mock used 'weight' which we'll need to handle or map if needed.
+      const { error } = await supabase
+        .from('exams')
+        .update({ [field]: value })
+        .eq('id', id);
+      
+      if (error) throw error;
+      setExamsList(prev => prev.map(e => e.id === id ? { ...e, [field]: value } : e));
+    } catch (err) {
+      console.error('Error updating exam:', err);
+    }
   };
 
-  const removeExam = (id) => setExamsList(prev => prev.filter(e => e.id !== id));
+  const removeExam = async (id) => {
+    if (!confirm('Are you sure you want to delete this exam?')) return;
+    try {
+      const { error } = await supabase
+        .from('exams')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      setExamsList(prev => prev.filter(e => e.id !== id));
+    } catch (err) {
+      alert('Failed to delete exam: ' + err.message);
+    }
+  };
 
   // Shared Styles
-  const labelStyle = { display: "block", fontSize: 12, fontWeight: 700, color: "#4A4A6A", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.02em" };
-  const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E8EAF0", fontSize: 13.5, background: "#fff", outline: "none", transition: "border-color 0.2s" };
-  const sectionCardStyle = { background: "#fff", borderRadius: 16, border: "1px solid #E8EAF0", padding: "24px", boxShadow: "0 2px 10px rgba(0,0,0,0.02)" };
+  const activeColor = "#cc785c";
+  const labelStyle = { display: "block", fontSize: 11, fontWeight: 800, color: "#2a2421", marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.05em" };
+  const inputStyle = { width: "100%", padding: "12px 16px", borderRadius: 8, border: "1px solid #e6dfd8", fontSize: 14, background: "#fff", outline: "none", transition: "all 0.2s ease", boxSizing: "border-box" };
+  const sectionCardStyle = { background: "#fff", border: "1px solid #e6dfd8", borderRadius: 12, padding: "24px", boxShadow: "0 1px 2px rgba(0,0,0,0.02)" };
 
   return (
     <div style={{ paddingBottom: 40 }}>
+      {/* Page Header */}
+      <div style={{ marginBottom: 32 }}>
+        <h2 style={{ fontSize: 32, fontWeight: 700, color: "#2a2421", margin: 0, fontFamily: "'EB Garamond', serif" }}>Exam Settings</h2>
+        <p style={{ color: "#8a8fa8", marginTop: 4, fontSize: 16 }}>Register examinations, configure weighting, and manage grading systems.</p>
+      </div>
+
       {/* Internal Navigation Tabs (Pills) */}
-      <div style={{ display: "flex", gap: 12, marginBottom: 28 }}>
+      <div 
+        style={{ 
+          display: "flex", 
+          gap: 12, 
+          marginBottom: 32, 
+          overflowX: "auto", 
+          paddingBottom: 4,
+          flexWrap: "nowrap"
+        }}
+        className="sidebar-scroll"
+      >
         {[
           { id: "listings", label: "Exam Listings", icon: "📅" },
-          { id: "options", label: "Exam Options", icon: "⚙️" },
-          { id: "entry", label: "Examination Entry", icon: "✍️" },
+          { id: "options", label: "Weighting & Grading", icon: "⚙️" },
         ].map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             style={{
               padding: "10px 24px",
-              background: activeTab === tab.id ? "#1B6B3A" : "#EBF3FB",
-              color: activeTab === tab.id ? "#fff" : "#1B6B3A",
-              border: "none",
+              background: activeTab === tab.id ? activeColor : "transparent",
+              color: activeTab === tab.id ? "#fff" : "#2a2421",
+              border: activeTab === tab.id ? "none" : "1px solid #e6dfd8",
               borderRadius: 30,
-              fontSize: 13.5,
-              fontWeight: 700,
+              fontSize: 14,
+              fontWeight: 600,
               cursor: "pointer",
               display: "flex",
               alignItems: "center",
               gap: 8,
               transition: "all 0.2s ease",
-              boxShadow: activeTab === tab.id ? "0 4px 12px rgba(27,107,58,0.2)" : "none"
+              whiteSpace: "nowrap"
             }}
           >
             <span>{tab.icon}</span>
@@ -143,11 +244,26 @@ const Exams = () => {
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
           {/* Add Exam Form */}
           <section style={sectionCardStyle}>
-            <h4 style={{ margin: "0 0 20px", fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Create New Examination</h4>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, alignItems: "flex-end" }}>
+            <h4 style={{ margin: "0 0 28px", fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Register New Examination</h4>
+
+            {/* ROW 1: Level, Grade, Term */}
+            <div style={{ 
+              display: "grid", 
+              gridTemplateColumns: "1fr 1fr 1fr", 
+              gap: 24, 
+              marginBottom: 24 
+            }}>
               <div>
-                <label style={labelStyle}>Exam Name</label>
-                <input type="text" placeholder="e.g. End Term 1 Exam" value={newExam.name} onChange={(e) => setNewExam({...newExam, name: e.target.value})} style={inputStyle} />
+                <label style={labelStyle}>Level</label>
+                <select value={newExam.level} onChange={(e) => setNewExam({...newExam, level: e.target.value})} style={inputStyle}>
+                  {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl}>{lvl}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Grade</label>
+                <select value={newExam.grade} onChange={(e) => setNewExam({...newExam, grade: e.target.value})} style={inputStyle}>
+                  {(GRADES_BY_LEVEL[newExam.level] || []).map(g => <option key={g}>{g}</option>)}
+                </select>
               </div>
               <div>
                 <label style={labelStyle}>Term</label>
@@ -157,64 +273,137 @@ const Exams = () => {
                   <option>Term 3</option>
                 </select>
               </div>
+            </div>
+
+            {/* ROW 2: Exam Name, Cut Off Mark, Register Button */}
+            <div style={{ 
+              display: "grid", 
+              gridTemplateColumns: "1fr 1fr 1fr", 
+              gap: 24, 
+              alignItems: "flex-end" 
+            }}>
               <div>
-                <label style={labelStyle}>Target Levels</label>
-                <select value={newExam.levels} onChange={(e) => setNewExam({...newExam, levels: e.target.value})} style={inputStyle}>
-                  <option>All Phases</option>
-                  <option>Pre-Primary</option>
-                  <option>Primary</option>
-                  <option>Junior Secondary</option>
-                  <option>Senior Secondary</option>
-                </select>
+                <label style={labelStyle}>Exam Name</label>
+                <input type="text" placeholder="e.g. End of Term 1" value={newExam.name} onChange={(e) => setNewExam({...newExam, name: e.target.value})} style={inputStyle} />
               </div>
               <div>
-                <label style={labelStyle}>Start Date</label>
-                <input type="date" value={newExam.date} onChange={(e) => setNewExam({...newExam, date: e.target.value})} style={inputStyle} />
+                <label style={labelStyle}>Cut Off Mark (%)</label>
+                <input type="number" placeholder="0" value={newExam.weight} onChange={(e) => setNewExam({...newExam, weight: e.target.value})} style={inputStyle} />
               </div>
-              <button 
-                onClick={handleAddExam}
-                style={{ height: 42, padding: "0 24px", background: "#1B6B3A", color: "#fff", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", transition: "all 0.2s" }}
-              >+ Register Exam</button>
+              <div>
+                <button 
+                  onClick={handleAddExam}
+                  style={{ 
+                    width: "100%",
+                    height: 46, 
+                    background: activeColor, 
+                    color: "#fff", 
+                    border: "none", 
+                    borderRadius: 10, 
+                    fontSize: 14, 
+                    fontWeight: 700, 
+                    cursor: "pointer", 
+                    transition: "all 0.2s",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    boxShadow: "0 4px 12px rgba(204, 120, 92, 0.2)"
+                  }}
+                >
+                  <span style={{ fontSize: 16 }}>+</span> Register Examination
+                </button>
+              </div>
             </div>
           </section>
 
-          {/* Exams Roster */}
-          <section style={sectionCardStyle}>
-            <h4 style={{ margin: "0 0 16px", fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Active Examinations</h4>
-            <div style={{ borderRadius: 12, border: "1px solid #E8EAF0", overflow: "hidden" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
+          {/* Exams Selection & Editable Grid */}
+          <section style={{ ...sectionCardStyle, padding: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 16 }}>
+              <h4 style={{ margin: 0, fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Manage Active Examinations</h4>
+              
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>LEVEL:</span>
+                  <select value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
+                    {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl}>{lvl}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>GRADE:</span>
+                  <select value={filterGrade} onChange={(e) => setFilterGrade(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
+                    {(GRADES_BY_LEVEL[filterLevel] || []).map(g => <option key={g}>{g}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>TERM:</span>
+                  <select value={filterTerm} onChange={(e) => setFilterTerm(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
+                    <option>Term 1</option>
+                    <option>Term 2</option>
+                    <option>Term 3</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="table-container" style={{ borderRadius: 12, border: "1px solid #E8EAF0", overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead style={{ background: "#F8FAFC", borderBottom: "2px solid #E8EAF0" }}>
                   <tr>
-                    <th style={{ padding: "14px 18px", textAlign: "left", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>EXAM NAME</th>
+                    <th style={{ padding: "14px 18px", textAlign: "left", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>EXAMINATION NAME</th>
                     <th style={{ padding: "14px 18px", textAlign: "left", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>TERM</th>
-                    <th style={{ padding: "14px 18px", textAlign: "left", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>PHASES</th>
+                    <th style={{ padding: "14px 18px", textAlign: "center", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>CUT OFF MARK</th>
                     <th style={{ padding: "14px 18px", textAlign: "center", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>STATUS</th>
                     <th style={{ padding: "14px 18px", textAlign: "center", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>ACTIONS</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {examsList.map((exam, idx) => (
-                    <tr key={exam.id} style={{ borderBottom: "1px solid #F0F2F5", background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
-                      <td style={{ padding: "14px 18px" }}>
-                        <div style={{ fontWeight: 700, color: "#1A1A2E" }}>{exam.name}</div>
-                        <div style={{ fontSize: 11, color: "#8A8FA8", marginTop: 2 }}>Starts: {exam.date || "TBD"}</div>
+                  {filteredExams.map((exam, idx) => (
+                    <tr key={exam.id} style={{ borderBottom: "1px solid #e6dfd8", background: idx % 2 === 0 ? "#fff" : "#fafafa" }}>
+                      <td style={{ padding: "12px 18px" }}>
+                        <input 
+                          type="text" 
+                          value={exam.name} 
+                          onChange={(e) => updateExam(exam.id, 'name', e.target.value)}
+                          style={{ border: "none", background: "transparent", fontWeight: 700, color: "#2a2421", width: "100%", outline: "none", fontSize: 14 }}
+                        />
                       </td>
-                      <td style={{ padding: "14px 18px", color: "#4A4A6A", fontWeight: 600 }}>{exam.term}</td>
-                      <td style={{ padding: "14px 18px" }}>
-                        <span style={{ fontSize: 12, padding: "3px 8px", background: "#EBF3FB", color: "#1A5F9C", borderRadius: 6, fontWeight: 600 }}>{exam.levels}</span>
+                      <td style={{ padding: "12px 18px" }}>
+                        <select 
+                          value={exam.term} 
+                          onChange={(e) => updateExam(exam.id, 'term', e.target.value)}
+                          style={{ border: "none", background: "transparent", color: "#2a2421", fontWeight: 500, outline: "none", fontSize: 14 }}
+                        >
+                          <option>Term 1</option>
+                          <option>Term 2</option>
+                          <option>Term 3</option>
+                        </select>
                       </td>
-                      <td style={{ padding: "14px 18px", textAlign: "center" }}>
+                      <td style={{ padding: "12px 18px", textAlign: "center" }}>
+                        <input 
+                          type="number" 
+                          value={exam.weight} 
+                          onChange={(e) => updateExam(exam.id, 'weight', e.target.value)}
+                          style={{ border: "1px solid #e6dfd8", borderRadius: 6, padding: "4px 8px", width: 60, textAlign: "center", fontWeight: 700, color: activeColor, outline: "none" }}
+                        />
+                      </td>
+                      <td style={{ padding: "12px 18px", textAlign: "center" }}>
                         <span style={{ 
                           padding: "4px 12px", borderRadius: 12, fontSize: 11, fontWeight: 700,
-                          background: exam.status === "Published" || exam.status === "Completed" ? "#E8F5EE" : exam.status === "Ongoing" ? "#FFF9E6" : "#F4F5F7",
+                          background: exam.status === "Published" || exam.status === "Completed" ? "#ebf5ee" : exam.status === "Ongoing" ? "#fff9e6" : "#f4f5f7",
                           color: exam.status === "Published" || exam.status === "Completed" ? "#1B6B3A" : exam.status === "Ongoing" ? "#D97706" : "#8A8FA8"
                         }}>{exam.status}</span>
                       </td>
-                      <td style={{ padding: "14px 18px", textAlign: "center" }}>
+                      <td style={{ padding: "10px 18px", textAlign: "center" }}>
                         <button onClick={() => removeExam(exam.id)} style={{ background: "none", border: "none", cursor: "pointer", opacity: 0.6 }} title="Delete">🗑️</button>
                       </td>
                     </tr>
                   ))}
+                  {filteredExams.length === 0 && (
+                    <tr>
+                      <td colSpan="5" style={{ padding: "30px", textAlign: "center", color: "#8A8FA8", fontSize: 13 }}>No examinations found for this selection.</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -224,199 +413,240 @@ const Exams = () => {
 
       {/* 2. EXAM OPTIONS TAB */}
       {activeTab === "options" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-          <section style={sectionCardStyle}>
-            <h4 style={{ margin: "0 0 20px", fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Weighting & Calculations</h4>
-            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-              <div>
-                <label style={labelStyle}>End Term Weight (%)</label>
-                <input 
-                  type="number" 
-                  value={examOptions.weighting.endterm} 
-                  onChange={(e) => setExamOptions({...examOptions, weighting: {...examOptions.weighting, endterm: parseInt(e.target.value) || 0}})}
-                  style={inputStyle} 
-                />
-                <p style={{ fontSize: 11, color: "#8A8FA8", marginTop: 6 }}>The percentage that End Term Exams contribute to the final grade.</p>
-              </div>
-              <div>
-                <label style={labelStyle}>Continuous Assessment (CAT) Weight (%)</label>
-                <input 
-                  type="number" 
-                  value={examOptions.weighting.cat1} 
-                  onChange={(e) => setExamOptions({...examOptions, weighting: {...examOptions.weighting, cat1: parseInt(e.target.value) || 0}})}
-                  style={inputStyle} 
-                />
-                <p style={{ fontSize: 11, color: "#8A8FA8", marginTop: 6 }}>Combined weight for all CATs performed during the term.</p>
-              </div>
-              <div style={{ padding: "14px", background: "#FFF9E6", borderRadius: 10, border: "1px solid #FFE58F" }}>
-                <span style={{ fontSize: 12, color: "#856404", fontWeight: 700 }}>⚠️ Note:</span>
-                <span style={{ fontSize: 12, color: "#856404", marginLeft: 6 }}>Total weighting must equal 100% for balanced report cards.</span>
-              </div>
-            </div>
-          </section>
-
-          <section style={sectionCardStyle}>
-            <h4 style={{ margin: "0 0 20px", fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>General Exam Policies</h4>
-            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-              <div>
-                <label style={labelStyle}>Default Grading Scale</label>
-                <select style={inputStyle}>
-                  <option>Standard CBC (EE, ME, AE, BE)</option>
-                  <option>Traditional Academic (A-E)</option>
-                  <option>Points-Based System</option>
-                </select>
-              </div>
-              <div>
-                <label style={labelStyle}>Maximum Subject Mark</label>
-                <input type="number" defaultValue={100} style={inputStyle} />
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
-                <input type="checkbox" id="autoPublish" style={{ width: 18, height: 18 }} />
-                <label htmlFor="autoPublish" style={{ fontSize: 13, color: "#4A4A6A", fontWeight: 600, cursor: "pointer" }}>Auto-publish results to Parent Portal after deadline</label>
+        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          {/* Options Selection Bar */}
+          <section style={{ ...sectionCardStyle, padding: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
+              <h4 style={{ margin: 0, fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Weighting Configuration</h4>
+              
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>LEVEL:</span>
+                  <select value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
+                    {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl}>{lvl}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>GRADE:</span>
+                  <select value={filterGrade} onChange={(e) => setFilterGrade(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
+                    {(GRADES_BY_LEVEL[filterLevel] || []).map(g => <option key={g}>{g}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>TERM:</span>
+                  <select value={filterTerm} onChange={(e) => setFilterTerm(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
+                    <option>Term 1</option>
+                    <option>Term 2</option>
+                    <option>Term 3</option>
+                  </select>
+                </div>
               </div>
             </div>
           </section>
-        </div>
-      )}
 
-      {/* 3. EXAMINATION ENTRY TAB */}
-      {activeTab === "entry" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          {/* Filters Bar */}
-          <div 
-            className="responsive-grid"
-            style={{ 
-              display: "grid", 
-              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", 
-              gap: 16, 
-              padding: "20px", 
-              background: "#F8FAFC", 
-              borderRadius: 16, 
-              border: "1px solid #E8EAF0" 
-            }}
-          >
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <label style={labelStyle}>Class & Stream</label>
-              <div style={{ display: "flex", gap: 8 }}>
-                <select
-                  value={selectedClass}
-                  onChange={(e) => setSelectedClass(e.target.value)}
-                  style={{ flex: 1, ...inputStyle }}
-                >
-                  {CLASSES.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-                <select
-                  value={selectedStream}
-                  onChange={(e) => setSelectedStream(e.target.value)}
-                  style={{ width: 70, ...inputStyle }}
-                >
-                  <option value="A">A</option>
-                  <option value="B">B</option>
-                </select>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <label style={labelStyle}>Subject</label>
-              <select
-                value={selectedSubject}
-                onChange={(e) => setSelectedSubject(e.target.value)}
-                style={inputStyle}
-              >
-                {availableSubjects.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <label style={labelStyle}>Term</label>
-              <select
-                value={selectedTerm}
-                onChange={(e) => setSelectedTerm(e.target.value)}
-                style={inputStyle}
-              >
-                <option>Term 1</option>
-                <option>Term 2</option>
-                <option>Term 3</option>
-              </select>
-            </div>
-
-            <div style={{ display: "flex", alignItems: "flex-end" }}>
-              <button style={{ height: 42, padding: "0 28px", background: "linear-gradient(135deg, #1B6B3A, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontSize: 13.5, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 10px rgba(27,107,58,0.2)" }}>
-                💾 Save Matrix
-              </button>
-            </div>
-          </div>
-
-          {/* Marks Entry Spreadsheet */}
-          <div className="table-container" style={{ 
-            background: "#fff", 
-            border: "1px solid #E2E8F0", 
-            borderRadius: 12, 
-            overflowX: "auto", 
-            boxShadow: "0 1px 3px rgba(0,0,0,0.1)" 
-          }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 12 }}>
-              <thead style={{ background: "#F1F5F9", borderBottom: "2px solid #E2E8F0" }}>
-                <tr>
-                  <th style={{ padding: "8px 12px", border: "1px solid #E2E8F0", width: 80 }}>ADM</th>
-                  <th style={{ padding: "8px 12px", border: "1px solid #E2E8F0", minWidth: 150 }}>NAME</th>
-                  {termExams.map(exam => (
-                    <th key={exam.id} style={{ padding: "8px 12px", border: "1px solid #E2E8F0", textAlign: "center", width: 80 }}>
-                      <div style={{ fontSize: 10, color: "#64748B" }}>{exam.term}</div>
-                      <div style={{ fontWeight: 800 }}>{exam.name.split(' ').pop()}</div>
-                    </th>
-                  ))}
-                  <th style={{ padding: "8px 12px", border: "1px solid #E2E8F0", textAlign: "center", background: "#F8FAFC", width: 80 }}>TOTAL</th>
-                  <th style={{ padding: "8px 12px", border: "1px solid #E2E8F0", textAlign: "center", background: "#F8FAFC", width: 80 }}>GRADE</th>
-                </tr>
-              </thead>
-              <tbody>
-                {students.map((s, sIdx) => {
-                  const studentMarks = marksData[s.id] || {};
-                  const total = termExams.reduce((sum, exam) => sum + (studentMarks[exam.id] || 0), 0);
-                  const average = termExams.length > 0 ? total / termExams.length : 0;
-                  const grade = getGrade(average, gradeLevel);
-
-                  return (
-                    <tr key={s.id}>
-                      <td style={{ padding: "8px 12px", border: "1px solid #E2E8F0", fontWeight: 700, color: "#1A5F9C", background: "#F8FAFC" }}>{s.admNo.split('/').pop()}</td>
-                      <td style={{ padding: "8px 12px", border: "1px solid #E2E8F0", fontWeight: 600 }}>{s.fullName}</td>
-                      {termExams.map((exam, eIdx) => (
-                        <td key={exam.id} style={{ padding: "0", border: "1px solid #E2E8F0" }}>
-                          <input
-                            id={`cell-${sIdx}-${eIdx}`}
-                            type="text"
-                            value={studentMarks[exam.id] ?? ""}
-                            onChange={(e) => handleScoreChange(s.id, exam.id, e.target.value)}
-                            onKeyDown={(e) => navigateGrid(e, sIdx, eIdx, students.length, termExams.length)}
-                            style={{ 
-                              width: "100%", 
-                              height: "36px", 
-                              border: "none", 
-                              textAlign: "center", 
-                              fontSize: 13, 
-                              fontWeight: 700, 
-                              outline: "none",
-                              background: "transparent"
-                            }}
-                            autoComplete="off"
-                          />
-                        </td>
-                      ))}
-                      <td style={{ padding: "8px 12px", border: "1px solid #E2E8F0", textAlign: "center", fontWeight: 800, background: "#F8FAFC" }}>
-                        {total}
-                      </td>
-                      <td style={{ padding: "8px 12px", border: "1px solid #E2E8F0", textAlign: "center", background: "#F8FAFC" }}>
-                        <span style={{ fontSize: 11, fontWeight: 900, color: grade.color }}>{grade.code}</span>
-                      </td>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1.8fr", gap: 24 }}>
+            <section style={sectionCardStyle}>
+              <h4 style={{ margin: "0 0 20px", fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Percentage Contributions</h4>
+              <div className="table-container" style={{ borderRadius: 12, border: "1px solid #E8EAF0", overflow: "hidden", marginBottom: 20 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead style={{ background: "#F8FAFC", borderBottom: "2px solid #E8EAF0" }}>
+                    <tr>
+                      <th style={{ padding: "14px 18px", textAlign: "left", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>EXAMINATION NAME</th>
+                      <th style={{ padding: "14px 18px", textAlign: "center", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>PERCENTAGE CONTRIBUTION</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {filteredExams.map((exam, idx) => (
+                      <tr key={exam.id} style={{ borderBottom: "1px solid #F0F2F5", background: idx % 2 === 0 ? "#fff" : "#F8FAFC" }}>
+                        <td style={{ padding: "12px 18px", fontWeight: 700, color: "#1A1A2E" }}>{exam.name}</td>
+                        <td style={{ padding: "12px 18px", textAlign: "center" }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                            <input 
+                              type="number" 
+                              value={exam.weight} 
+                              onChange={(e) => updateExam(exam.id, 'weight', e.target.value)}
+                              style={{ border: "1.5px solid #E8EAF0", borderRadius: 8, padding: "6px 10px", width: 80, textAlign: "center", fontWeight: 800, color: "#1B6B3A", fontSize: 14, outline: "none" }}
+                            />
+                            <span style={{ fontWeight: 700, color: "#8A8FA8" }}>%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {filteredExams.length === 0 && (
+                      <tr>
+                        <td colSpan="2" style={{ padding: "30px", textAlign: "center", color: "#8A8FA8", fontSize: 13 }}>No examinations found for this selection.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{ padding: "16px", background: "#F1F5F9", borderRadius: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 14, color: "#475569", fontWeight: 700 }}>
+                  Cumulative Total: 
+                  <span style={{ 
+                    marginLeft: 12, padding: "6px 14px", borderRadius: 8, 
+                    background: filteredExams.reduce((acc, curr) => acc + (parseInt(curr.weight) || 0), 0) === 100 ? "#1B6B3A" : "#D97706",
+                    color: "#fff",
+                    boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+                  }}>
+                    {filteredExams.reduce((acc, curr) => acc + (parseInt(curr.weight) || 0), 0)}%
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: "#64748B", textAlign: "right", maxWidth: "200px", lineHeight: 1.4 }}>
+                  {filteredExams.reduce((acc, curr) => acc + (parseInt(curr.weight) || 0), 0) === 100 
+                    ? "✅ Weighting is balanced and ready for report cards." 
+                    : "⚠️ Total must equal 100% for correct calculations."}
+                </div>
+              </div>
+            </section>
+
+            <section style={sectionCardStyle}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                <h4 style={{ margin: 0, fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Grading System Configuration</h4>
+                <div style={{ display: "flex", background: "#F1F5F9", padding: "4px", borderRadius: 10 }}>
+                  <button 
+                    onClick={() => setGradingScope("all")}
+                    style={{ padding: "6px 12px", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", background: gradingScope === "all" ? "#fff" : "transparent", color: gradingScope === "all" ? "#1B6B3A" : "#64748B", boxShadow: gradingScope === "all" ? "0 2px 4px rgba(0,0,0,0.05)" : "none", transition: "all 0.2s" }}
+                  >Global</button>
+                  <button 
+                    onClick={() => setGradingScope("per_subject")}
+                    style={{ padding: "6px 12px", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", background: gradingScope === "per_subject" ? "#fff" : "transparent", color: gradingScope === "per_subject" ? "#1B6B3A" : "#64748B", boxShadow: gradingScope === "per_subject" ? "0 2px 4px rgba(0,0,0,0.05)" : "none", transition: "all 0.2s" }}
+                  >Per Subject</button>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                {gradingScope === "per_subject" && (
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={labelStyle}>Select Subject to Configure</label>
+                    <select 
+                      style={inputStyle} 
+                      value={selectedSubjectForGrading || ""} 
+                      onChange={(e) => setSelectedSubjectForGrading(e.target.value)}
+                    >
+                      <option value="">-- Choose Subject --</option>
+                      {currentSubjects.map(sub => <option key={sub} value={sub}>{sub}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                {(gradingScope === "all" || selectedSubjectForGrading) && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                    {/* Add Grade Form Row */}
+                    <div style={{ padding: "20px", background: "#F8FAFC", borderRadius: 12, border: "1px solid #E8EAF0" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "20px", alignItems: "flex-end" }}>
+                        <div>
+                          <label style={{ ...labelStyle, fontSize: 10 }}>Grade</label>
+                          <input type="text" placeholder="e.g. EE" value={newGradeEntry.code} onChange={(e) => setNewGradeEntry({...newGradeEntry, code: e.target.value})} style={inputStyle} />
+                        </div>
+                        <div style={{ gridColumn: "span 2" }}>
+                          <label style={{ ...labelStyle, fontSize: 10 }}>Description / Label</label>
+                          <input type="text" placeholder="e.g. Exceeding Expectations" value={newGradeEntry.label} onChange={(e) => setNewGradeEntry({...newGradeEntry, label: e.target.value})} style={inputStyle} />
+                        </div>
+                        <div>
+                          <label style={{ ...labelStyle, fontSize: 10 }}>Min %</label>
+                          <input type="number" placeholder="0" value={newGradeEntry.min} onChange={(e) => setNewGradeEntry({...newGradeEntry, min: e.target.value})} style={inputStyle} />
+                        </div>
+                        <div>
+                          <label style={{ ...labelStyle, fontSize: 10 }}>Max %</label>
+                          <input type="number" placeholder="100" value={newGradeEntry.max} onChange={(e) => setNewGradeEntry({...newGradeEntry, max: e.target.value})} style={inputStyle} />
+                        </div>
+                        <div>
+                          <label style={{ ...labelStyle, fontSize: 10 }}>Points</label>
+                          <input type="number" placeholder="0" value={newGradeEntry.points} onChange={(e) => setNewGradeEntry({...newGradeEntry, points: e.target.value})} style={inputStyle} />
+                        </div>
+                        <div style={{ gridColumn: "1 / -1" }}>
+                          <button 
+                            onClick={() => {
+                              if (!newGradeEntry.code || !newGradeEntry.min) return;
+                              setCustomGrades([...customGrades, { ...newGradeEntry, id: Date.now() }]);
+                              setNewGradeEntry({ code: "", label: "", min: "", max: "", points: "" });
+                            }}
+                            style={{ 
+                              height: 42, 
+                              width: "100%", 
+                              background: "#1B6B3A", 
+                              color: "#fff", 
+                              border: "none", 
+                              borderRadius: 8, 
+                              fontSize: 12, 
+                              fontWeight: 700, 
+                              cursor: "pointer",
+                              boxShadow: "0 2px 8px rgba(27, 107, 58, 0.2)"
+                            }}
+                          >+ Add Grade to System</button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* View Settings Section */}
+                    <div style={{ borderRadius: 12, border: "1px solid #E8EAF0", overflow: "hidden" }}>
+                      <div 
+                        onClick={() => setIsSettingsCollapsed(!isSettingsCollapsed)}
+                        style={{ padding: "12px 18px", background: "#fff", borderBottom: isSettingsCollapsed ? "none" : "1px solid #F1F5F9", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
+                      >
+                        <div style={{ fontSize: 12, fontWeight: 700, color: "#1A1A2E", display: "flex", alignItems: "center", gap: 8 }}>
+                          <span>📖</span> View Settings
+                        </div>
+                        <span style={{ fontSize: 10, color: "#8A8FA8" }}>{isSettingsCollapsed ? "▼" : "▲"}</span>
+                      </div>
+                      
+                      {!isSettingsCollapsed && (
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                          <thead>
+                            <tr style={{ background: "#F8FAFC", borderBottom: "1px solid #E8EAF0" }}>
+                              <th style={{ textAlign: "left", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700 }}>Grade</th>
+                              <th style={{ textAlign: "left", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700 }}>Label</th>
+                              <th style={{ textAlign: "center", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700 }}>Range %</th>
+                              <th style={{ textAlign: "center", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700 }}>Points</th>
+                              <th style={{ textAlign: "center", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700 }}></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {customGrades.map((g, idx) => (
+                              <tr key={g.id || idx} style={{ borderBottom: "1px solid #F1F5F9" }}>
+                                <td style={{ padding: "12px 18px" }}>
+                                  <span style={{ 
+                                    padding: "4px 10px", borderRadius: 6, fontWeight: 800, fontSize: 11,
+                                    background: g.bg || "#F1F5F9", color: g.color || "#4A4A6A"
+                                  }}>{g.code}</span>
+                                </td>
+                                <td style={{ padding: "12px 18px", fontWeight: 600, color: "#1A1A2E" }}>{g.label}</td>
+                                <td style={{ padding: "12px 18px", textAlign: "center", fontWeight: 700, color: "#4A4A6A" }}>{g.min} - {g.max || 100}</td>
+                                <td style={{ padding: "12px 18px", textAlign: "center", fontWeight: 800, color: "#1A5F9C" }}>{g.points || "-"}</td>
+                                <td style={{ padding: "12px 18px", textAlign: "center" }}>
+                                  <button 
+                                    onClick={() => setCustomGrades(customGrades.filter((_, i) => i !== idx))}
+                                    style={{ background: "none", border: "none", cursor: "pointer", color: "#8A8FA8", fontSize: 14 }}
+                                  >🗑️</button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px", background: "#EBF3FB", borderRadius: 12, border: "1px solid #D1E3F8" }}>
+                  <div style={{ fontSize: 18 }}>💡</div>
+                  <div style={{ fontSize: 12, color: "#1A5F9C", lineHeight: 1.4, fontWeight: 500 }}>
+                    Grading systems defined here automatically persist across all terms for the selected level.
+                  </div>
+                </div>
+                
+                <button style={{ width: "100%", height: 42, background: "#1A5F9C", color: "#fff", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", marginTop: 10 }}>
+                  Save Grading Configuration
+                </button>
+              </div>
+            </section>
           </div>
         </div>
       )}
+
+
     </div>
   );
 };

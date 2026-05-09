@@ -1,177 +1,335 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { canAccessNav, PLANS } from '../../lib/planConfig';
 
-const navigation = [
-  { section: "Overview" },
-  { id: "dashboard", label: "Dashboard", icon: "⊞" },
-  { section: "Academics" },
-  { id: "students", label: "Students & Admission", icon: "🎓" },
-  { id: "exams", label: "Examinations", icon: "📝" },
-  { id: "reports", label: "Report Cards", icon: "📋" },
-  { section: "Administration" },
-  { id: "fees", label: "Fees Management", icon: "💳" },
-  { id: "teachers", label: "Staff & Teachers", icon: "👩‍🏫" },
-  { section: "System" },
-  { id: "settings", label: "School Settings", icon: "⚙️" },
-];
+const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, onSignOut, isMobile, isOpen, onClose }) => {
+  const menuSections = [
+    {
+      title: "Administration",
+      icon: "🏢",
+      items: [
+        { id: "registration-form", label: "School Registration", icon: "📝" },
+        { id: "school-info", label: "School Information", icon: "ℹ️" },
+        { id: "streams-dorms", label: "Streams & Dorms", icon: "🏘️" },
+        { id: "students", label: "Students & Admission", icon: "🎓" },
+        { id: "teachers", label: "Staff & Teachers", icon: "👥" },
+      ]
+    },
+    {
+      title: "Academics",
+      icon: "📚",
+      items: [
+        { id: "exams", label: "Exam Settings", icon: "⚙️", module: "Examinations" },
+        { id: "exam-entries", label: "Exam Entries", icon: "✍️", module: "Examinations" },
+        { id: "subjects", label: "Subjects", icon: "📖", module: "Examinations" },
+        { id: "grading", label: "Grading System", icon: "📊", module: "Examinations" },
+      ]
+    },
+    {
+      title: "Accounts",
+      icon: "💰",
+      items: [
+        { id: "fees", label: "Fees Management", icon: "🧾" },
+        { id: "fees-structure", label: "Fee Structure", icon: "📋" },
+      ]
+    },
+    {
+      title: "Reports",
+      icon: "📈",
+      items: [
+        { id: "reports", label: "Report Cards", icon: "📋" },
+        { id: "merit-list", label: "Merit Lists", icon: "🏆" },
+      ]
+    },
+    {
+      title: "System",
+      icon: "⚙️",
+      items: [
+        { id: "users", label: "Users & Roles", icon: "👤" },
+        { id: "library", label: "Library", icon: "📚", module: "Library" },
+      ]
+    }
+  ];
 
-const Sidebar = ({ activeTab, setActiveTab, isCollapsed, setIsCollapsed, isMobileOpen }) => {
+  const [collapsedSections, setCollapsedSections] = useState({});
+
+  const toggleSection = (title) => {
+    setCollapsedSections(prev => ({
+      ...prev,
+      [title]: !prev[title]
+    }));
+  };
+
+  const isModuleEnabled = (moduleName) => {
+    if (!moduleName) return true;
+    if (!schoolConfig || !schoolConfig.modules) return true;
+    return schoolConfig.modules.includes(moduleName);
+  };
+
+  const planData = PLANS[currentPlan] || PLANS.starter;
+
+  const sidebarBg = "#2a2421";
+  const activeColor = "#cc785c";
+  const textSecondary = "#a0a09a";
+  const hairline = "rgba(230, 223, 216, 0.1)";
+
+  const handleItemClick = (itemId) => {
+    const allowed = canAccessNav(currentPlan, itemId);
+    if (!allowed) {
+      // Navigate anyway — the App will show PlanGate
+    }
+    onNavigate(itemId);
+    if (isMobile) onClose();
+  };
+
+  // Get initials from email
+  const initials = userEmail
+    ? userEmail.split('@')[0].slice(0, 2).toUpperCase()
+    : 'AD';
+
   return (
-    <aside
-      className={`sidebar-scroll sidebar-overlay ${isMobileOpen ? 'active' : ''}`}
+    <div 
+      className={`sidebar-overlay ${isOpen ? 'active' : ''}`}
       style={{
-        width: isCollapsed ? 240 : 60,
-        background: "linear-gradient(180deg, #0F4C2A 0%, #1B6B3A 60%, #1E7A42 100%)",
+        width: 280,
+        background: sidebarBg,
+        color: "#fff",
         display: "flex",
         flexDirection: "column",
-        transition: "width 0.25s ease, transform 0.3s ease",
-        overflow: "hidden",
-        flexShrink: 0,
-        position: "relative",
-        zIndex: 1001,
-        boxShadow: "4px 0 20px rgba(0,0,0,0.15)",
+        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+        height: "100vh",
+        position: isMobile ? "fixed" : "relative",
+        zIndex: 100,
+        borderRight: `1px solid ${hairline}`
       }}
     >
-      <div
-        style={{
-          padding: "18px 16px 14px",
-          borderBottom: "1px solid rgba(255,255,255,0.1)",
+      {/* Brand Header */}
+      <div style={{ 
+        padding: "32px 24px", 
+        borderBottom: `1px solid ${hairline}`,
+        display: "flex",
+        alignItems: "center",
+        gap: 12
+      }}>
+        <div style={{ 
+          width: 36, 
+          height: 36, 
+          background: activeColor, 
+          borderRadius: 8,
           display: "flex",
           alignItems: "center",
-          gap: 10,
-        }}
-      >
-        <div
-          style={{
-            width: 34,
-            height: 34,
-            background: "rgba(255,255,255,0.2)",
-            borderRadius: 9,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 18,
-            flexShrink: 0,
-          }}
-        >
-          🇰🇪
+          justifyContent: "center",
+          fontSize: 20,
+          fontWeight: 900,
+          boxShadow: `0 4px 12px ${activeColor}44`
+        }}>
+          E
         </div>
-        {isCollapsed && (
-          <div style={{ flex: 1, overflow: "hidden" }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: "#fff", letterSpacing: 0.5 }}>
-              EduConnect
-            </div>
-            <div style={{ fontSize: 10, color: "#A8D5BA", fontWeight: 600 }}>
-              SCHOOL MS
-            </div>
-          </div>
-        )}
+        <div style={{ 
+          fontFamily: "'EB Garamond', serif",
+          fontSize: 22, 
+          fontWeight: 700, 
+          letterSpacing: "-0.02em",
+          color: "#fff"
+        }}>
+          EduConnect
+        </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "12px 10px" }} className="sidebar-scroll">
-        {navigation.map((item, index) => {
-          if (item.section) {
-            return isCollapsed ? (
-              <div
-                key={index}
-                style={{
-                  fontSize: 10,
-                  fontWeight: 800,
-                  color: "#8ABC9D",
-                  textTransform: "uppercase",
-                  padding: "16px 10px 8px",
-                  letterSpacing: 1,
-                }}
-              >
-                {item.section}
-              </div>
-            ) : (
-              <div key={index} style={{ height: 20 }} />
-            );
-          }
+      {/* Navigation */}
+      <div 
+        className="sidebar-scroll"
+        style={{ 
+          flex: 1, 
+          overflowY: "auto", 
+          padding: "24px 12px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8
+        }}
+      >
+        {/* Dashboard Link */}
+        <div
+          onClick={() => handleItemClick("dashboard")}
+          style={{
+            padding: "12px 16px",
+            borderRadius: 12,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            background: activeId === "dashboard" ? "rgba(204, 120, 92, 0.15)" : "transparent",
+            color: activeId === "dashboard" ? activeColor : "#fff",
+            fontWeight: activeId === "dashboard" ? 700 : 500,
+            transition: "all 0.2s ease",
+            marginBottom: 16
+          }}
+        >
+          <span style={{ fontSize: 18 }}>🏠</span>
+          <span style={{ fontSize: 14 }}>Dashboard</span>
+        </div>
 
-          const isActive = activeTab === item.id;
-          return (
-            <div
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
+        {menuSections.map((section) => (
+          <div key={section.title} style={{ marginBottom: 4 }}>
+            <div 
+              onClick={() => toggleSection(section.title)}
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 12,
-                padding: "10px 12px",
-                borderRadius: 10,
+                justifyContent: "space-between",
+                padding: "12px 16px",
                 cursor: "pointer",
-                marginBottom: 4,
-                transition: "all 0.2s",
-                background: isActive ? "rgba(255,255,255,0.15)" : "transparent",
-                color: isActive ? "#fff" : "#A8D5BA",
-                position: "relative",
-              }}
-              onMouseEnter={(e) => {
-                if (!isActive) e.currentTarget.style.color = "#fff";
-              }}
-              onMouseLeave={(e) => {
-                if (!isActive) e.currentTarget.style.color = "#A8D5BA";
+                borderRadius: 12,
+                color: "#fff",
+                transition: "all 0.2s ease",
+                background: "rgba(255,255,255,0.02)"
               }}
             >
-              <div style={{ fontSize: 18, width: 20, textAlign: "center", flexShrink: 0 }}>
-                {item.icon}
-              </div>
-              {isCollapsed && (
-                <span style={{ fontSize: 13, fontWeight: isActive ? 600 : 500, whiteSpace: "nowrap" }}>
-                  {item.label}
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontSize: 16 }}>{section.icon}</span>
+                <span style={{ 
+                  fontFamily: "'EB Garamond', serif",
+                  fontSize: 17, 
+                  fontWeight: 700,
+                  letterSpacing: "0.01em"
+                }}>
+                  {section.title}
                 </span>
-              )}
-              {isActive && (
-                <div
-                  style={{
-                    position: "absolute",
-                    left: -10,
-                    width: 4,
-                    height: 18,
-                    background: "#F1C40F",
-                    borderRadius: "0 4px 4px 0",
-                  }}
-                />
-              )}
+              </div>
+              <span style={{ 
+                fontSize: 10, 
+                transition: "transform 0.3s ease",
+                transform: collapsedSections[section.title] ? "rotate(-90deg)" : "rotate(0deg)",
+                opacity: 0.5
+              }}>
+                ▼
+              </span>
             </div>
-          );
-        })}
+
+            <div style={{ 
+              maxHeight: collapsedSections[section.title] ? 0 : 1000,
+              overflow: "hidden",
+              transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+              paddingLeft: 12,
+              marginTop: 4
+            }}>
+              {section.items
+                .filter(item => isModuleEnabled(item.module))
+                .map((item) => {
+                  const allowed = canAccessNav(currentPlan, item.id);
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => handleItemClick(item.id)}
+                      style={{
+                        padding: "10px 16px",
+                        margin: "2px 0",
+                        borderRadius: 10,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        fontSize: 13.5,
+                        color: !allowed
+                          ? "rgba(160,160,154,0.5)"
+                          : activeId === item.id ? activeColor : textSecondary,
+                        background: activeId === item.id ? "rgba(204, 120, 92, 0.1)" : "transparent",
+                        fontWeight: activeId === item.id ? 700 : 500,
+                        transition: "all 0.2s ease",
+                      }}
+                      className="sidebar-item"
+                    >
+                      <span style={{ opacity: activeId === item.id ? 1 : allowed ? 0.7 : 0.3 }}>
+                        {item.icon}
+                      </span>
+                      <span style={{ flex: 1 }}>{item.label}</span>
+                      {!allowed && (
+                        <span style={{ fontSize: 12, opacity: 0.5 }}>🔒</span>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        ))}
       </div>
 
-      <div
-        style={{
-          padding: "12px",
-          borderTop: "1px solid rgba(255,255,255,0.1)",
-          background: "rgba(0,0,0,0.1)",
-        }}
-      >
-        <div
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          style={{
-            height: 34,
-            borderRadius: 8,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#A8D5BA",
-            cursor: "pointer",
-            transition: "all 0.2s",
-            background: "rgba(255,255,255,0.05)",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = "#fff";
-            e.currentTarget.style.background = "rgba(255,255,255,0.1)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = "#A8D5BA";
-            e.currentTarget.style.background = "rgba(255,255,255,0.05)";
-          }}
-        >
-          {isCollapsed ? "« Collapse" : "»"}
+      {/* Plan Badge */}
+      <div style={{
+        padding: "12px 24px",
+        borderTop: `1px solid ${hairline}`,
+      }}>
+        <div style={{
+          padding: "10px 14px",
+          borderRadius: 10,
+          background: `${planData.color}15`,
+          border: `1px solid ${planData.color}30`,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}>
+          <span style={{ fontSize: 14 }}>{planData.icon}</span>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: planData.color }}>
+              {planData.name} Plan
+            </div>
+            <div style={{ fontSize: 10, color: textSecondary }}>
+              {planData.price === 0 ? 'Free' : planData.label}
+            </div>
+          </div>
         </div>
       </div>
-    </aside>
+
+      {/* User Footer */}
+      <div style={{ 
+        padding: "16px 24px 24px", 
+        borderTop: `1px solid ${hairline}`,
+        display: "flex",
+        alignItems: "center",
+        gap: 12
+      }}>
+        <div style={{ 
+          width: 32, 
+          height: 32, 
+          borderRadius: 8, 
+          background: activeColor,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 12,
+          fontWeight: 800,
+          color: "#fff",
+        }}>
+          {initials}
+        </div>
+        <div style={{ overflow: "hidden", flex: 1 }}>
+          <div style={{
+            fontSize: 13, fontWeight: 700, color: "#fff",
+            whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden",
+          }}>
+            {schoolConfig?.schoolName || 'Administrator'}
+          </div>
+          <div style={{
+            fontSize: 11, color: textSecondary,
+            whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden",
+          }}>
+            {userEmail || 'admin@educonnect.com'}
+          </div>
+        </div>
+        <button
+          onClick={onSignOut}
+          title="Sign Out"
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 16, opacity: 0.5, padding: 4,
+            transition: 'opacity 0.2s',
+          }}
+          onMouseEnter={e => e.target.style.opacity = 1}
+          onMouseLeave={e => e.target.style.opacity = 0.5}
+        >
+          🚪
+        </button>
+      </div>
+    </div>
   );
 };
 

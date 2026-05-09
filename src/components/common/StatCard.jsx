@@ -1,14 +1,16 @@
 import React from 'react';
 
-export const StatCard = ({ label, value, sub, color = "#1B6B3A", bg = "#E8F5EE", icon }) => {
+export const StatCard = ({ label, value, sub, color = "#cc785c", bg = "#f5f2eb", icon }) => {
   return (
     <div
       style={{
         background: "#fff",
-        border: "1px solid #E8EAF0",
+        border: "1px solid #e6dfd8",
         borderRadius: 12,
-        padding: "14px 16px",
-        borderTop: `3px solid ${color}`,
+        padding: "20px",
+        boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
+        position: "relative",
+        overflow: "hidden"
       }}
     >
       <div
@@ -16,20 +18,21 @@ export const StatCard = ({ label, value, sub, color = "#1B6B3A", bg = "#E8F5EE",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          marginBottom: 8,
+          marginBottom: 12,
         }}
       >
-        <div style={{ fontSize: 11, color: "#8A8FA8", fontWeight: 500 }}>{label}</div>
+        <div style={{ fontSize: 11, color: "#2a2421", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
         <div
           style={{
-            width: 30,
-            height: 30,
+            width: 32,
+            height: 32,
             background: bg,
             borderRadius: 8,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: 14,
+            fontSize: 16,
+            border: "1px solid #e6dfd8"
           }}
         >
           {icon}
@@ -37,15 +40,16 @@ export const StatCard = ({ label, value, sub, color = "#1B6B3A", bg = "#E8F5EE",
       </div>
       <div
         style={{
-          fontSize: 26,
+          fontSize: 32,
           fontWeight: 700,
-          color: "#1A1A2E",
+          color: "#2a2421",
           lineHeight: 1,
+          fontFamily: "'EB Garamond', serif"
         }}
       >
         {value}
       </div>
-      <div style={{ fontSize: 11, color: "#8A8FA8", marginTop: 5 }}>{sub}</div>
+      <div style={{ fontSize: 13, color: "#8a8fa8", marginTop: 8, fontWeight: 500 }}>{sub}</div>
     </div>
   );
 };

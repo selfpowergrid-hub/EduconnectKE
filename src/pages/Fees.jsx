@@ -1,13 +1,17 @@
 import React, { useState } from 'react';
-import { STUDENTS, MPESA_TRANSACTIONS } from '../data/mockData';
+import { STUDENTS, MPESA_TRANSACTIONS, getClassesByType } from '../data/mockData';
 
-const Fees = () => {
+const Fees = ({ schoolConfig }) => {
   const [activeTab, setActiveTab] = useState("balances");
   const [searchTerm, setSearchTerm] = useState("");
 
+  const currentTypeClasses = getClassesByType(schoolConfig?.schoolType || "Primary");
+  const classIds = currentTypeClasses.map(c => c.id);
+
   const filteredStudents = STUDENTS.filter(s => 
-    s.fullName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    s.admNo.toLowerCase().includes(searchTerm.toLowerCase())
+    classIds.includes(s.gradeId) &&
+    (s.fullName.toLowerCase().includes(searchTerm.toLowerCase()) || 
+     s.admNo.toLowerCase().includes(searchTerm.toLowerCase()))
   ).sort((a, b) => b.feeBalance - a.feeBalance);
 
   const filteredTransactions = MPESA_TRANSACTIONS.filter(t => 
@@ -17,7 +21,18 @@ const Fees = () => {
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", gap: 20, marginBottom: 18, borderBottom: "1px solid #E8EAF0" }}>
+      <div 
+        style={{ 
+          display: "flex", 
+          gap: 20, 
+          marginBottom: 18, 
+          borderBottom: "1px solid #E8EAF0",
+          overflowX: "auto",
+          paddingBottom: 2,
+          flexWrap: "nowrap"
+        }}
+        className="sidebar-scroll"
+      >
         <div 
           onClick={() => setActiveTab("balances")}
           style={{ 
@@ -27,7 +42,8 @@ const Fees = () => {
             color: activeTab === "balances" ? "#1B6B3A" : "#8A8FA8", 
             borderBottom: activeTab === "balances" ? "2px solid #1B6B3A" : "2px solid transparent",
             cursor: "pointer",
-            transition: "all 0.2s"
+            transition: "all 0.2s",
+            whiteSpace: "nowrap"
           }}
         >
           Fee Balances
@@ -41,7 +57,8 @@ const Fees = () => {
             color: activeTab === "transactions" ? "#1B6B3A" : "#8A8FA8", 
             borderBottom: activeTab === "transactions" ? "2px solid #1B6B3A" : "2px solid transparent",
             cursor: "pointer",
-            transition: "all 0.2s"
+            transition: "all 0.2s",
+            whiteSpace: "nowrap"
           }}
         >
           M-Pesa Transactions
@@ -49,7 +66,7 @@ const Fees = () => {
       </div>
 
       <div 
-        className="responsive-grid"
+        className="grid-1"
         style={{ marginBottom: 16, display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center" }}
       >
         <div style={{ position: "relative" }}>
@@ -61,16 +78,17 @@ const Fees = () => {
             onChange={(e) => setSearchTerm(e.target.value)}
             style={{
               width: "100%",
-              padding: "8px 12px 8px 32px",
+              padding: "10px 12px 10px 32px",
               borderRadius: 8,
               border: "1px solid #E8EAF0",
               fontSize: 13,
               outline: "none",
+              boxSizing: "border-box"
             }}
           />
         </div>
         {activeTab === "balances" && (
-          <button style={{ padding: "8px 16px", background: "#1B6B3A", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+          <button style={{ padding: "10px 16px", background: "#1B6B3A", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
             📤 Reminders
           </button>
         )}
