@@ -2,7 +2,7 @@ import React from 'react';
 
 const ProgressBar = ({ label, value, max, color }) => {
   const percentage = Math.round((value / max) * 100);
-  const barColor = color === "#1B6B3A" ? "#cc785c" : color; // Override green with terracotta
+  const barColor = color === "#1B6B3A" ? "#D4AF37" : color; // Override green with terracotta
 
   return (
     <div style={{ marginBottom: 16 }}>

@@ -68,7 +68,7 @@ const Header = ({ onMenuClick, activePageLabel, userEmail, currentPlan, onSignOu
               width: 36, 
               height: 36, 
               borderRadius: "50%", 
-              background: "#cc785c", 
+              background: "#D4AF37", 
               color: "#fff",
               display: "flex",
               alignItems: "center",

@@ -6,23 +6,27 @@ export const PAYBILL_NO = "123456";
 export const CLASSES = [
   { id: "pp1", name: "PP1", age: "4-5 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
   { id: "pp2", name: "PP2", age: "5-6 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
-  { id: "p1", name: "P1", age: "6-7 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
-  { id: "p2", name: "P2", age: "7-8 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
-  { id: "p3", name: "P3", age: "8-9 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
-  { id: "p4", name: "P4", age: "9-10 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
-  { id: "p5", name: "P5", age: "10-11 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
-  { id: "p6", name: "P6", age: "11-12 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
-  { id: "p7", name: "P7", age: "12-13 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
-  { id: "p8", name: "P8", age: "13-14 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "g1", name: "Grade 1", age: "6-7 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "g2", name: "Grade 2", age: "7-8 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "g3", name: "Grade 3", age: "8-9 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "g4", name: "Grade 4", age: "9-10 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "g5", name: "Grade 5", age: "10-11 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
+  { id: "g6", name: "Grade 6", age: "11-12 yrs", color: "#1B6B3A", bg: "#E8F5EE", type: "Primary" },
   { id: "g7", name: "Grade 7", age: "12-13 yrs", color: "#1A5F9C", bg: "#EBF3FB", type: "JSS" },
   { id: "g8", name: "Grade 8", age: "13-14 yrs", color: "#1A5F9C", bg: "#EBF3FB", type: "JSS" },
   { id: "g9", name: "Grade 9", age: "14-15 yrs", color: "#1A5F9C", bg: "#EBF3FB", type: "JSS" },
-  { id: "g10", name: "Grade 10", age: "15-16 yrs", color: "#6C3483", bg: "#F5EEF8", type: "SS" },
-  { id: "g11", name: "Grade 11", age: "16-17 yrs", color: "#6C3483", bg: "#F5EEF8", type: "SS" },
-  { id: "g12", name: "Grade 12", age: "17-18 yrs", color: "#6C3483", bg: "#F5EEF8", type: "SS" },
+  { id: "g10", name: "Grade 10", age: "15-16 yrs", color: "#6C3483", bg: "#F5EEF8", type: "Secondary" },
+  { id: "g11", name: "Grade 11", age: "16-17 yrs", color: "#6C3483", bg: "#F5EEF8", type: "Secondary" },
+  { id: "g12", name: "Grade 12", age: "17-18 yrs", color: "#6C3483", bg: "#F5EEF8", type: "Secondary" },
 ];
 
 export const getClassesByType = (type) => {
+  if (type === "Primary & JSS" || type === "Primary") {
+    return CLASSES.filter(c => c.type === "Primary" || c.type === "JSS");
+  }
+  if (type === "Secondary" || type === "SS") {
+    return CLASSES.filter(c => c.type === "Secondary");
+  }
   return CLASSES.filter(c => c.type === type);
 };
 

@@ -8,7 +8,7 @@ const Dashboard = ({ schoolConfig, currentPlan }) => {
   const planData = PLANS[currentPlan] || PLANS.starter;
 
   const currentTypeClasses = useMemo(() => {
-    return getClassesByType(schoolConfig?.schoolType || "Primary");
+    return getClassesByType(schoolConfig?.schoolType || "Primary & JSS");
   }, [schoolConfig]);
 
   const classIds = useMemo(() => currentTypeClasses.map(c => c.id), [currentTypeClasses]);
@@ -31,11 +31,11 @@ const Dashboard = ({ schoolConfig, currentPlan }) => {
     return currentTypeClasses.slice(0, 5).map(c => ({
       label: c.name,
       mean: 65 + Math.floor(Math.random() * 15),
-      color: c.color === "#1B6B3A" ? "#cc785c" : c.color
+      color: c.color === "#1B6B3A" ? "#D4AF37" : c.color
     }));
   }, [currentTypeClasses]);
 
-  const activeColor = "#cc785c";
+  const activeColor = "#D4AF37";
   const ink = "#2a2421";
   const hairline = "#e6dfd8";
 
@@ -46,33 +46,6 @@ const Dashboard = ({ schoolConfig, currentPlan }) => {
         <h2 style={{ fontSize: 32, fontWeight: 700, color: ink, margin: 0, fontFamily: "'EB Garamond', serif" }}>School Dashboard</h2>
         <p style={{ color: "#8a8fa8", marginTop: 4, fontSize: 16 }}>Operational overview and academic performance indicators.</p>
       </div>
-
-      {/* Plan Status Banner */}
-      {currentPlan === 'starter' && (
-        <div style={{
-          background: 'linear-gradient(135deg, #2a2421, #3d3530)',
-          borderRadius: 14, padding: '20px 24px', marginBottom: 24,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          flexWrap: 'wrap', gap: 16, color: '#fff',
-        }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4 }}>
-              {planData.icon} You're on the Starter Plan
-            </div>
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5 }}>
-              Upgrade to Professional to unlock Exams, Reports, Fee Management, and more.
-            </div>
-          </div>
-          <button style={{
-            padding: '10px 24px', background: '#cc785c', color: '#fff',
-            border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 800,
-            cursor: 'pointer', boxShadow: '0 4px 12px rgba(204,120,92,0.3)',
-            whiteSpace: 'nowrap', transition: 'all 0.2s',
-          }}>
-            Upgrade Now →
-          </button>
-        </div>
-      )}
 
       {/* CBC Path Header */}
       <div
@@ -94,11 +67,11 @@ const Dashboard = ({ schoolConfig, currentPlan }) => {
           CBC PATH:
         </span>
         {[
-          { label: "Playgroup", color: "#cc785c", bg: "#f5f2eb" },
-          { label: "PP1 · PP2", color: "#cc785c", bg: "#f5f2eb" },
-          { label: "Grade 1–6", color: "#cc785c", bg: "#f5f2eb" },
-          { label: "Grade 7–9 JSS", color: "#cc785c", bg: "#f5f2eb" },
-          { label: "Grade 10–12 SS", color: "#cc785c", bg: "#f5f2eb" },
+          { label: "Playgroup", color: "#D4AF37", bg: "#f5f2eb" },
+          { label: "PP1 · PP2", color: "#D4AF37", bg: "#f5f2eb" },
+          { label: "Grade 1–6", color: "#D4AF37", bg: "#f5f2eb" },
+          { label: "Grade 7–9 JSS", color: "#D4AF37", bg: "#f5f2eb" },
+          { label: "Grade 10–12 SS", color: "#D4AF37", bg: "#f5f2eb" },
         ].map((path, idx) => (
           <span key={idx} style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {idx > 0 && <span style={{ color: hairline, fontSize: 14 }}>›</span>}
@@ -125,7 +98,7 @@ const Dashboard = ({ schoolConfig, currentPlan }) => {
         className="stat-grid"
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
+          gridTemplateColumns: "repeat(2, 1fr)",
           gap: 16,
           marginBottom: 24,
         }}
@@ -138,22 +111,7 @@ const Dashboard = ({ schoolConfig, currentPlan }) => {
           bg="#f5f2eb"
           icon="🎓"
         />
-        <StatCard
-          label="Fees Collected"
-          value={`${collectionRate}%`}
-          sub={`KES ${(totalPaid / 1000).toFixed(0)}K`}
-          color={activeColor}
-          bg="#f5f2eb"
-          icon="💰"
-        />
-        <StatCard
-          label="Outstanding"
-          value={`KES ${(totalBalance / 1000).toFixed(0)}K`}
-          sub={`${debtorsCount} in arrears`}
-          color="#c0392b"
-          bg="#fdf0ed"
-          icon="⚠️"
-        />
+
         <StatCard
           label="Active Staff"
           value={staffCount}

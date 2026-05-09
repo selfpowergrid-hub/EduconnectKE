@@ -1,6 +1,6 @@
 import React from 'react';
 
-export const StatCard = ({ label, value, sub, color = "#cc785c", bg = "#f5f2eb", icon }) => {
+export const StatCard = ({ label, value, sub, color = "#D4AF37", bg = "#f5f2eb", icon }) => {
   return (
     <div
       style={{

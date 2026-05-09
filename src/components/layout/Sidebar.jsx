@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { canAccessNav, PLANS } from '../../lib/planConfig';
+import logo from '../../assets/logo.jpg';
 
 const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, onSignOut, isMobile, isOpen, onClose }) => {
   const menuSections = [
@@ -24,14 +25,7 @@ const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, o
         { id: "grading", label: "Grading System", icon: "📊", module: "Examinations" },
       ]
     },
-    {
-      title: "Accounts",
-      icon: "💰",
-      items: [
-        { id: "fees", label: "Fees Management", icon: "🧾" },
-        { id: "fees-structure", label: "Fee Structure", icon: "📋" },
-      ]
-    },
+
     {
       title: "Reports",
       icon: "📈",
@@ -45,7 +39,6 @@ const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, o
       icon: "⚙️",
       items: [
         { id: "users", label: "Users & Roles", icon: "👤" },
-        { id: "library", label: "Library", icon: "📚", module: "Library" },
       ]
     }
   ];
@@ -68,7 +61,7 @@ const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, o
   const planData = PLANS[currentPlan] || PLANS.starter;
 
   const sidebarBg = "#2a2421";
-  const activeColor = "#cc785c";
+  const activeColor = "#D4AF37";
   const textSecondary = "#a0a09a";
   const hairline = "rgba(230, 223, 216, 0.1)";
 
@@ -110,20 +103,13 @@ const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, o
         alignItems: "center",
         gap: 12
       }}>
-        <div style={{ 
+        <img src={logo} alt="LOGIQ Logo" style={{ 
           width: 36, 
           height: 36, 
-          background: activeColor, 
-          borderRadius: 8,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 20,
-          fontWeight: 900,
+          borderRadius: 8, 
+          objectFit: 'cover',
           boxShadow: `0 4px 12px ${activeColor}44`
-        }}>
-          E
-        </div>
+        }} />
         <div style={{ 
           fontFamily: "'EB Garamond', serif",
           fontSize: 22, 
@@ -131,7 +117,7 @@ const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, o
           letterSpacing: "-0.02em",
           color: "#fff"
         }}>
-          EduConnect
+          LOGIQ
         </div>
       </div>
 

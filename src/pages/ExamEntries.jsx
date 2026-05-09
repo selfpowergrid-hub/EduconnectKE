@@ -27,7 +27,7 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData }) => {
   const [entrySubject, setEntrySubject] = useState("");
   const [entryTerm, setEntryTerm] = useState("Term 1");
 
-  const activeColor = "#cc785c";
+  const activeColor = "#D4AF37";
   const labelStyle = { display: "block", fontSize: 11, fontWeight: 800, color: "#2a2421", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" };
   const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #e6dfd8", fontSize: 14, background: "#fff", outline: "none", transition: "all 0.2s ease" };
 

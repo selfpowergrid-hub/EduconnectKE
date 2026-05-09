@@ -185,7 +185,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
   };
 
   // Shared Styles
-  const activeColor = "#cc785c";
+  const activeColor = "#D4AF37";
   const labelStyle = { display: "block", fontSize: 11, fontWeight: 800, color: "#2a2421", marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.05em" };
   const inputStyle = { width: "100%", padding: "12px 16px", borderRadius: 8, border: "1px solid #e6dfd8", fontSize: 14, background: "#fff", outline: "none", transition: "all 0.2s ease", boxSizing: "border-box" };
   const sectionCardStyle = { background: "#fff", border: "1px solid #e6dfd8", borderRadius: 12, padding: "24px", boxShadow: "0 1px 2px rgba(0,0,0,0.02)" };

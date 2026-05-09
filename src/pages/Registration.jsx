@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import logo from '../assets/logo.jpg';
 
 const Registration = ({ onComplete, schoolConfig, userEmail }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -18,9 +19,8 @@ const Registration = ({ onComplete, schoolConfig, userEmail }) => {
   const [errors, setErrors] = useState({});
 
   const schoolTypes = [
-    { id: "Primary", label: "Primary School", description: "P1 to P8, CBC Structure", icon: "🏫" },
-    { id: "JSS", label: "Junior Secondary", description: "Grade 7, 8, 9, CBC JSS", icon: "🏢" },
-    { id: "SS", label: "Senior Secondary", description: "Form 1 to 4, KCSE Structure", icon: "🏛️" }
+    { id: "Primary & JSS", label: "Primary & JSS", description: "PP1 to Grade 9", icon: "🏫" },
+    { id: "Secondary", label: "Senior Secondary", description: "Grade 10 to 12", icon: "🏛️" }
   ];
 
   const availableModules = [
@@ -90,9 +90,9 @@ const Registration = ({ onComplete, schoolConfig, userEmail }) => {
     <div className="main-scroll" style={{ height: "auto", minHeight: "100%", overflowY: "visible", padding: "20px", boxSizing: "border-box" }}>
       <div style={{ maxWidth: 800, margin: "0 auto" }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>🇰🇪</div>
+          <img src={logo} alt="LOGIQ Logo" style={{ width: 80, height: 'auto', borderRadius: 12, marginBottom: 16, boxShadow: '0 6px 20px rgba(212,175,55,0.2)' }} />
           <h1 style={{ fontSize: 24, fontWeight: 900, color: "#1A1A2E", margin: 0 }}>School Registration</h1>
-          <p style={{ color: "#8A8FA8", marginTop: 8, fontSize: 15 }}>Welcome to EduConnect. Please set up your institution.</p>
+          <p style={{ color: "#8A8FA8", marginTop: 8, fontSize: 15 }}>Welcome to LOGIQ. Please set up your institution.</p>
           <div style={{ marginTop: 12, fontSize: 12, color: "#1B6B3A", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <span>↓</span> Scroll down to complete all sections <span>↓</span>
           </div>

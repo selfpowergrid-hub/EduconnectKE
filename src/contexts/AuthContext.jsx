@@ -92,7 +92,10 @@ export function AuthProvider({ children }) {
 
     // Subscribe to auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, s) => {
+      async (event, s) => {
+        if (event === 'SIGNED_IN') {
+          setIsLoading(true);
+        }
         setSession(s);
         setUser(s?.user ?? null);
         if (s?.user) {
@@ -103,6 +106,7 @@ export function AuthProvider({ children }) {
           setNeedsRegistration(false);
           setNeedsPlanSelection(false);
         }
+        setIsLoading(false);
       }
     );
 

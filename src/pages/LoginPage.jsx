@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import logo from '../assets/logo.jpg';
 
 const LoginPage = () => {
   const [mode, setMode] = useState('signin');
@@ -69,18 +70,13 @@ const LoginPage = () => {
         <div style={{ position: 'absolute', top: -100, right: -100, width: 400, height: 400, borderRadius: '50%', background: 'radial-gradient(circle, rgba(204,120,92,0.12) 0%, transparent 70%)' }} />
         <div style={{ position: 'absolute', bottom: -80, left: -80, width: 300, height: 300, borderRadius: '50%', background: 'radial-gradient(circle, rgba(27,107,58,0.12) 0%, transparent 70%)' }} />
         <div style={{ position: 'relative', zIndex: 1, maxWidth: 440, textAlign: 'center' }}>
-          <div style={{ width: 72, height: 72, background: '#cc785c', borderRadius: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 36, fontWeight: 900, color: '#fff', margin: '0 auto 32px', boxShadow: '0 8px 32px rgba(204,120,92,0.3)' }}>E</div>
-          <h1 style={{ fontFamily: "'EB Garamond', serif", fontSize: 44, fontWeight: 700, color: '#fff', margin: '0 0 16px', lineHeight: 1.1 }}>
-            EduConnect<span style={{ color: '#cc785c' }}>KE</span>
+          <img src={logo} alt="LOGIQ Logo" style={{ width: 120, height: 'auto', borderRadius: 18, marginBottom: 24, boxShadow: '0 8px 32px rgba(212,175,55,0.2)' }} />
+          <h1 style={{ fontFamily: "'Inter', sans-serif", fontSize: 44, fontWeight: 800, color: '#D4AF37', margin: '0 0 16px', lineHeight: 1.1, letterSpacing: '0.05em' }}>
+            LOGIQ
           </h1>
-          <p style={{ fontSize: 17, color: 'rgba(255,255,255,0.6)', lineHeight: 1.7, margin: '0 0 48px' }}>
-            The complete school management platform for Kenyan institutions.
+          <p style={{ fontSize: 17, color: 'rgba(255,255,255,0.7)', lineHeight: 1.7, margin: '0 0 48px', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}>
+            ONLINE SCHOOL MANAGEMENT
           </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center' }}>
-            {['📝 Examinations', '💰 Fee Tracking', '📊 Report Cards', '👥 Staff Mgmt'].map(f => (
-              <span key={f} style={{ padding: '8px 16px', borderRadius: 20, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: 500 }}>{f}</span>
-            ))}
-          </div>
         </div>
         <div style={{ position: 'absolute', bottom: 32, left: 0, right: 0, textAlign: 'center', fontSize: 12, color: 'rgba(255,255,255,0.25)', fontWeight: 500 }}>
           🇰🇪 Built for Kenyan Schools · CBC Aligned
@@ -88,10 +84,10 @@ const LoginPage = () => {
       </div>
 
       {/* Right Form */}
-      <div style={{ width: '100%', maxWidth: 520, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '48px 40px', background: '#fff', overflowY: 'auto' }}>
+      <div className="login-right-pane" style={{ width: '100%', maxWidth: 520, display: 'flex', flexDirection: 'column', justifyContent: 'center', background: '#fff', overflowY: 'auto', margin: '0 auto' }}>
         <div className="show-mobile" style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ width: 48, height: 48, background: '#cc785c', borderRadius: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 900, color: '#fff', marginBottom: 12 }}>E</div>
-          <h2 style={{ fontFamily: "'EB Garamond', serif", fontSize: 28, fontWeight: 700, color: '#2a2421', margin: 0 }}>EduConnect<span style={{ color: '#cc785c' }}>KE</span></h2>
+          <img src={logo} alt="LOGIQ Logo" style={{ width: 64, height: 'auto', borderRadius: 12, marginBottom: 16 }} />
+          <h2 style={{ fontFamily: "'Inter', sans-serif", fontSize: 28, fontWeight: 800, color: '#D4AF37', margin: 0, letterSpacing: '0.05em' }}>LOGIQ</h2>
         </div>
 
         <div style={{ maxWidth: 400, margin: '0 auto', width: '100%' }}>
@@ -99,7 +95,7 @@ const LoginPage = () => {
             {mode === 'signin' ? 'Welcome back' : 'Create your account'}
           </h2>
           <p style={{ fontSize: 15, color: '#8a8fa8', margin: '0 0 32px', lineHeight: 1.5 }}>
-            {mode === 'signin' ? 'Sign in to access your school dashboard' : 'Set up your school on EduConnect'}
+            {mode === 'signin' ? 'Sign in to access your school dashboard' : 'Set up your school on LOGIQ'}
           </p>
 
           {/* Tabs */}
@@ -127,7 +123,7 @@ const LoginPage = () => {
                 <div style={{ position: 'relative' }}>
                   <span style={iconPos}>🏫</span>
                   <input type="text" value={schoolName} onChange={e => setSchoolName(e.target.value)} placeholder="e.g. Mwanga Academy" style={inputBase}
-                    onFocus={e => e.target.style.borderColor = '#cc785c'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
+                    onFocus={e => e.target.style.borderColor = '#D4AF37'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
                 </div>
               </div>
             )}
@@ -136,7 +132,7 @@ const LoginPage = () => {
               <div style={{ position: 'relative' }}>
                 <span style={iconPos}>📧</span>
                 <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="admin@school.ac.ke" required style={inputBase}
-                  onFocus={e => e.target.style.borderColor = '#cc785c'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
+                  onFocus={e => e.target.style.borderColor = '#D4AF37'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
               </div>
             </div>
             <div>
@@ -146,16 +142,16 @@ const LoginPage = () => {
                 <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
                   placeholder={mode === 'signup' ? 'Min 6 characters' : 'Enter your password'} required minLength={6}
                   style={{ ...inputBase, paddingRight: 48 }}
-                  onFocus={e => e.target.style.borderColor = '#cc785c'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
+                  onFocus={e => e.target.style.borderColor = '#D4AF37'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
                 <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, opacity: 0.5 }}>
                   {showPassword ? '🙈' : '👁️'}
                 </button>
               </div>
             </div>
             <button type="submit" disabled={isLoading} style={{
-              padding: 16, background: isLoading ? '#8a8fa8' : 'linear-gradient(135deg, #cc785c 0%, #b5684e 100%)',
+              padding: 16, background: isLoading ? '#8a8fa8' : '#D4AF37',
               color: '#fff', border: 'none', borderRadius: 12, fontSize: 15, fontWeight: 800,
-              cursor: isLoading ? 'not-allowed' : 'pointer', boxShadow: '0 4px 16px rgba(204,120,92,0.3)',
+              cursor: isLoading ? 'not-allowed' : 'pointer', boxShadow: '0 4px 16px rgba(212,175,55,0.3)',
               transition: 'all 0.2s', marginTop: 4, letterSpacing: '0.02em',
             }}>{isLoading ? '⏳ Please wait...' : mode === 'signin' ? 'Sign In →' : 'Create Account →'}</button>
           </form>
@@ -175,7 +171,7 @@ const LoginPage = () => {
           </button>
 
           <p style={{ textAlign: 'center', fontSize: 12, color: '#8a8fa8', marginTop: 28, lineHeight: 1.6 }}>
-            {mode === 'signup' ? 'By creating an account, you agree to our Terms of Service.' : 'Forgot password? Contact support@educonnect.co.ke'}
+            {mode === 'signup' ? 'By creating an account, you agree to our Terms of Service.' : 'Forgot password? Contact support@logiq.co.ke'}
           </p>
         </div>
       </div>

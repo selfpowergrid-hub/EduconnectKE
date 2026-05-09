@@ -16,6 +16,7 @@ import PlanGate from './components/common/PlanGate';
 import { useAuth } from './contexts/AuthContext';
 import { supabase } from './lib/supabase';
 import { canAccessNav } from './lib/planConfig';
+import logo from './assets/logo.jpg';
 
 // Placeholder for Library
 const Library = () => (
@@ -82,20 +83,50 @@ function App() {
     { id: "library", label: "Library", component: Library, module: "Library" },
   ];
 
-  const handleRegistrationComplete = async (data) => {
-    updateSchoolConfig({
-      id: data.id,
-      schoolName: data.school_name,
-      regNumber: data.reg_number,
-      county: data.county,
-      subCounty: data.sub_county,
-      email: data.email,
-      phone: data.phone,
-      address: data.address,
-      schoolType: data.school_type,
-      modules: data.activated_modules,
-    });
-    setActiveTab("dashboard");
+  const handleRegistrationComplete = async (formData) => {
+    console.log("Starting school registration update...", formData);
+    try {
+      const dbPayload = {
+        school_name: formData.schoolName,
+        reg_number: formData.regNumber,
+        county: formData.county,
+        sub_county: formData.subCounty,
+        email: user.email,
+        phone: formData.phone,
+        address: formData.address,
+        school_type: formData.schoolType,
+        activated_modules: formData.modules,
+        plan: plan || 'starter',
+        user_id: user.id,
+      };
+
+      console.log("Attempting Database Upsert for:", dbPayload.email);
+      
+      const { error } = await Promise.race([
+        supabase.from('school_registrations').upsert([dbPayload], { onConflict: 'email' }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Database timeout after 30 seconds')), 30000))
+      ]);
+
+      if (error) {
+        console.error("Supabase Database Error:", error);
+        if (error.code === '42501') {
+           alert('Permission Denied: Please ensure you ran the SQL script in the Supabase Editor.');
+        } else {
+           alert('Database Error: ' + error.message);
+        }
+        throw error;
+      }
+      
+      console.log("Success! Data saved. Verifying...");
+      await fetchSchoolForUser(user);
+      setActiveTab("dashboard");
+    } catch (err) {
+      console.error('Final Registration Catch:', err);
+      if (err.message === 'Database timeout after 30 seconds') {
+        alert('The database is not responding. Please check your internet connection or Supabase project status.');
+      }
+      throw err;
+    }
   };
 
   const handlePlanSelected = async (planId) => {
@@ -161,13 +192,9 @@ function App() {
           alignItems: 'center', borderBottom: '1px solid #e6dfd8', background: '#fff',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{
-              width: 32, height: 32, background: '#cc785c', borderRadius: 8,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 16, fontWeight: 900, color: '#fff',
-            }}>E</div>
+            <img src={logo} alt="LOGIQ Logo" style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover' }} />
             <span style={{ fontFamily: "'EB Garamond', serif", fontSize: 20, fontWeight: 700, color: '#2a2421' }}>
-              EduConnect
+              LOGIQ
             </span>
           </div>
           <button onClick={signOut} style={{
@@ -179,53 +206,7 @@ function App() {
           </button>
         </div>
         <Registration
-          onComplete={async (formData) => {
-            console.log("Starting school registration...", formData);
-            try {
-              const dbPayload = {
-                school_name: formData.schoolName,
-                reg_number: formData.regNumber,
-                county: formData.county,
-                sub_county: formData.subCounty,
-                email: user.email,
-                phone: formData.phone,
-                address: formData.address,
-                school_type: formData.schoolType,
-                activated_modules: formData.modules,
-                plan: plan || 'starter',
-                user_id: user.id,
-              };
-
-              console.log("Attempting Database Upsert for:", dbPayload.email);
-              
-              // Use upsert (Insert or Update) with a longer 30s timeout
-              const { error } = await Promise.race([
-                supabase.from('school_registrations').upsert([dbPayload], { onConflict: 'email' }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Database timeout after 30 seconds')), 30000))
-              ]);
-
-              if (error) {
-                console.error("Supabase Database Error:", error);
-                // If it's a permission error, it's definitely RLS
-                if (error.code === '42501') {
-                   alert('Permission Denied: Please ensure you ran the SQL script in the Supabase Editor.');
-                } else {
-                   alert('Database Error: ' + error.message);
-                }
-                throw error;
-              }
-              
-              console.log("Success! Data saved. Verifying...");
-              await fetchSchoolForUser(user);
-              setActiveTab("dashboard");
-            } catch (err) {
-              console.error('Final Registration Catch:', err);
-              if (err.message === 'Database timeout after 30 seconds') {
-                alert('The database is not responding. Please check your internet connection or Supabase project status.');
-              }
-              throw err;
-            }
-          }}
+          onComplete={handleRegistrationComplete}
           schoolConfig={null}
           userEmail={user?.email}
         />
@@ -298,6 +279,7 @@ function App() {
                 setMarksData={setMarksData}
                 currentPlan={plan}
                 userEmail={user?.email}
+                onComplete={handleRegistrationComplete}
               />
             ) : (
               <PlanGate

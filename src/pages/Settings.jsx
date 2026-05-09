@@ -95,9 +95,8 @@ const Settings = ({ schoolConfig, initialTab }) => {
   };
 
   const [schoolLevels, setSchoolLevels] = useState({
-    primary: schoolConfig?.schoolType === "Primary",
-    junior: schoolConfig?.schoolType === "JSS",
-    senior: schoolConfig?.schoolType === "SS"
+    primary: schoolConfig?.schoolType === "Primary & JSS" || schoolConfig?.schoolType === "Primary",
+    senior: schoolConfig?.schoolType === "Secondary" || schoolConfig?.schoolType === "SS"
   });
   const [logoPreview, setLogoPreview] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -305,7 +304,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
 
   const getBadgeColors = (grade) => {
     const g = grade.toUpperCase();
-    if (g.startsWith("EE") || g.startsWith("A") || g === "B+") return { bg: "#E8F5EE", text: "#cc785c" };
+    if (g.startsWith("EE") || g.startsWith("A") || g === "B+") return { bg: "#E8F5EE", text: "#D4AF37" };
     if (g.startsWith("ME") || g === "B" || g === "B-" || g === "C+") return { bg: "#f5f2eb", text: "#2a2421" };
     if (g.startsWith("AE") || g === "C" || g === "C-" || g === "D+") return { bg: "#FEF0E6", text: "#D35400" };
     return { bg: "#FCE8E8", text: "#C0392B" }; // BE, D, D-, E
@@ -705,7 +704,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                 disabled={isLoading}
                 style={{
                   padding: "11px 28px",
-                  background: isLoading ? "#8a8fa8" : "linear-gradient(135deg, #cc785c, #28a05f)",
+                  background: isLoading ? "#8a8fa8" : "linear-gradient(135deg, #D4AF37, #28a05f)",
                   color: "#fff",
                   border: "none",
                   borderRadius: 10,
@@ -743,7 +742,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                         width: 160,
                         height: 160,
                         borderRadius: 20,
-                        border: isDragging ? "2.5px dashed #cc785c" : "2px dashed #D0D5DD",
+                        border: isDragging ? "2.5px dashed #D4AF37" : "2px dashed #D0D5DD",
                         background: isDragging ? "#FFF9F6" : "#FAFAFA",
                         display: "flex",
                         flexDirection: "column",
@@ -765,7 +764,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                             left: 0,
                             right: 0,
                             background: "rgba(255,255,255,0.9)",
-                            color: "#cc785c",
+                            color: "#D4AF37",
                             fontSize: 10,
                             fontWeight: 700,
                             textAlign: "center",
@@ -985,8 +984,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                     flexWrap: "wrap",
                   }}>
                     {[
-                      { id: "primary", label: "Primary School", icon: "🟢" },
-                      { id: "junior", label: "Junior Secondary", icon: "🔵" },
+                      { id: "primary", label: "Primary & JSS", icon: "🟢" },
                       { id: "senior", label: "Senior Secondary", icon: "🟣" },
                     ].map(level => (
                       <label
@@ -998,10 +996,10 @@ const Settings = ({ schoolConfig, initialTab }) => {
                           cursor: "pointer",
                           fontSize: 13,
                           fontWeight: 700,
-                          color: schoolLevels[level.id] ? "#cc785c" : "#6B7280",
+                          color: schoolLevels[level.id] ? "#D4AF37" : "#6B7280",
                           padding: "12px 24px",
                           borderRadius: 12,
-                          border: schoolLevels[level.id] ? "2px solid #cc785c" : "1.5px solid #e6dfd8",
+                          border: schoolLevels[level.id] ? "2px solid #D4AF37" : "1.5px solid #e6dfd8",
                           background: schoolLevels[level.id] ? "#FFF9F6" : "#ffffff",
                           transition: "all 0.3s ease",
                           userSelect: "none",
@@ -1050,7 +1048,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
               </div>
               <button style={{
                 padding: "11px 28px",
-                background: "linear-gradient(135deg, #cc785c, #28a05f)",
+                background: "linear-gradient(135deg, #D4AF37, #28a05f)",
                 color: "#fff",
                 border: "none",
                 borderRadius: 10,
@@ -1100,7 +1098,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                       onChange={(e) => setNewStreamName(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && addStream()}
                       style={{ ...inputStyle, paddingLeft: 14 }}
-                      onFocus={(e) => { e.target.style.borderColor = "#cc785c"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
+                      onFocus={(e) => { e.target.style.borderColor = "#D4AF37"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
                       onBlur={(e) => { e.target.style.borderColor = "#e6dfd8"; e.target.style.background = "#f5f2eb"; e.target.style.boxShadow = "none"; }}
                     />
                   </div>
@@ -1113,7 +1111,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                       onChange={(e) => setNewStreamCapacity(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleAddStream()}
                       style={{ ...inputStyle, paddingLeft: 14 }}
-                      onFocus={(e) => { e.target.style.borderColor = "#cc785c"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
+                      onFocus={(e) => { e.target.style.borderColor = "#D4AF37"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
                       onBlur={(e) => { e.target.style.borderColor = "#e6dfd8"; e.target.style.background = "#f5f2eb"; e.target.style.boxShadow = "none"; }}
                     />
                   </div>
@@ -1121,7 +1119,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                     onClick={handleAddStream}
                     style={{
                       padding: "11px 22px",
-                      background: "linear-gradient(135deg, #cc785c, #28a05f)",
+                      background: "linear-gradient(135deg, #D4AF37, #28a05f)",
                       color: "#fff",
                       border: "none",
                       borderRadius: 10,
@@ -1191,7 +1189,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                                   <span style={{ marginRight: 8 }}>📗</span>{stream.name}
                                 </td>
                                 <td style={{ padding: "12px 16px", textAlign: "center", color: "#8a8fa8", fontWeight: 600 }}>
-                                  <span style={{ background: "#E8F5EE", padding: "3px 10px", borderRadius: 6, fontSize: 12.5, color: "#cc785c" }}>
+                                  <span style={{ background: "#E8F5EE", padding: "3px 10px", borderRadius: 6, fontSize: 12.5, color: "#D4AF37" }}>
                                     {stream.capacity} students
                                   </span>
                                 </td>
@@ -1256,7 +1254,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                       onChange={(e) => setNewDormName(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleAddDorm()}
                       style={{ ...inputStyle, paddingLeft: 14 }}
-                      onFocus={(e) => { e.target.style.borderColor = "#cc785c"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
+                      onFocus={(e) => { e.target.style.borderColor = "#D4AF37"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
                       onBlur={(e) => { e.target.style.borderColor = "#e6dfd8"; e.target.style.background = "#f5f2eb"; e.target.style.boxShadow = "none"; }}
                     />
                   </div>
@@ -1269,7 +1267,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                       onChange={(e) => setNewDormCapacity(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleAddDorm()}
                       style={{ ...inputStyle, paddingLeft: 14 }}
-                      onFocus={(e) => { e.target.style.borderColor = "#cc785c"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
+                      onFocus={(e) => { e.target.style.borderColor = "#D4AF37"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
                       onBlur={(e) => { e.target.style.borderColor = "#e6dfd8"; e.target.style.background = "#f5f2eb"; e.target.style.boxShadow = "none"; }}
                     />
                   </div>
@@ -1280,7 +1278,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                         value={newDormGender}
                         onChange={(e) => setNewDormGender(e.target.value)}
                         style={{ ...inputStyle, paddingLeft: 14, appearance: "none", cursor: "pointer" }}
-                        onFocus={(e) => { e.target.style.borderColor = "#cc785c"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
+                        onFocus={(e) => { e.target.style.borderColor = "#D4AF37"; e.target.style.background = "#fff"; e.target.style.boxShadow = "0 0 0 3px rgba(27,107,58,0.08)"; }}
                         onBlur={(e) => { e.target.style.borderColor = "#e6dfd8"; e.target.style.background = "#f5f2eb"; e.target.style.boxShadow = "none"; }}
                       >
                         <option value="Boys">Boys</option>
@@ -1294,7 +1292,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                     onClick={handleAddDorm}
                     style={{
                       padding: "11px 22px",
-                      background: "linear-gradient(135deg, #cc785c, #28a05f)",
+                      background: "linear-gradient(135deg, #D4AF37, #28a05f)",
                       color: "#fff",
                       border: "none",
                       borderRadius: 10,
@@ -1436,7 +1434,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
               </div>
               <button style={{
                 padding: "11px 28px",
-                background: "linear-gradient(135deg, #cc785c, #28a05f)",
+                background: "linear-gradient(135deg, #D4AF37, #28a05f)",
                 color: "#fff",
                 border: "none",
                 borderRadius: 10,
@@ -1465,9 +1463,9 @@ const Settings = ({ schoolConfig, initialTab }) => {
                   onClick={() => { setGradingLevel(level.id); setGradingExpanded(false); setNewGrade({ grade: "", label: "", description: "", min: "", max: "", points: "" }); }}
                   style={{
                     padding: "10px 18px",
-                    background: gradingLevel === level.id ? "#cc785c" : "#fff",
+                    background: gradingLevel === level.id ? "#D4AF37" : "#fff",
                     color: gradingLevel === level.id ? "#fff" : "#8a8fa8",
-                    border: gradingLevel === level.id ? "1px solid #cc785c" : "1px solid #e6dfd8",
+                    border: gradingLevel === level.id ? "1px solid #D4AF37" : "1px solid #e6dfd8",
                     borderRadius: 30,
                     fontSize: 13.5,
                     fontWeight: 600,
@@ -1579,7 +1577,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                   onClick={handleAddGrade}
                   style={{
                     padding: "11px 22px",
-                    background: "linear-gradient(135deg, #cc785c, #28a05f)",
+                    background: "linear-gradient(135deg, #D4AF37, #28a05f)",
                     color: "#fff",
                     border: "none",
                     borderRadius: 10,
@@ -1641,7 +1639,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                                 </td>
                               )}
                               {(gradingLevel === "g7_g9" || gradingLevel === "g10_g12") && (
-                                <td style={{ padding: "12px 16px", textAlign: "center", fontWeight: 700, color: "#cc785c" }}>{g.points}</td>
+                                <td style={{ padding: "12px 16px", textAlign: "center", fontWeight: 700, color: "#D4AF37" }}>{g.points}</td>
                               )}
                               <td style={{ padding: "12px 16px", textAlign: "center" }}>
                                 <button onClick={() => removeGrade(g.id, gradingLevel)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: "#c0392b", opacity: 0.5, transition: "opacity 0.2s" }} onMouseEnter={(e) => e.target.style.opacity = 1} onMouseLeave={(e) => e.target.style.opacity = 0.5}>🗑️</button>
@@ -1674,7 +1672,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                 </p>
               </div>
               <button style={{
-                padding: "11px 28px", background: "linear-gradient(135deg, #cc785c, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13.5, boxShadow: "0 2px 8px rgba(27,107,58,0.25)", transition: "all 0.2s ease",
+                padding: "11px 28px", background: "linear-gradient(135deg, #D4AF37, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13.5, boxShadow: "0 2px 8px rgba(27,107,58,0.25)", transition: "all 0.2s ease",
               }}>💾 Save Changes</button>
             </div>
 
@@ -1695,7 +1693,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                 <button
                   onClick={handleAddVotehead}
                   style={{
-                    padding: "11px 22px", background: "linear-gradient(135deg, #cc785c, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13, boxShadow: "0 2px 6px rgba(27,107,58,0.2)",
+                    padding: "11px 22px", background: "linear-gradient(135deg, #D4AF37, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13, boxShadow: "0 2px 6px rgba(27,107,58,0.2)",
                   }}
                 >+ Add Votehead</button>
               </div>
@@ -1795,7 +1793,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                             <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600, color: "#8a8fa8", fontFamily: "monospace", fontSize: 13 }}>{item.t1.toLocaleString()}</td>
                             <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600, color: "#8a8fa8", fontFamily: "monospace", fontSize: 13 }}>{item.t2.toLocaleString()}</td>
                             <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600, color: "#8a8fa8", fontFamily: "monospace", fontSize: 13 }}>{item.t3.toLocaleString()}</td>
-                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 800, color: "#cc785c", background: "#f0f4f8", fontFamily: "monospace", fontSize: 13.5 }}>{rowTotal.toLocaleString()}</td>
+                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 800, color: "#D4AF37", background: "#f0f4f8", fontFamily: "monospace", fontSize: 13.5 }}>{rowTotal.toLocaleString()}</td>
                             <td style={{ padding: "12px 16px", textAlign: "center" }}>
                                <button onClick={() => removeFeeItem(item.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: "#c0392b" }}>🗑️</button>
                             </td>
@@ -1850,7 +1848,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
               </div>
               <button style={{
                 padding: "11px 28px",
-                background: "linear-gradient(135deg, #cc785c, #28a05f)",
+                background: "linear-gradient(135deg, #D4AF37, #28a05f)",
                 color: "#fff",
                 border: "none",
                 borderRadius: 10,
@@ -1995,7 +1993,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                   onClick={handleAddSubject}
                   style={{
                     padding: "11px 22px",
-                    background: "linear-gradient(135deg, #cc785c, #28a05f)",
+                    background: "linear-gradient(135deg, #D4AF37, #28a05f)",
                     color: "#fff",
                     border: "none",
                     borderRadius: 10,
@@ -2064,7 +2062,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                                   <span style={{
                                     padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
                                     background: (s.type === "Core" || s.type === "Compulsory") ? "#E8F5EE" : "#f5f2eb",
-                                    color: (s.type === "Core" || s.type === "Compulsory") ? "#cc785c" : "#2a2421",
+                                    color: (s.type === "Core" || s.type === "Compulsory") ? "#D4AF37" : "#2a2421",
                                   }}>
                                     {s.type}
                                   </span>
@@ -2103,7 +2101,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                 </p>
               </div>
               <button style={{
-                padding: "11px 28px", background: "linear-gradient(135deg, #cc785c, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13.5, boxShadow: "0 2px 8px rgba(27,107,58,0.25)", transition: "all 0.2s ease",
+                padding: "11px 28px", background: "linear-gradient(135deg, #D4AF37, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13.5, boxShadow: "0 2px 8px rgba(27,107,58,0.25)", transition: "all 0.2s ease",
               }}>💾 Save Settings</button>
             </div>
 
@@ -2158,7 +2156,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                   <button
                     onClick={handleAddUser}
                     style={{
-                      padding: "11px 22px", background: "#cc785c", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 13, transition: "background 0.2s"
+                      padding: "11px 22px", background: "#D4AF37", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 13, transition: "background 0.2s"
                     }}
                   >+ Add User</button>
                 </div>
@@ -2193,7 +2191,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                             <span onClick={() => toggleUserStatus(u.id)} style={{
                               padding: "4px 12px", borderRadius: 12, fontSize: 11, fontWeight: 700, cursor: "pointer",
                               background: u.status === "Active" ? "#E8F5EE" : "#FDF0ED",
-                              color: u.status === "Active" ? "#cc785c" : "#c0392b",
+                              color: u.status === "Active" ? "#D4AF37" : "#c0392b",
                               border: `1px solid ${u.status === "Active" ? "#C2E5D2" : "#F8D5CE"}`
                             }}>
                               {u.status}

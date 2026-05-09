@@ -4,7 +4,7 @@
   /* DESIGN.md Color Palette (Claude Inspired) */
   --canvas: #f5f2eb;
   --ink: #2a2421;
-  --primary: #cc785c;
+  --primary: #D4AF37;
   --primary-hover: #b5644a;
   --hairline: #e6dfd8;
   --white: #ffffff;
@@ -176,6 +176,14 @@ body {
     margin: 0 -16px;
     padding: 0 16px;
   }
+
+  .login-right-pane {
+    padding: 32px 24px !important;
+  }
+}
+
+.login-right-pane {
+  padding: 48px 40px;
 }
 
 .show-mobile {
