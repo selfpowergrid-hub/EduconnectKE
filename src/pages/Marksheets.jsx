@@ -12,6 +12,7 @@ const Marksheets = ({ schoolConfig, examsList }) => {
   const [isLoading, setIsLoading] = useState(false);
 
   // Filters
+  const [selectedLevel, setSelectedLevel] = useState('Secondary');
   const [selectedClass, setSelectedClass] = useState('g10');
   const [selectedStream, setSelectedStream] = useState('all');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -19,6 +20,19 @@ const Marksheets = ({ schoolConfig, examsList }) => {
   const [selectedExamId, setSelectedExamId] = useState('average'); // 'average' or specific exam.id
 
   const currentTypeClasses = useMemo(() => CLASSES, []);
+
+  // Filter Classes by Level
+  const filteredClasses = useMemo(() => {
+    if (selectedLevel === 'All') return currentTypeClasses;
+    return currentTypeClasses.filter(c => c.type === selectedLevel);
+  }, [currentTypeClasses, selectedLevel]);
+
+  // Make sure selectedClass is valid when level changes
+  useEffect(() => {
+    if (filteredClasses.length > 0 && !filteredClasses.find(c => c.id === selectedClass)) {
+      setSelectedClass(filteredClasses[0].id);
+    }
+  }, [filteredClasses, selectedClass]);
 
   // Filtered Exams (by grade/term)
   const gradeExams = useMemo(
@@ -250,9 +264,18 @@ const Marksheets = ({ schoolConfig, examsList }) => {
       {/* Top Filter Bar */}
       <div style={{ background: '#fff', border: '1px solid #E8EAF0', borderRadius: 12, padding: '16px 24px', display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end' }}>
         <div style={{ flex: 1, minWidth: 120 }}>
+          <div style={labelStyle}>Level</div>
+          <select value={selectedLevel} onChange={e => setSelectedLevel(e.target.value)} style={selectStyle}>
+            <option value="All">All Levels</option>
+            <option value="Primary">Primary</option>
+            <option value="JSS">Junior Secondary</option>
+            <option value="Secondary">Senior Secondary</option>
+          </select>
+        </div>
+        <div style={{ flex: 1, minWidth: 120 }}>
           <div style={labelStyle}>Class</div>
           <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)} style={selectStyle}>
-            {currentTypeClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {filteredClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
         <div style={{ flex: 1, minWidth: 120 }}>
