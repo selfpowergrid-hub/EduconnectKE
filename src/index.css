@@ -289,5 +289,29 @@ input:focus, select:focus, textarea:focus {
   }
   .table-container table {
     min-width: 600px;
+    border-collapse: separate; /* Required for sticky borders in some browsers */
+    border-spacing: 0;
+  }
+
+  /* Sticky Column Base */
+  .sticky-col {
+    position: sticky !important;
+    z-index: 20 !important;
+    background-color: inherit !important;
+    box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+  }
+
+  .sticky-left-0 {
+    left: 0 !important;
+  }
+
+  .sticky-left-1 {
+    left: 80px !important; /* Adjusted for mobile ADM width */
+  }
+
+  /* Header sticky needs higher z-index */
+  thead th.sticky-col {
+    z-index: 30 !important;
+    background-color: #fafafa !important;
   }
 }

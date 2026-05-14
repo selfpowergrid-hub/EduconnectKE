@@ -531,8 +531,8 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData }) => {
           <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
             <thead style={{ background: "#fafafa", borderBottom: "1px solid #e6dfd8" }}>
               <tr>
-                <th style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", width: 100, color: "#2a2421", fontWeight: 700 }}>ADM NO</th>
-                <th style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", minWidth: 200, color: "#2a2421", fontWeight: 700 }}>STUDENT NAME</th>
+                <th className="sticky-col sticky-left-0" style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", width: 80, color: "#2a2421", fontWeight: 700 }}>ADM NO</th>
+                <th className="sticky-col sticky-left-1" style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", minWidth: 150, color: "#2a2421", fontWeight: 700 }}>STUDENT NAME</th>
                 {entryExams.map(exam => (
                   <th key={exam.id} style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", textAlign: "center", width: 120 }}>
                     <div style={{ fontSize: 10, color: "#8a8fa8", textTransform: "uppercase", letterSpacing: "0.05em" }}>{exam.name}</div>
@@ -551,8 +551,8 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData }) => {
 
                 return (
                   <tr key={s.id} style={{ borderBottom: "1px solid #e6dfd8", background: sIdx % 2 === 0 ? "#fff" : "#fafafa" }}>
-                    <td style={{ padding: "4px 12px", borderRight: "1px solid #e6dfd8", fontWeight: 700, color: activeColor }}>{s.adm_no}</td>
-                    <td style={{ padding: "4px 12px", borderRight: "1px solid #e6dfd8", fontWeight: 600, color: "#2a2421" }}>{s.first_name} {s.last_name}</td>
+                    <td className="sticky-col sticky-left-0" style={{ padding: "4px 12px", borderRight: "1px solid #e6dfd8", fontWeight: 700, color: activeColor }}>{s.adm_no}</td>
+                    <td className="sticky-col sticky-left-1" style={{ padding: "4px 12px", borderRight: "1px solid #e6dfd8", fontWeight: 600, color: "#2a2421" }}>{s.first_name} {s.last_name}</td>
                     {entryExams.map((exam, eIdx) => (
                       <td key={exam.id} style={{ padding: "0", borderRight: "1px solid #e6dfd8" }}>
                         <input
@@ -682,7 +682,7 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData }) => {
           <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
             <thead style={{ background: "#fafafa", borderBottom: "1px solid #e6dfd8" }}>
               <tr>
-                <th style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", minWidth: 180, color: "#2a2421", fontWeight: 700 }}>SUBJECT</th>
+                <th className="sticky-col sticky-left-0" style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", minWidth: 150, color: "#2a2421", fontWeight: 700 }}>SUBJECT</th>
                 {entryExams.map(exam => (
                   <th key={exam.id} style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", textAlign: "center", width: 120 }}>
                     <div style={{ fontSize: 10, color: "#8a8fa8", textTransform: "uppercase" }}>{exam.name}</div>
@@ -698,7 +698,7 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData }) => {
                 const total = entryExams.reduce((sum, ex) => sum + (parseInt(subMarks[ex.id]) || 0) * (ex.weight / 100), 0);
                 return (
                   <tr key={sub.id} style={{ borderBottom: "1px solid #e6dfd8", background: sIdx % 2 === 0 ? "#fff" : "#fafafa" }}>
-                    <td style={{ padding: "4px 12px", borderRight: "1px solid #e6dfd8", fontWeight: 600, color: "#2a2421" }}>{sub.name}</td>
+                    <td className="sticky-col sticky-left-0" style={{ padding: "4px 12px", borderRight: "1px solid #e6dfd8", fontWeight: 600, color: "#2a2421" }}>{sub.name}</td>
                     {entryExams.map((exam, eIdx) => (
                       <td key={exam.id} style={{ padding: "0", borderRight: "1px solid #e6dfd8" }}>
                         <input
