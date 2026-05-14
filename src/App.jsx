@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import Students from './pages/Students';
 import Exams from './pages/Exams';
 import Reports from './pages/Reports';
+import Marksheets from './pages/Marksheets';
 import Fees from './pages/Fees';
 import Staff from './pages/Staff';
 import Settings from './pages/Settings';
@@ -74,7 +75,7 @@ function App() {
     { id: "exams", label: "Exam Settings", component: Exams, module: "Examinations" },
     { id: "exam-entries", label: "Exam Entries", component: ExamEntries, module: "Examinations" },
     { id: "reports", label: "Report Cards", component: Reports },
-    { id: "merit-list", label: "Merit Lists", component: Reports },
+    { id: "merit-list", label: "Exam Marksheets", component: Marksheets },
     { id: "subjects", label: "Subjects", component: Settings, tab: "subjects", module: "Examinations" },
     { id: "grading", label: "Grading System", component: Settings, tab: "grading", module: "Examinations" },
     { id: "fees-structure", label: "Fee Structure", component: Settings, tab: "fees" },

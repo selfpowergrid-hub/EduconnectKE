@@ -31,7 +31,7 @@ const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, o
       icon: "📈",
       items: [
         { id: "reports", label: "Report Cards", icon: "📋" },
-        { id: "merit-list", label: "Merit Lists", icon: "🏆" },
+        { id: "merit-list", label: "Exam Marksheets", icon: "🔢" },
       ]
     },
     {
