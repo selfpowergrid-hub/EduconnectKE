@@ -182,6 +182,9 @@ const Reports = ({ schoolConfig, examsList }) => {
       <div style={{ maxWidth: 750, margin: '0 auto', border: '1px solid #000', padding: '20px', background: '#fff', fontSize: 12 }}>
         {/* Header */}
         <div style={{ textAlign: 'center', borderBottom: '2px solid #000', paddingBottom: 16, marginBottom: 16 }}>
+          {schoolInfo?.logo_url && (
+            <img src={schoolInfo.logo_url} alt="School Logo" style={{ height: 80, marginBottom: 8, objectFit: 'contain' }} />
+          )}
           <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: 1 }}>{schoolConfig?.schoolName?.toUpperCase() || 'INSTITUTION NAME'}</div>
           <div style={{ fontSize: 11, fontWeight: 700, marginTop: 4 }}>MOTTO: {schoolInfo?.motto?.toUpperCase() || 'EDUCATION FOR EXCELLENCE'}</div>
           <div style={{ fontSize: 10, marginTop: 4 }}>EMAIL: {schoolConfig?.email} · TEL: {schoolConfig?.phone}</div>
@@ -289,6 +292,7 @@ const Reports = ({ schoolConfig, examsList }) => {
 
       win.document.write(`<div class="page">
         <div class="header">
+          ${schoolInfo?.logo_url ? `<img src="${schoolInfo.logo_url}" alt="School Logo" style="height:80px;margin-bottom:8px;object-fit:contain;" />` : ''}
           <div style="font-size:20px;font-weight:900">${(schoolConfig?.schoolName || '').toUpperCase()}</div>
           <div style="font-size:11px;font-weight:700;margin-top:4px">MOTTO: ${(schoolInfo?.motto || 'EDUCATION FOR EXCELLENCE').toUpperCase()}</div>
           <div style="font-size:10px;margin-top:4px">EMAIL: ${schoolConfig?.email || ''} · TEL: ${schoolConfig?.phone || ''}</div>
