@@ -26,7 +26,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
 
   // --- Exam Listings State ---
   // Received as props from App.jsx
-  const [newExam, setNewExam] = useState({ name: "", term: "Term 1", level: "Primary", grade: "Grade 4", subject: "Mathematics", weight: "" });
+  const [newExam, setNewExam] = useState({ name: "", subject: "Mathematics", weight: "" });
 
   const [filterLevel, setFilterLevel] = useState("Senior Secondary");
   const [filterGrade, setFilterGrade] = useState("Grade 10");
@@ -35,12 +35,69 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
   // Sync filterGrade when filterLevel changes
   useEffect(() => {
     setFilterGrade(GRADES_BY_LEVEL[filterLevel][0]);
+    fetchGradingSystems();
   }, [filterLevel]);
+
+  useEffect(() => {
+    fetchGradingSystems();
+  }, [filterGrade]);
+
+  const fetchGradingSystems = async () => {
+    if (!schoolConfig?.id) return;
+    setIsGradingLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('grading_systems')
+        .select('*')
+        .eq('school_id', schoolConfig.id);
+      
+      if (error) throw error;
+
+      const gradeIdMap = {
+        "PP1": "pp1", "PP2": "pp2",
+        "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
+        "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
+        "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
+      };
+      const gid = gradeIdMap[filterGrade];
+
+      // Filter for specific grade or fall back to level
+      let filtered = data.filter(g => g.school_grade === (filterGrade || "All"));
+      if (filtered.length === 0) {
+        filtered = data.filter(g => g.school_grade === "All" && g.school_level === filterLevel);
+      }
+
+      // Map from DB schema to customGrades state
+      filtered = filtered.map(g => ({
+        ...g,
+        label: g.description, // map description to label for state
+      }));
+
+      // If still empty, use defaults
+      if (filtered.length === 0) {
+        filtered = filterLevel === "Senior Secondary" ? ACADEMIC_GRADES : COMPETENCY_GRADES;
+        // Map mock data format to DB format
+        filtered = filtered.map(g => ({
+          grade: g.code || g.grade,
+          label: g.label,
+          min_score: g.min,
+          max_score: g.max || 100,
+          points: g.points || 0
+        }));
+      }
+
+      setCustomGrades(filtered);
+    } catch (err) {
+      console.error('Error fetching grades:', err);
+    } finally {
+      setIsGradingLoading(false);
+    }
+  };
 
   const filteredExams = useMemo(() => {
     const gradeIdMap = {
       "PP1": "pp1", "PP2": "pp2",
-      "Grade 1": "p1", "Grade 2": "p2", "Grade 3": "p3", "Grade 4": "p4", "Grade 5": "p5", "Grade 6": "p6",
+      "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
       "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
       "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
     };
@@ -48,17 +105,15 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
     return examsList.filter(e => e.level_id === targetGid && e.term === filterTerm);
   }, [examsList, filterGrade, filterTerm]);
 
-  // Sync newExam grade when level changes
-  useEffect(() => {
-    setNewExam(prev => ({ ...prev, grade: GRADES_BY_LEVEL[prev.level][0] }));
-  }, [newExam.level]);
+  // Removed newExam grade sync since it uses global scope now
 
-  const [gradingScope, setGradingScope] = useState("all");
   const [subjectGrading, setSubjectGrading] = useState({});
+  // gradingScope removed in favor of global grading
 
   const [selectedSubjectForGrading, setSelectedSubjectForGrading] = useState("");
   const [newGradeEntry, setNewGradeEntry] = useState({ code: "", label: "", min: "", max: "", points: "" });
-  const [customGrades, setCustomGrades] = useState(COMPETENCY_GRADES);
+  const [customGrades, setCustomGrades] = useState([]);
+  const [isGradingLoading, setIsGradingLoading] = useState(false);
 
   const [isSettingsCollapsed, setIsSettingsCollapsed] = useState(false);
 
@@ -100,6 +155,76 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
     return STUDENTS.filter(s => s.gradeId === selectedClass && s.stream === selectedStream);
   }, [selectedClass, selectedStream]);
 
+  // --- Edit Exam Modal State ---
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingExam, setEditingExam] = useState(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  const openEditModal = (exam) => {
+    // Reverse map the level_id to the human-readable grade name
+    const idToGradeMap = {
+      "pp1": "PP1", "pp2": "PP2",
+      "g1": "Grade 1", "g2": "Grade 2", "g3": "Grade 3", "g4": "Grade 4", "g5": "Grade 5", "g6": "Grade 6",
+      "g7": "Grade 7", "g8": "Grade 8", "g9": "Grade 9",
+      "g10": "Grade 10", "g11": "Grade 11", "g12": "Grade 12"
+    };
+    
+    // Find the Level based on the Grade
+    let detectedLevel = "Primary";
+    const gradeName = idToGradeMap[exam.level_id];
+    for (const [lvl, grades] of Object.entries(GRADES_BY_LEVEL)) {
+      if (grades.includes(gradeName)) {
+        detectedLevel = lvl;
+        break;
+      }
+    }
+
+    setEditingExam({
+      ...exam,
+      level: detectedLevel,
+      grade: gradeName,
+      weight: exam.weight || 0
+    });
+    setShowEditModal(true);
+  };
+
+  const handleUpdateExam = async () => {
+    if (!editingExam.name.trim()) return;
+    setIsSavingEdit(true);
+    try {
+      const gradeIdMap = {
+        "PP1": "pp1", "PP2": "pp2",
+        "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
+        "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
+        "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
+      };
+      
+      const payload = {
+        name: editingExam.name,
+        term: editingExam.term,
+        level: editingExam.level,
+        level_id: gradeIdMap[editingExam.grade],
+        weight: parseInt(editingExam.weight) || 0,
+        status: editingExam.status
+      };
+
+      const { error } = await supabase
+        .from('exams')
+        .update(payload)
+        .eq('id', editingExam.id);
+
+      if (error) throw error;
+      
+      setExamsList(prev => prev.map(e => e.id === editingExam.id ? { ...e, ...payload } : e));
+      setShowEditModal(false);
+      alert('Exam updated successfully!');
+    } catch (err) {
+      alert('Failed to update exam: ' + err.message);
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
   const getGrade = (score, level) => {
     // Both JSS and Senior now use the competency-based 8-point scale
     const scale = COMPETENCY_GRADES;
@@ -122,18 +247,20 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
     try {
       const gradeIdMap = {
         "PP1": "pp1", "PP2": "pp2",
-        "Grade 1": "p1", "Grade 2": "p2", "Grade 3": "p3", "Grade 4": "p4", "Grade 5": "p5", "Grade 6": "p6",
+        "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
         "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
         "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
       };
-      const gid = gradeIdMap[newExam.grade];
+      const gid = gradeIdMap[filterGrade];
 
       const payload = {
         school_id: schoolConfig.id,
         name: newExam.name,
-        term: newExam.term,
+        term: filterTerm,
         year: new Date().getFullYear(),
+        level: filterLevel,
         level_id: gid,
+        weight: parseInt(newExam.weight) || 0,
         status: "Upcoming"
       };
 
@@ -169,6 +296,53 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
     }
   };
 
+  const handleSaveGrading = async () => {
+    setIsGradingLoading(true);
+    try {
+      const gradeIdMap = {
+        "PP1": "pp1", "PP2": "pp2",
+        "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
+        "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
+        "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
+      };
+      const gid = gradeIdMap[filterGrade];
+      const targetGroup = gid || filterLevel;
+
+      // 1. Delete existing for this group first (to perform a clean replacement)
+      const { error: delError } = await supabase
+        .from('grading_systems')
+        .delete()
+        .eq('school_id', schoolConfig.id)
+        .eq('school_level', filterLevel)
+        .eq('school_grade', filterGrade || "All");
+
+      if (delError) throw delError;
+
+      // 2. Prepare payload
+      const records = customGrades.map(g => ({
+        school_id: schoolConfig.id,
+        school_level: filterLevel,
+        school_grade: filterGrade || "All",
+        grade: g.grade || g.code,
+        description: g.label,
+        min_score: parseInt(g.min_score || g.min) || 0,
+        max_score: parseInt(g.max_score || g.max) || 100,
+        points: parseInt(g.points) || 0
+      }));
+
+      if (records.length > 0) {
+        const { error } = await supabase.from('grading_systems').insert(records);
+        if (error) throw error;
+      }
+
+      alert('Grading configuration saved successfully!');
+    } catch (err) {
+      alert('Failed to save grading: ' + err.message);
+    } finally {
+      setIsGradingLoading(false);
+    }
+  };
+
   const removeExam = async (id) => {
     if (!confirm('Are you sure you want to delete this exam?')) return;
     try {
@@ -192,12 +366,34 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
 
   return (
     <div style={{ paddingBottom: 40 }}>
-      {/* Page Header */}
-      <div style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 32, fontWeight: 700, color: "#2a2421", margin: 0, fontFamily: "'EB Garamond', serif" }}>Exam Settings</h2>
-        <p style={{ color: "#8a8fa8", marginTop: 4, fontSize: 16 }}>Register examinations, configure weighting, and manage grading systems.</p>
-      </div>
 
+      {/* Global Filter Bar */}
+      <div style={{ ...sectionCardStyle, padding: "16px 24px", marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
+        <h4 style={{ margin: 0, fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Settings Scope</h4>
+        
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>LEVEL:</span>
+            <select value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
+              {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl}>{lvl}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>GRADE:</span>
+            <select value={filterGrade} onChange={(e) => setFilterGrade(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
+              {(GRADES_BY_LEVEL[filterLevel] || []).map(g => <option key={g}>{g}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>TERM:</span>
+            <select value={filterTerm} onChange={(e) => setFilterTerm(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
+              <option>Term 1</option>
+              <option>Term 2</option>
+              <option>Term 3</option>
+            </select>
+          </div>
+        </div>
+      </div>
       {/* Internal Navigation Tabs (Pills) */}
       <div 
         style={{ 
@@ -246,36 +442,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
           <section style={sectionCardStyle}>
             <h4 style={{ margin: "0 0 28px", fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Register New Examination</h4>
 
-            {/* ROW 1: Level, Grade, Term */}
-            <div style={{ 
-              display: "grid", 
-              gridTemplateColumns: "1fr 1fr 1fr", 
-              gap: 24, 
-              marginBottom: 24 
-            }}>
-              <div>
-                <label style={labelStyle}>Level</label>
-                <select value={newExam.level} onChange={(e) => setNewExam({...newExam, level: e.target.value})} style={inputStyle}>
-                  {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl}>{lvl}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={labelStyle}>Grade</label>
-                <select value={newExam.grade} onChange={(e) => setNewExam({...newExam, grade: e.target.value})} style={inputStyle}>
-                  {(GRADES_BY_LEVEL[newExam.level] || []).map(g => <option key={g}>{g}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={labelStyle}>Term</label>
-                <select value={newExam.term} onChange={(e) => setNewExam({...newExam, term: e.target.value})} style={inputStyle}>
-                  <option>Term 1</option>
-                  <option>Term 2</option>
-                  <option>Term 3</option>
-                </select>
-              </div>
-            </div>
-
-            {/* ROW 2: Exam Name, Cut Off Mark, Register Button */}
+            {/* ROW 1: Exam Name, Cut Off Mark, Register Button */}
             <div style={{ 
               display: "grid", 
               gridTemplateColumns: "1fr 1fr 1fr", 
@@ -321,29 +488,6 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
           <section style={{ ...sectionCardStyle, padding: "20px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 16 }}>
               <h4 style={{ margin: 0, fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Manage Active Examinations</h4>
-              
-              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>LEVEL:</span>
-                  <select value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
-                    {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl}>{lvl}</option>)}
-                  </select>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>GRADE:</span>
-                  <select value={filterGrade} onChange={(e) => setFilterGrade(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
-                    {(GRADES_BY_LEVEL[filterLevel] || []).map(g => <option key={g}>{g}</option>)}
-                  </select>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>TERM:</span>
-                  <select value={filterTerm} onChange={(e) => setFilterTerm(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
-                    <option>Term 1</option>
-                    <option>Term 2</option>
-                    <option>Term 3</option>
-                  </select>
-                </div>
-              </div>
             </div>
 
             <div className="table-container" style={{ borderRadius: 12, border: "1px solid #E8EAF0", overflow: "hidden" }}>
@@ -360,42 +504,52 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                 <tbody>
                   {filteredExams.map((exam, idx) => (
                     <tr key={exam.id} style={{ borderBottom: "1px solid #e6dfd8", background: idx % 2 === 0 ? "#fff" : "#fafafa" }}>
-                      <td style={{ padding: "12px 18px" }}>
-                        <input 
-                          type="text" 
-                          value={exam.name} 
-                          onChange={(e) => updateExam(exam.id, 'name', e.target.value)}
-                          style={{ border: "none", background: "transparent", fontWeight: 700, color: "#2a2421", width: "100%", outline: "none", fontSize: 14 }}
-                        />
+                      <td style={{ padding: "12px 18px", fontWeight: 700, color: "#2a2421" }}>
+                        {exam.name}
                       </td>
-                      <td style={{ padding: "12px 18px" }}>
+                      <td style={{ padding: "12px 18px", color: "#4A4A6A" }}>
+                        {exam.term}
+                      </td>
+                      <td style={{ padding: "12px 18px", textAlign: "center", fontWeight: 800, color: activeColor }}>
+                        {exam.weight}%
+                      </td>
+                      <td style={{ padding: "12px 18px", textAlign: "center" }}>
                         <select 
-                          value={exam.term} 
-                          onChange={(e) => updateExam(exam.id, 'term', e.target.value)}
-                          style={{ border: "none", background: "transparent", color: "#2a2421", fontWeight: 500, outline: "none", fontSize: 14 }}
+                          value={exam.status} 
+                          onChange={(e) => updateExam(exam.id, 'status', e.target.value)}
+                          style={{ 
+                            padding: "4px 8px", borderRadius: 12, fontSize: 11, fontWeight: 700, border: "none", outline: "none", cursor: "pointer",
+                            background: exam.status === "Published" || exam.status === "Completed" ? "#ebf5ee" : exam.status === "Ongoing" ? "#fff9e6" : "#f4f5f7",
+                            color: exam.status === "Published" || exam.status === "Completed" ? "#1B6B3A" : exam.status === "Ongoing" ? "#D97706" : "#8A8FA8"
+                          }}
                         >
-                          <option>Term 1</option>
-                          <option>Term 2</option>
-                          <option>Term 3</option>
+                          <option value="Upcoming">Upcoming</option>
+                          <option value="Ongoing">Ongoing</option>
+                          <option value="Completed">Completed</option>
+                          <option value="Published">Published</option>
                         </select>
                       </td>
-                      <td style={{ padding: "12px 18px", textAlign: "center" }}>
-                        <input 
-                          type="number" 
-                          value={exam.weight} 
-                          onChange={(e) => updateExam(exam.id, 'weight', e.target.value)}
-                          style={{ border: "1px solid #e6dfd8", borderRadius: 6, padding: "4px 8px", width: 60, textAlign: "center", fontWeight: 700, color: activeColor, outline: "none" }}
-                        />
-                      </td>
-                      <td style={{ padding: "12px 18px", textAlign: "center" }}>
-                        <span style={{ 
-                          padding: "4px 12px", borderRadius: 12, fontSize: 11, fontWeight: 700,
-                          background: exam.status === "Published" || exam.status === "Completed" ? "#ebf5ee" : exam.status === "Ongoing" ? "#fff9e6" : "#f4f5f7",
-                          color: exam.status === "Published" || exam.status === "Completed" ? "#1B6B3A" : exam.status === "Ongoing" ? "#D97706" : "#8A8FA8"
-                        }}>{exam.status}</span>
-                      </td>
                       <td style={{ padding: "10px 18px", textAlign: "center" }}>
-                        <button onClick={() => removeExam(exam.id)} style={{ background: "none", border: "none", cursor: "pointer", opacity: 0.6 }} title="Delete">🗑️</button>
+                        <div style={{ display: "flex", gap: 12, justifyContent: "center", alignItems: "center" }}>
+                          <button 
+                            onClick={() => openEditModal(exam)}
+                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16 }} 
+                            title="Edit Exam"
+                          >
+                            ✏️
+                          </button>
+                          <button 
+                            onClick={() => {
+                              // If onNavigate prop is available, we can switch tabs
+                              // For now, we'll alert or we can add it to props later
+                              alert("To enter marks, please select 'Exam Entries' from the sidebar and filter for this exam.");
+                            }}
+                            style={{ background: "#f5f2eb", border: "1px solid #e6dfd8", borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: "#1B6B3A", cursor: "pointer" }}
+                          >
+                            ENTRIES
+                          </button>
+                          <button onClick={() => removeExam(exam.id)} style={{ background: "none", border: "none", cursor: "pointer", opacity: 0.6 }} title="Delete">🗑️</button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -418,29 +572,6 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
           <section style={{ ...sectionCardStyle, padding: "20px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
               <h4 style={{ margin: 0, fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Weighting Configuration</h4>
-              
-              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>LEVEL:</span>
-                  <select value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
-                    {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl}>{lvl}</option>)}
-                  </select>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>GRADE:</span>
-                  <select value={filterGrade} onChange={(e) => setFilterGrade(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
-                    {(GRADES_BY_LEVEL[filterLevel] || []).map(g => <option key={g}>{g}</option>)}
-                  </select>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>TERM:</span>
-                  <select value={filterTerm} onChange={(e) => setFilterTerm(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
-                    <option>Term 1</option>
-                    <option>Term 2</option>
-                    <option>Term 3</option>
-                  </select>
-                </div>
-              </div>
             </div>
           </section>
 
@@ -504,20 +635,13 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
             <section style={sectionCardStyle}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
                 <h4 style={{ margin: 0, fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Grading System Configuration</h4>
-                <div style={{ display: "flex", background: "#F1F5F9", padding: "4px", borderRadius: 10 }}>
-                  <button 
-                    onClick={() => setGradingScope("all")}
-                    style={{ padding: "6px 12px", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", background: gradingScope === "all" ? "#fff" : "transparent", color: gradingScope === "all" ? "#1B6B3A" : "#64748B", boxShadow: gradingScope === "all" ? "0 2px 4px rgba(0,0,0,0.05)" : "none", transition: "all 0.2s" }}
-                  >Global</button>
-                  <button 
-                    onClick={() => setGradingScope("per_subject")}
-                    style={{ padding: "6px 12px", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", background: gradingScope === "per_subject" ? "#fff" : "transparent", color: gradingScope === "per_subject" ? "#1B6B3A" : "#64748B", boxShadow: gradingScope === "per_subject" ? "0 2px 4px rgba(0,0,0,0.05)" : "none", transition: "all 0.2s" }}
-                  >Per Subject</button>
+                <div style={{ display: "flex", background: "#F1F5F9", padding: "8px 12px", borderRadius: 10, fontSize: 12, fontWeight: 700, color: "#1B6B3A" }}>
+                  <span>🌍 Global System Enabled</span>
                 </div>
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                {gradingScope === "per_subject" && (
+                {false && (
                   <div style={{ marginBottom: 16 }}>
                     <label style={labelStyle}>Select Subject to Configure</label>
                     <select 
@@ -531,7 +655,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                   </div>
                 )}
 
-                {(gradingScope === "all" || selectedSubjectForGrading) && (
+                {true && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
                     {/* Add Grade Form Row */}
                     <div style={{ padding: "20px", background: "#F8FAFC", borderRadius: 12, border: "1px solid #E8EAF0" }}>
@@ -559,9 +683,16 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                         <div style={{ gridColumn: "1 / -1" }}>
                           <button 
                             onClick={() => {
-                              if (!newGradeEntry.code || !newGradeEntry.min) return;
-                              setCustomGrades([...customGrades, { ...newGradeEntry, id: Date.now() }]);
-                              setNewGradeEntry({ code: "", label: "", min: "", max: "", points: "" });
+                               if (!newGradeEntry.code || !newGradeEntry.min) return;
+                               setCustomGrades([...customGrades, { 
+                                 grade: newGradeEntry.code, 
+                                 label: newGradeEntry.label, 
+                                 min_score: parseInt(newGradeEntry.min) || 0,
+                                 max_score: parseInt(newGradeEntry.max) || 100,
+                                 points: parseInt(newGradeEntry.points) || 0,
+                                 id: Date.now() 
+                               }]);
+                               setNewGradeEntry({ code: "", label: "", min: "", max: "", points: "" });
                             }}
                             style={{ 
                               height: 42, 
@@ -610,10 +741,10 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                                   <span style={{ 
                                     padding: "4px 10px", borderRadius: 6, fontWeight: 800, fontSize: 11,
                                     background: g.bg || "#F1F5F9", color: g.color || "#4A4A6A"
-                                  }}>{g.code}</span>
+                                  }}>{g.grade || g.code}</span>
                                 </td>
                                 <td style={{ padding: "12px 18px", fontWeight: 600, color: "#1A1A2E" }}>{g.label}</td>
-                                <td style={{ padding: "12px 18px", textAlign: "center", fontWeight: 700, color: "#4A4A6A" }}>{g.min} - {g.max || 100}</td>
+                                <td style={{ padding: "12px 18px", textAlign: "center", fontWeight: 700, color: "#4A4A6A" }}>{g.min_score ?? g.min} - {g.max_score || g.max || 100}</td>
                                 <td style={{ padding: "12px 18px", textAlign: "center", fontWeight: 800, color: "#1A5F9C" }}>{g.points || "-"}</td>
                                 <td style={{ padding: "12px 18px", textAlign: "center" }}>
                                   <button 
@@ -637,8 +768,12 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                   </div>
                 </div>
                 
-                <button style={{ width: "100%", height: 42, background: "#1A5F9C", color: "#fff", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", marginTop: 10 }}>
-                  Save Grading Configuration
+                <button 
+                  onClick={handleSaveGrading}
+                  disabled={isGradingLoading}
+                  style={{ width: "100%", height: 42, background: isGradingLoading ? "#8a8fa8" : "#1A5F9C", color: "#fff", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: isGradingLoading ? "not-allowed" : "pointer", marginTop: 10 }}
+                >
+                  {isGradingLoading ? "Saving..." : "Save Grading Configuration"}
                 </button>
               </div>
             </section>
@@ -646,6 +781,73 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
         </div>
       )}
 
+      {/* 3. EDIT EXAM MODAL */}
+      {showEditModal && editingExam && (
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(42, 36, 33, 0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 }}>
+          <div style={{ background: "#fff", width: "90%", maxWidth: 600, borderRadius: 16, boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.15)", overflow: "hidden" }}>
+            <div style={{ padding: "20px 24px", borderBottom: "1px solid #E8EAF0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f5f2eb" }}>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "#2a2421" }}>✏️ Edit Examination Details</h3>
+              <button onClick={() => setShowEditModal(false)} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#8a8fa8" }}>&times;</button>
+            </div>
+            
+            <div style={{ padding: "32px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+              <div style={{ gridColumn: "span 2" }}>
+                <label style={labelStyle}>Exam Name</label>
+                <input type="text" value={editingExam.name} onChange={(e) => setEditingExam({...editingExam, name: e.target.value})} style={inputStyle} />
+              </div>
+
+              <div>
+                <label style={labelStyle}>Level</label>
+                <select value={editingExam.level} onChange={(e) => setEditingExam({...editingExam, level: e.target.value})} style={inputStyle}>
+                  {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl}>{lvl}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Grade</label>
+                <select value={editingExam.grade} onChange={(e) => setEditingExam({...editingExam, grade: e.target.value})} style={inputStyle}>
+                  {(GRADES_BY_LEVEL[editingExam.level] || []).map(g => <option key={g}>{g}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Term</label>
+                <select value={editingExam.term} onChange={(e) => setEditingExam({...editingExam, term: e.target.value})} style={inputStyle}>
+                  <option>Term 1</option>
+                  <option>Term 2</option>
+                  <option>Term 3</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Cut Off Mark (%)</label>
+                <input type="number" value={editingExam.weight} onChange={(e) => setEditingExam({...editingExam, weight: e.target.value})} style={inputStyle} />
+              </div>
+
+              <div>
+                <label style={labelStyle}>Status</label>
+                <select value={editingExam.status} onChange={(e) => setEditingExam({...editingExam, status: e.target.value})} style={inputStyle}>
+                  <option value="Upcoming">Upcoming</option>
+                  <option value="Ongoing">Ongoing</option>
+                  <option value="Completed">Completed</option>
+                  <option value="Published">Published</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={{ padding: "20px 32px", background: "#f9f7f2", display: "flex", justifyContent: "flex-end", gap: 12 }}>
+              <button onClick={() => setShowEditModal(false)} style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #e6dfd8", background: "white", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+              <button 
+                onClick={handleUpdateExam}
+                disabled={isSavingEdit}
+                style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: isSavingEdit ? "#8a8fa8" : activeColor, color: "#fff", fontSize: 13, fontWeight: 600, cursor: isSavingEdit ? "not-allowed" : "pointer" }}
+              >
+                {isSavingEdit ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

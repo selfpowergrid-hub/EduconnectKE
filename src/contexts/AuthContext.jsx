@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 
 const AuthContext = createContext(null);
@@ -18,15 +18,29 @@ export function AuthProvider({ children }) {
   const [needsRegistration, setNeedsRegistration] = useState(false);
   const [needsPlanSelection, setNeedsPlanSelection] = useState(false);
 
+  const userRef = useRef(null);
+
+  // Keep ref in sync with user state to avoid stale closure in auth listener
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
   // Fetch school data for the authenticated user
   const fetchSchoolForUser = async (authUser) => {
+    if (!authUser?.email) return;
+    
     try {
-      // Look up school by the user's email
-      const { data, error } = await supabase
-        .from('school_registrations')
-        .select('*')
-        .eq('email', authUser.email)
-        .single();
+      // Look up school by the user's email with a timeout
+      const { data, error } = await Promise.race([
+        supabase
+          .from('school_registrations')
+          .select('*')
+          .eq('email', authUser.email)
+          .single(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('School lookup timed out')), 15000)
+        )
+      ]);
 
       if (error && error.code === 'PGRST116') {
         // No school found for this email — user needs to register
@@ -93,20 +107,32 @@ export function AuthProvider({ children }) {
     // Subscribe to auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, s) => {
-        if (event === 'SIGNED_IN') {
+        console.log('Auth event:', event);
+        
+        // Only show full-screen loader if we are transitioning from unauthenticated to authenticated
+        // This prevents the screen from going blank when the tab is refocused and Supabase refreshes the session
+        const isNewLogin = !userRef.current && s?.user;
+        if (event === 'INITIAL_SESSION' || (event === 'SIGNED_IN' && isNewLogin)) {
           setIsLoading(true);
         }
-        setSession(s);
-        setUser(s?.user ?? null);
-        if (s?.user) {
-          await fetchSchoolForUser(s.user);
-        } else {
-          setSchoolConfig(null);
-          setPlan('starter');
-          setNeedsRegistration(false);
-          setNeedsPlanSelection(false);
+
+        try {
+          setSession(s);
+          setUser(s?.user ?? null);
+          
+          if (s?.user) {
+            await fetchSchoolForUser(s.user);
+          } else {
+            setSchoolConfig(null);
+            setPlan('starter');
+            setNeedsRegistration(false);
+            setNeedsPlanSelection(false);
+          }
+        } catch (err) {
+          console.error('Error in auth state change handler:', err);
+        } finally {
+          setIsLoading(false);
         }
-        setIsLoading(false);
       }
     );
 

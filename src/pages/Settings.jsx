@@ -64,16 +64,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
         .select('*')
         .eq('school_id', schoolConfig.id);
       if (error) throw error;
-      
-      const pp_g3 = data.filter(g => g.level_group === "pp_g3");
-      const g4_g6 = data.filter(g => g.level_group === "g4_g6");
-      const g7_g9 = data.filter(g => g.level_group === "g7_g9");
-      const g10_g12 = data.filter(g => g.level_group === "g10_g12");
-      
-      if (pp_g3.length) setGradesPPG3(pp_g3);
-      if (g4_g6.length) setGradesG4G6(g4_g6);
-      if (g7_g9.length) setGradesG7G9(g7_g9);
-      if (g10_g12.length) setGradesG10G12(g10_g12);
+      setGradesList(data || []);
     } catch (err) {
       console.error('Error fetching grading:', err);
     }
@@ -88,7 +79,10 @@ const Settings = ({ schoolConfig, initialTab }) => {
         .single();
 
       if (error && error.code !== 'PGRST116') throw error; // PGRST116 is "no rows found"
-      if (data) setSchoolInfo(data);
+      if (data) {
+        setSchoolInfo(data);
+        if (data.logo_url) setLogoPreview(data.logo_url);
+      }
     } catch (err) {
       console.error('Error fetching school info:', err);
     }
@@ -225,14 +219,21 @@ const Settings = ({ schoolConfig, initialTab }) => {
     try {
       const payload = {
         school_id: schoolConfig.id,
-        ...schoolInfo
+        ...schoolInfo,
+        logo_url: logoPreview || schoolInfo.logo_url
       };
 
-      const { error } = await supabase
-        .from('school_information')
-        .upsert(payload, { onConflict: 'school_id' });
+      const { error } = await Promise.race([
+        supabase.from('school_information').upsert(payload, { onConflict: 'school_id' }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Database timeout after 15 seconds')), 15000))
+      ]);
 
-      if (error) throw error;
+      if (error) {
+        if (error.code === '42501') {
+          throw new Error('Permission Denied (RLS): You do not have permission to update this school\'s information.');
+        }
+        throw error;
+      }
       alert('School information saved successfully!');
     } catch (err) {
       alert('Failed to save school info: ' + err.message);
@@ -242,28 +243,25 @@ const Settings = ({ schoolConfig, initialTab }) => {
   };
 
   // Grading System state
-  const [gradingLevel, setGradingLevel] = useState("pp_g3");
+  const [gradingLevel, setGradingLevel] = useState("Junior Secondary");
+  const [selectedGradingGrade, setSelectedGradingGrade] = useState("");
   const [gradingExpanded, setGradingExpanded] = useState(false);
+  const [gradesList, setGradesList] = useState([]);
 
-  const [gradesPPG3, setGradesPPG3] = useState([]);
-  const [gradesG4G6, setGradesG4G6] = useState([]);
-  const [gradesG7G9, setGradesG7G9] = useState([]);
-  const [gradesG10G12, setGradesG10G12] = useState([]);
-
-  const [newGrade, setNewGrade] = useState({ grade: "", label: "", description: "", min: "", max: "", points: "" });
+  const [newGrade, setNewGrade] = useState({ grade: "", description: "", min: "", max: "", points: "" });
 
   const handleAddGrade = async () => {
     if (!newGrade.grade.trim()) return;
     try {
       const payload = {
         school_id: schoolConfig.id,
-        level_group: gradingLevel,
+        school_level: gradingLevel,
+        school_grade: selectedGradingGrade || "All",
         grade: newGrade.grade,
-        label: newGrade.label,
+        description: newGrade.description,
         min_score: parseInt(newGrade.min) || 0,
         max_score: parseInt(newGrade.max) || 0,
-        points: parseInt(newGrade.points) || 0,
-        remarks: newGrade.description
+        points: parseInt(newGrade.points) || 0
       };
 
       const { data, error } = await supabase
@@ -274,18 +272,14 @@ const Settings = ({ schoolConfig, initialTab }) => {
 
       if (error) throw error;
       
-      if (gradingLevel === "pp_g3") setGradesPPG3(prev => [...prev, data]);
-      if (gradingLevel === "g4_g6") setGradesG4G6(prev => [...prev, data]);
-      if (gradingLevel === "g7_g9") setGradesG7G9(prev => [...prev, data]);
-      if (gradingLevel === "g10_g12") setGradesG10G12(prev => [...prev, data]);
-      
-      setNewGrade({ grade: "", label: "", description: "", min: "", max: "", points: "" });
+      setGradesList(prev => [...prev, data]);
+      setNewGrade({ grade: "", description: "", min: "", max: "", points: "" });
     } catch (err) {
       alert('Failed to add grade: ' + err.message);
     }
   };
 
-  const removeGrade = async (id, level) => {
+  const removeGrade = async (id) => {
     try {
       const { error } = await supabase
         .from('grading_systems')
@@ -293,10 +287,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
         .eq('id', id);
       if (error) throw error;
 
-      if (level === "pp_g3") setGradesPPG3(prev => prev.filter(g => g.id !== id));
-      if (level === "g4_g6") setGradesG4G6(prev => prev.filter(g => g.id !== id));
-      if (level === "g7_g9") setGradesG7G9(prev => prev.filter(g => g.id !== id));
-      if (level === "g10_g12") setGradesG10G12(prev => prev.filter(g => g.id !== id));
+      setGradesList(prev => prev.filter(g => g.id !== id));
     } catch (err) {
       alert('Failed to remove grade: ' + err.message);
     }
@@ -311,7 +302,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
   };
 
   // Subjects state
-  const [subjectLevel, setSubjectLevel] = useState("jss");
+  const [subjectLevel, setSubjectLevel] = useState("Primary");
   const [selectedSubjectGrade, setSelectedSubjectGrade] = useState("");
   const [subjectsExpanded, setSubjectsExpanded] = useState(false);
 
@@ -599,7 +590,34 @@ const Settings = ({ schoolConfig, initialTab }) => {
   const handleLogoUpload = (file) => {
     if (file && file.type.startsWith('image/')) {
       const reader = new FileReader();
-      reader.onload = (e) => setLogoPreview(e.target.result);
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          // Compress the image to max 300x300 to keep the base64 string small
+          const canvas = document.createElement('canvas');
+          const MAX_SIZE = 300;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height && width > MAX_SIZE) {
+            height *= MAX_SIZE / width;
+            width = MAX_SIZE;
+          } else if (height > MAX_SIZE) {
+            width *= MAX_SIZE / height;
+            height = MAX_SIZE;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          // Convert to base64 webp for maximum compression
+          const compressedBase64 = canvas.toDataURL('image/webp', 0.8);
+          setLogoPreview(compressedBase64);
+        };
+        img.src = e.target.result;
+      };
       reader.readAsDataURL(file);
     }
   };
@@ -1451,73 +1469,73 @@ const Settings = ({ schoolConfig, initialTab }) => {
               </button>
             </div>
 
-            {/* Level Tabs */}
-            <div style={{ display: "flex", gap: 10, marginBottom: 20, overflowX: "auto", paddingBottom: 8 }}>
-              {[{ id: "pp_g3", label: "PP1 – Grade 3", icon: "🧒", c: gradesPPG3.length },
-                { id: "g4_g6", label: "Grade 4–6 (KPSEA)", icon: "📘", c: gradesG4G6.length },
-                { id: "g7_g9", label: "Grade 7–9 (KJSEA)", icon: "📗", c: gradesG7G9.length },
-                { id: "g10_g12", label: "Grade 10–12 (KCSE)", icon: "📕", c: gradesG10G12.length }
-              ].map(level => (
-                <button
-                  key={level.id}
-                  onClick={() => { setGradingLevel(level.id); setGradingExpanded(false); setNewGrade({ grade: "", label: "", description: "", min: "", max: "", points: "" }); }}
-                  style={{
-                    padding: "10px 18px",
-                    background: gradingLevel === level.id ? "#D4AF37" : "#fff",
-                    color: gradingLevel === level.id ? "#fff" : "#8a8fa8",
-                    border: gradingLevel === level.id ? "1px solid #D4AF37" : "1px solid #e6dfd8",
-                    borderRadius: 30,
-                    fontSize: 13.5,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    transition: "all 0.2s",
-                    whiteSpace: "nowrap"
-                  }}
-                  onMouseEnter={(e) => { if (gradingLevel !== level.id) e.target.style.background = "#f5f2eb"; }}
-                  onMouseLeave={(e) => { if (gradingLevel !== level.id) e.target.style.background = "#fff"; }}
-                >
-                  <span>{level.icon}</span>
-                  {level.label}
-                  <span style={{
-                    background: gradingLevel === level.id ? "rgba(255,255,255,0.2)" : "#e6dfd8",
-                    color: gradingLevel === level.id ? "#fff" : "#8a8fa8",
-                    padding: "2px 8px",
-                    borderRadius: 12,
-                    fontSize: 11
-                  }}>{level.c}</span>
-                </button>
-              ))}
-            </div>
-
-            {/* Info Banner */}
-            <div style={{
-              background: "#f5f2eb",
-              border: "1px solid #C4E1FA",
-              borderRadius: 12,
-              padding: "14px 20px",
-              marginBottom: 24,
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 12,
+            {/* Level & Grade Selection Bar */}
+            <div style={{ 
+              display: "grid", 
+              gridTemplateColumns: "1fr 1fr", 
+              gap: 20, 
+              marginBottom: 24, 
+              padding: "20px 24px", 
+              background: "#fff", 
+              border: "1px solid #e6dfd8", 
+              borderRadius: 12, 
+              boxShadow: "0 1px 2px rgba(0,0,0,0.02)" 
             }}>
-              <span style={{ fontSize: 20 }}>💡</span>
-              <div>
-                <h4 style={{ margin: "0 0 4px", fontSize: 13.5, color: "#2a2421", fontWeight: 700 }}>
-                  {gradingLevel === "pp_g3" && "Observation Rubric (Formative Assessment)"}
-                  {gradingLevel === "g4_g6" && "4-Level Competency Scale (KPSEA)"}
-                  {gradingLevel === "g7_g9" && "8-Point Achievement Levels (KJSEA)"}
-                  {gradingLevel === "g10_g12" && "8-Point Achievement Levels (Senior School)"}
-                </h4>
-                <p style={{ margin: 0, fontSize: 12.5, color: "#3B75A7", lineHeight: 1.5 }}>
-                  {gradingLevel === "pp_g3" && "Pre-primary to Grade 3 uses purely formative assessment based on observation. There are no national exams, marks, or rankings, only qualitative rubric descriptions."}
-                  {gradingLevel === "g4_g6" && "Grade 4–6 incorporates the first national assessment (KPSEA). It uses a 4-level EE/ME/AE/BE scale. Learners are not ranked."}
-                  {gradingLevel === "g7_g9" && "Junior Secondary is pivotal. It uses an 8-point scale (EE1 down to BE2) ensuring every learner is recognized with at least 1 point. No zero marks exist."}
-                  {gradingLevel === "g10_g12" && "Senior Secondary follows the same competency-based 8-point scale (EE1 down to BE2) as JSS, focusing on holistic development and specialized pathways."}
-                </p>
-              </div>
+              {(() => {
+                const GRADES_BY_LEVEL = {
+                  "Pre-Primary": CLASSES.filter(c => c.id.startsWith("pp")),
+                  "Primary": CLASSES.filter(c => c.type === "Primary" && !c.id.startsWith("pp")),
+                  "Junior Secondary": CLASSES.filter(c => c.type === "JSS"),
+                  "Senior Secondary": CLASSES.filter(c => c.type === "Secondary"),
+                };
+                const selectStyle = {
+                  width: "100%", padding: "12px 16px", borderRadius: 8,
+                  border: "1px solid #e6dfd8", fontSize: 14, background: "#fff",
+                  outline: "none", cursor: "pointer", appearance: "none",
+                  fontWeight: 600, color: "#2a2421", boxSizing: "border-box"
+                };
+                const labelStyle2 = { display: "block", fontSize: 11, fontWeight: 800, color: "#2a2421", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" };
+                
+                return (
+                  <>
+                    <div>
+                      <label style={labelStyle2}>Academic Level</label>
+                      <div style={{ position: "relative" }}>
+                        <select
+                          value={gradingLevel}
+                          onChange={(e) => {
+                            setGradingLevel(e.target.value);
+                            setSelectedGradingGrade("");
+                          }}
+                          style={selectStyle}
+                        >
+                          <option value="Pre-Primary">Pre-Primary</option>
+                          <option value="Primary">Primary</option>
+                          <option value="Junior Secondary">Junior Secondary</option>
+                          <option value="Senior Secondary">Senior Secondary</option>
+                        </select>
+                        <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label style={labelStyle2}>Grade Scope</label>
+                      <div style={{ position: "relative" }}>
+                        <select
+                          value={selectedGradingGrade}
+                          onChange={(e) => setSelectedGradingGrade(e.target.value)}
+                          style={selectStyle}
+                        >
+                          <option value="">Apply to all {gradingLevel} grades</option>
+                          {(GRADES_BY_LEVEL[gradingLevel] || []).map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                        <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             {/* Grading System Content */}
@@ -1536,42 +1554,26 @@ const Settings = ({ schoolConfig, initialTab }) => {
               }}>
                 <div style={{ width: 90 }}>
                   <label style={labelStyle}>Grade</label>
-                  <input type="text" placeholder="e.g. EE" value={newGrade.grade} onChange={(e) => setNewGrade({ ...newGrade, grade: e.target.value })} style={{ ...inputStyle, paddingLeft: 12, textAlign: "center" }} />
+                  <input type="text" placeholder="e.g. A" value={newGrade.grade} onChange={(e) => setNewGrade({ ...newGrade, grade: e.target.value })} style={{ ...inputStyle, paddingLeft: 12, textAlign: "center" }} />
                 </div>
                 
-                {gradingLevel !== "pp_g3" && (
-                  <div style={{ flex: 2, minWidth: 200 }}>
-                    <label style={labelStyle}>Description / Label</label>
-                    <input type="text" placeholder="e.g. Exceeding Expectations" value={newGrade.label} onChange={(e) => setNewGrade({ ...newGrade, label: e.target.value })} style={{ ...inputStyle, paddingLeft: 14 }} />
-                  </div>
-                )}
+                <div style={{ flex: 2, minWidth: 200 }}>
+                  <label style={labelStyle}>Description / Label</label>
+                  <input type="text" placeholder="e.g. Excellent" value={newGrade.description} onChange={(e) => setNewGrade({ ...newGrade, description: e.target.value })} style={{ ...inputStyle, paddingLeft: 14 }} />
+                </div>
 
-                {gradingLevel === "pp_g3" && (
-                  <div style={{ flex: 3, minWidth: 250 }}>
-                    <label style={labelStyle}>Rubric Notes</label>
-                    <input type="text" placeholder="Learner surpasses expected level..." value={newGrade.description} onChange={(e) => setNewGrade({ ...newGrade, description: e.target.value })} style={{ ...inputStyle, paddingLeft: 14 }} />
-                  </div>
-                )}
-
-                {gradingLevel !== "pp_g3" && (
-                  <>
-                    <div style={{ width: 80 }}>
-                      <label style={labelStyle}>Min %</label>
-                      <input type="number" placeholder="76" value={newGrade.min} onChange={(e) => setNewGrade({ ...newGrade, min: e.target.value })} style={{ ...inputStyle, paddingLeft: 12, textAlign: "center" }} />
-                    </div>
-                    <div style={{ width: 80 }}>
-                      <label style={labelStyle}>Max %</label>
-                      <input type="number" placeholder="100" value={newGrade.max} onChange={(e) => setNewGrade({ ...newGrade, max: e.target.value })} style={{ ...inputStyle, paddingLeft: 12, textAlign: "center" }} />
-                    </div>
-                  </>
-                )}
-
-                {(gradingLevel === "g7_g9" || gradingLevel === "g10_g12") && (
-                  <div style={{ width: 80 }}>
-                    <label style={labelStyle}>Points</label>
-                    <input type="number" placeholder="8" value={newGrade.points} onChange={(e) => setNewGrade({ ...newGrade, points: e.target.value })} style={{ ...inputStyle, paddingLeft: 12, textAlign: "center" }} />
-                  </div>
-                )}
+                <div style={{ width: 80 }}>
+                  <label style={labelStyle}>Min %</label>
+                  <input type="number" placeholder="80" value={newGrade.min} onChange={(e) => setNewGrade({ ...newGrade, min: e.target.value })} style={{ ...inputStyle, paddingLeft: 12, textAlign: "center" }} />
+                </div>
+                <div style={{ width: 80 }}>
+                  <label style={labelStyle}>Max %</label>
+                  <input type="number" placeholder="100" value={newGrade.max} onChange={(e) => setNewGrade({ ...newGrade, max: e.target.value })} style={{ ...inputStyle, paddingLeft: 12, textAlign: "center" }} />
+                </div>
+                <div style={{ width: 80 }}>
+                  <label style={labelStyle}>Points</label>
+                  <input type="number" placeholder="12" value={newGrade.points} onChange={(e) => setNewGrade({ ...newGrade, points: e.target.value })} style={{ ...inputStyle, paddingLeft: 12, textAlign: "center" }} />
+                </div>
 
                 <button
                   onClick={handleAddGrade}
@@ -1624,29 +1626,33 @@ const Settings = ({ schoolConfig, initialTab }) => {
                         </tr>
                       </thead>
                       <tbody>
-                        {(gradingLevel === "pp_g3" ? gradesPPG3 : gradingLevel === "g4_g6" ? gradesG4G6 : gradingLevel === "g7_g9" ? gradesG7G9 : gradesG10G12).map((g, idx) => {
-                          const badge = getBadgeColors(g.grade);
-                          return (
-                            <tr key={g.id} style={{ borderTop: "1px solid #e6dfd8", background: idx % 2 === 0 ? "#fff" : "#f5f2eb" }}>
-                              <td style={{ padding: "12px 16px", textAlign: "center", fontWeight: 700 }}>
-                                <span style={{ background: badge.bg, color: badge.text, padding: "4px 10px", borderRadius: 6, fontSize: 13 }}>{g.grade}</span>
-                              </td>
-                              {gradingLevel !== "pp_g3" && <td style={{ padding: "12px 16px", fontWeight: 600, color: "#2a2421" }}>{g.label}</td>}
-                              {gradingLevel === "pp_g3" && <td style={{ padding: "12px 16px", color: "#6A6A8A", fontSize: 13 }}>{g.description}</td>}
-                              {gradingLevel !== "pp_g3" && (
-                                <td style={{ padding: "12px 16px", textAlign: "center", color: "#8a8fa8", fontWeight: 600, fontSize: 12.5 }}>
-                                  {g.min} – {g.max}
+                        {gradesList
+                          .filter(g => g.school_level === gradingLevel && g.school_grade === (selectedGradingGrade || "All"))
+                          .map((g, idx) => {
+                            const badge = getBadgeColors(g.grade);
+                            return (
+                              <tr key={g.id} style={{ borderTop: "1px solid #e6dfd8", background: idx % 2 === 0 ? "#fff" : "#f5f2eb" }}>
+                                <td style={{ padding: "12px 16px", textAlign: "center", fontWeight: 700 }}>
+                                  <span style={{ background: badge.bg, color: badge.text, padding: "4px 10px", borderRadius: 6, fontSize: 13 }}>{g.grade}</span>
                                 </td>
-                              )}
-                              {(gradingLevel === "g7_g9" || gradingLevel === "g10_g12") && (
+                                <td style={{ padding: "12px 16px", fontWeight: 600, color: "#2a2421" }}>{g.description}</td>
+                                <td style={{ padding: "12px 16px", textAlign: "center", color: "#8a8fa8", fontWeight: 600, fontSize: 12.5 }}>
+                                  {g.min_score} – {g.max_score}
+                                </td>
                                 <td style={{ padding: "12px 16px", textAlign: "center", fontWeight: 700, color: "#D4AF37" }}>{g.points}</td>
-                              )}
-                              <td style={{ padding: "12px 16px", textAlign: "center" }}>
-                                <button onClick={() => removeGrade(g.id, gradingLevel)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: "#c0392b", opacity: 0.5, transition: "opacity 0.2s" }} onMouseEnter={(e) => e.target.style.opacity = 1} onMouseLeave={(e) => e.target.style.opacity = 0.5}>🗑️</button>
-                              </td>
-                            </tr>
-                          );
-                        })}
+                                <td style={{ padding: "12px 16px", textAlign: "center" }}>
+                                  <button onClick={() => removeGrade(g.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: "#c0392b", opacity: 0.5, transition: "opacity 0.2s" }} onMouseEnter={(e) => e.target.style.opacity = 1} onMouseLeave={(e) => e.target.style.opacity = 0.5}>🗑️</button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        {gradesList.filter(g => g.school_level === gradingLevel && g.school_grade === (selectedGradingGrade || "All")).length === 0 && (
+                          <tr>
+                            <td colSpan="5" style={{ textAlign: "center", padding: "30px", color: "#8a8fa8" }}>
+                              No grades configured for this level/grade.
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -1865,79 +1871,62 @@ const Settings = ({ schoolConfig, initialTab }) => {
               </button>
             </div>
 
-            {/* Level & Grade Selector */}
-            <div style={{ marginBottom: 20, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <label style={{ fontSize: 13.5, fontWeight: 700, color: "#8a8fa8" }}>1. Learning Phase:</label>
-                <div style={{ position: "relative", width: 240 }}>
-                  <select
-                    value={subjectLevel}
-                    onChange={(e) => {
-                      setSubjectLevel(e.target.value);
-                      setSubjectsExpanded(false);
-                      setSelectedSubjectGrade(""); // Reset grade when phase changes
-                      setNewSubject({ name: "", code: "", type: e.target.value === "sss" ? "Compulsory" : "Core" });
-                    }}
-                    style={{
-                      width: "100%",
-                      padding: "10px 14px",
-                      borderRadius: 10,
-                      border: "1px solid #D0D5DD",
-                      fontSize: 13.5,
-                      fontWeight: 600,
-                      color: "#2a2421",
-                      background: "#f5f2eb",
-                      appearance: "none",
-                      cursor: "pointer",
-                      boxShadow: "0 1px 2px rgba(0,0,0,0.02)"
-                    }}
-                  >
-                    <option value="pp">👦 Pre-Primary (PP1–PP2)</option>
-                    <option value="lower_pri">🎒 Lower Primary (G1–G3)</option>
-                    <option value="upper_pri">📚 Upper Primary (G4–G8)</option>
-                    <option value="jss">🏫 Junior Secondary (G7–G9)</option>
-                    <option value="sss">🎓 Senior Secondary (G10–G12)</option>
-                  </select>
-                  <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
+            {/* Level & Grade Dropdowns - matching Exam Settings style */}
+            {(() => {
+              const GRADES_BY_LEVEL = {
+                "Pre-Primary": CLASSES.filter(c => c.id.startsWith("pp")),
+                "Primary": CLASSES.filter(c => c.type === "Primary" && !c.id.startsWith("pp")),
+                "Junior Secondary": CLASSES.filter(c => c.type === "JSS"),
+                "Senior Secondary": CLASSES.filter(c => c.type === "Secondary"),
+              };
+              const selectStyle = {
+                width: "100%", padding: "12px 16px", borderRadius: 8,
+                border: "1px solid #e6dfd8", fontSize: 14, background: "#fff",
+                outline: "none", cursor: "pointer", appearance: "none",
+                fontWeight: 600, color: "#2a2421", boxSizing: "border-box"
+              };
+              const labelStyle2 = { display: "block", fontSize: 11, fontWeight: 800, color: "#2a2421", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" };
+              return (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24, padding: "20px 24px", background: "#fff", border: "1px solid #e6dfd8", borderRadius: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.02)" }}>
+                  <div>
+                    <label style={labelStyle2}>Level</label>
+                    <div style={{ position: "relative" }}>
+                      <select
+                        value={subjectLevel}
+                        onChange={(e) => {
+                          setSubjectLevel(e.target.value);
+                          setSelectedSubjectGrade("");
+                          setNewSubject({ name: "", code: "", type: e.target.value === "Senior Secondary" ? "Compulsory" : "Core" });
+                        }}
+                        style={selectStyle}
+                      >
+                        <option value="Pre-Primary">Pre-Primary</option>
+                        <option value="Primary">Primary</option>
+                        <option value="Junior Secondary">Junior Secondary</option>
+                        <option value="Senior Secondary">Senior Secondary</option>
+                      </select>
+                      <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label style={labelStyle2}>Grade</label>
+                    <div style={{ position: "relative" }}>
+                      <select
+                        value={selectedSubjectGrade}
+                        onChange={(e) => setSelectedSubjectGrade(e.target.value)}
+                        style={selectStyle}
+                      >
+                        <option value="">-- Select Grade --</option>
+                        {(GRADES_BY_LEVEL[subjectLevel] || []).map(c => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </select>
+                      <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <label style={{ fontSize: 13.5, fontWeight: 700, color: "#8a8fa8" }}>2. Specific Grade:</label>
-                <div style={{ position: "relative", width: 200 }}>
-                  <select
-                    value={selectedSubjectGrade}
-                    onChange={(e) => setSelectedSubjectGrade(e.target.value)}
-                    style={{
-                      width: "100%",
-                      padding: "10px 14px",
-                      borderRadius: 10,
-                      border: "1px solid #D0D5DD",
-                      fontSize: 13.5,
-                      fontWeight: 600,
-                      color: "#2a2421",
-                      background: "#f5f2eb",
-                      appearance: "none",
-                      cursor: "pointer",
-                      boxShadow: "0 1px 2px rgba(0,0,0,0.02)"
-                    }}
-                  >
-                    <option value="">-- Select Grade --</option>
-                    {CLASSES.filter(c => {
-                      if (subjectLevel === "pp") return c.id.startsWith("pp");
-                      if (subjectLevel === "lower_pri") return ["p1", "p2", "p3"].includes(c.id);
-                      if (subjectLevel === "upper_pri") return ["p4", "p5", "p6", "p7", "p8"].includes(c.id);
-                      if (subjectLevel === "jss") return c.type === "JSS";
-                      if (subjectLevel === "sss") return c.type === "SS";
-                      return false;
-                    }).map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
 
             {/* Subjects Content Block */}
@@ -1945,35 +1934,36 @@ const Settings = ({ schoolConfig, initialTab }) => {
 
               {/* Add Subject Form */}
               <div style={{
-                background: "#f5f2eb",
-                border: "1.5px dashed #D0D5DD",
-                borderRadius: 14,
-                padding: "18px 20px",
-                display: "flex",
+                background: "#f8fafc",
+                border: "1px solid #e2e8f0",
+                borderRadius: 16,
+                padding: "24px",
+                display: "grid",
+                gridTemplateColumns: "1fr 2.5fr 1.5fr auto",
+                gap: 20,
                 alignItems: "flex-end",
-                gap: 14,
-                flexWrap: "wrap",
-                marginBottom: 20,
+                marginBottom: 28,
+                boxShadow: "inset 0 2px 4px rgba(0,0,0,0.01)"
               }}>
-                <div style={{ width: 100 }}>
-                  <label style={labelStyle}>Code</label>
-                  <input type="text" placeholder="e.g. MATH" value={newSubject.code} onChange={(e) => setNewSubject({ ...newSubject, code: e.target.value })} style={{ ...inputStyle, paddingLeft: 12 }} />
+                <div>
+                  <label style={{ ...labelStyle, marginBottom: 8, color: "#64748b", fontWeight: 700, fontSize: 11 }}>SUBJECT CODE</label>
+                  <input type="text" placeholder="e.g. MATH" value={newSubject.code} onChange={(e) => setNewSubject({ ...newSubject, code: e.target.value })} style={{ ...inputStyle, padding: "0 16px", height: "46px" }} />
                 </div>
                 
-                <div style={{ flex: 2, minWidth: 200 }}>
-                  <label style={labelStyle}>Subject Name</label>
-                  <input type="text" placeholder="e.g. Integrated Science" value={newSubject.name} onChange={(e) => setNewSubject({ ...newSubject, name: e.target.value })} style={{ ...inputStyle, paddingLeft: 14 }} onKeyDown={(e) => e.key === "Enter" && handleAddSubject()} />
+                <div>
+                  <label style={{ ...labelStyle, marginBottom: 8, color: "#64748b", fontWeight: 700, fontSize: 11 }}>SUBJECT NAME</label>
+                  <input type="text" placeholder="e.g. Integrated Science" value={newSubject.name} onChange={(e) => setNewSubject({ ...newSubject, name: e.target.value })} style={{ ...inputStyle, padding: "0 16px", height: "46px" }} onKeyDown={(e) => e.key === "Enter" && handleAddSubject()} />
                 </div>
 
-                <div style={{ width: 140 }}>
-                  <label style={labelStyle}>Type</label>
+                <div>
+                  <label style={{ ...labelStyle, marginBottom: 8, color: "#64748b", fontWeight: 700, fontSize: 11 }}>TYPE</label>
                   <div style={{ position: "relative" }}>
                     <select
                       value={newSubject.type}
                       onChange={(e) => setNewSubject({ ...newSubject, type: e.target.value })}
-                      style={{ ...inputStyle, paddingLeft: 14, appearance: "none", cursor: "pointer" }}
+                      style={{ ...inputStyle, padding: "0 16px", height: "46px", appearance: "none", cursor: "pointer" }}
                     >
-                      {subjectLevel === "sss" ? (
+                      {subjectLevel === "Senior Secondary" ? (
                         <>
                           <option value="Compulsory">Compulsory</option>
                           <option value="Elective">Elective</option>
@@ -1985,26 +1975,30 @@ const Settings = ({ schoolConfig, initialTab }) => {
                         </>
                       )}
                     </select>
-                    <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
+                    <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
                   </div>
                 </div>
 
                 <button
                   onClick={handleAddSubject}
                   style={{
-                    padding: "11px 22px",
-                    background: "linear-gradient(135deg, #D4AF37, #28a05f)",
+                    height: "46px",
+                    padding: "0 28px",
+                    background: "linear-gradient(135deg, #10b981, #059669)",
                     color: "#fff",
                     border: "none",
-                    borderRadius: 10,
+                    borderRadius: 12,
                     fontWeight: 700,
                     cursor: "pointer",
-                    fontSize: 13,
-                    boxShadow: "0 2px 6px rgba(27,107,58,0.2)",
+                    fontSize: 14,
+                    boxShadow: "0 4px 12px rgba(16, 185, 129, 0.25)",
                     transition: "all 0.2s ease",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                   }}
-                  onMouseEnter={(e) => { e.target.style.transform = "translateY(-1px)"; }}
-                  onMouseLeave={(e) => { e.target.style.transform = "translateY(0)"; }}
+                  onMouseEnter={(e) => { e.target.style.transform = "translateY(-2px)"; e.target.style.boxShadow = "0 6px 16px rgba(16, 185, 129, 0.35)"; }}
+                  onMouseLeave={(e) => { e.target.style.transform = "translateY(0)"; e.target.style.boxShadow = "0 4px 12px rgba(16, 185, 129, 0.25)"; }}
                 >
                   + Add Subject
                 </button>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { CLASSES } from '../data/mockData';
 
 const Reports = ({ schoolConfig, examsList }) => {
   const [students, setStudents] = useState([]);
@@ -8,9 +9,19 @@ const Reports = ({ schoolConfig, examsList }) => {
   const [dbGrades, setDbGrades] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedStudentId, setSelectedStudentId] = useState(null);
+  const [selectedClass, setSelectedClass] = useState("g10"); // Default to Grade 10
+  const [selectedStream, setSelectedStream] = useState("A");
   const [schoolInfo, setSchoolInfo] = useState(null);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedTerm, setSelectedTerm] = useState("Term 1");
+
+  const currentTypeClasses = useMemo(() => {
+    return CLASSES;
+  }, []);
+
+  const selectedStudent = useMemo(() => {
+    return students.find(s => s.id === selectedStudentId);
+  }, [students, selectedStudentId]);
 
   useEffect(() => {
     if (schoolConfig?.id) {
@@ -69,12 +80,28 @@ const Reports = ({ schoolConfig, examsList }) => {
   };
 
   const getGrade = (score) => {
-    const scale = dbGrades.length > 0 ? dbGrades : [
-      { grade: "EE", min_score: 80, label: "Exceeding Expectations" },
-      { grade: "ME", min_score: 50, label: "Meeting Expectations" },
-      { grade: "AE", min_score: 30, label: "Approaching Expectations" },
-      { grade: "BE", min_score: 0, label: "Below Expectations" },
-    ];
+    if (!selectedStudent) return { grade: "-", label: "" };
+    
+    // Find the level name for the current class
+    const cls = currentTypeClasses.find(c => c.id === selectedStudent.level_id);
+    const levelName = cls?.type === "Primary" ? (cls.id.startsWith("pp") ? "Pre-Primary" : "Primary") : 
+                    cls?.type === "JSS" ? "Junior Secondary" : "Senior Secondary";
+
+    // Filter scale for specific grade first, then fall back to level
+    let scale = dbGrades.filter(g => g.level_group === selectedStudent.level_id);
+    if (scale.length === 0) {
+      scale = dbGrades.filter(g => g.level_group === levelName);
+    }
+
+    if (scale.length === 0) {
+      scale = [
+        { grade: "EE", min_score: 80, label: "Exceeding Expectations" },
+        { grade: "ME", min_score: 50, label: "Meeting Expectations" },
+        { grade: "AE", min_score: 30, label: "Approaching Expectations" },
+        { grade: "BE", min_score: 0, label: "Below Expectations" },
+      ];
+    }
+
     const sorted = [...scale].sort((a, b) => b.min_score - a.min_score);
     for (const g of sorted) {
       if (score >= g.min_score) return g;

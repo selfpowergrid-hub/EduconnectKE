@@ -1,18 +1,41 @@
 import React, { useState } from 'react';
 import { STUDENTS, MPESA_TRANSACTIONS, getClassesByType } from '../data/mockData';
 
+const GRADES_BY_LEVEL = {
+  "Pre-Primary": ["PP1", "PP2"],
+  "Primary": ["Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6"],
+  "Junior Secondary": ["Grade 7", "Grade 8", "Grade 9"],
+  "Senior Secondary": ["Grade 10", "Grade 11", "Grade 12"]
+};
+
 const Fees = ({ schoolConfig }) => {
   const [activeTab, setActiveTab] = useState("balances");
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedLevel, setSelectedLevel] = useState("Senior Secondary");
+  const [selectedGrade, setSelectedGrade] = useState("Grade 10");
 
   const currentTypeClasses = getClassesByType(schoolConfig?.schoolType || "Primary");
-  const classIds = currentTypeClasses.map(c => c.id);
+  
+  const filteredStudents = STUDENTS.filter(s => {
+    const gradeIdMap = {
+      "PP1": "pp1", "PP2": "pp2",
+      "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
+      "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
+      "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
+    };
 
-  const filteredStudents = STUDENTS.filter(s => 
-    classIds.includes(s.gradeId) &&
-    (s.fullName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-     s.admNo.toLowerCase().includes(searchTerm.toLowerCase()))
-  ).sort((a, b) => b.feeBalance - a.feeBalance);
+    const targetGradeId = selectedGrade === "all" ? null : gradeIdMap[selectedGrade];
+    const levelGrades = GRADES_BY_LEVEL[selectedLevel].map(name => gradeIdMap[name]);
+
+    const nameMatch = s.fullName.toLowerCase().includes(searchTerm.toLowerCase());
+    const admMatch = s.admNo.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = nameMatch || admMatch;
+    
+    const matchesLevel = levelGrades.includes(s.gradeId);
+    const matchesGrade = selectedGrade === "all" ? true : s.gradeId === targetGradeId;
+    
+    return matchesSearch && matchesLevel && matchesGrade;
+  }).sort((a, b) => b.feeBalance - a.feeBalance);
 
   const filteredTransactions = MPESA_TRANSACTIONS.filter(t => 
     t.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -69,23 +92,54 @@ const Fees = ({ schoolConfig }) => {
         className="grid-1"
         style={{ marginBottom: 16, display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center" }}
       >
-        <div style={{ position: "relative" }}>
-          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13 }}>🔍</span>
-          <input
-            type="text"
-            placeholder={activeTab === "balances" ? "Search student..." : "Search transaction..."}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            style={{
-              width: "100%",
-              padding: "10px 12px 10px 32px",
-              borderRadius: 8,
-              border: "1px solid #E8EAF0",
-              fontSize: 13,
-              outline: "none",
-              boxSizing: "border-box"
-            }}
-          />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 12, alignItems: "center" }}>
+          <div style={{ position: "relative" }}>
+            <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13 }}>🔍</span>
+            <input
+              type="text"
+              placeholder={activeTab === "balances" ? "Search student..." : "Search transaction..."}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "10px 12px 10px 32px",
+                borderRadius: 8,
+                border: "1px solid #E8EAF0",
+                fontSize: 13,
+                outline: "none",
+                boxSizing: "border-box"
+              }}
+            />
+          </div>
+          
+          {activeTab === "balances" && (
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>LEVEL:</span>
+                <select
+                  value={selectedLevel}
+                  onChange={(e) => {
+                    setSelectedLevel(e.target.value);
+                    setSelectedGrade(GRADES_BY_LEVEL[e.target.value][0]);
+                  }}
+                  style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none", minWidth: "140px" }}
+                >
+                  {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl} value={lvl}>{lvl}</option>)}
+                </select>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>GRADE:</span>
+                <select
+                  value={selectedGrade}
+                  onChange={(e) => setSelectedGrade(e.target.value)}
+                  style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none", minWidth: "120px" }}
+                >
+                  <option value="all">All {selectedLevel}</option>
+                  {GRADES_BY_LEVEL[selectedLevel].map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
         </div>
         {activeTab === "balances" && (
           <button style={{ padding: "10px 16px", background: "#1B6B3A", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
