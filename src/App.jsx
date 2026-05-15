@@ -12,7 +12,6 @@ import Settings from './pages/Settings';
 import Registration from './pages/Registration';
 import ExamEntries from './pages/ExamEntries';
 import LoginPage from './pages/LoginPage';
-import PlanSelection from './pages/PlanSelection';
 import PlanGate from './components/common/PlanGate';
 import { useAuth } from './contexts/AuthContext';
 import { supabase } from './lib/supabase';
@@ -40,9 +39,14 @@ function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
+  // State for metrics
+  const [studentCount, setStudentCount] = useState(0);
+  const [staffCount, setStaffCount] = useState(0);
+
   useEffect(() => {
     if (schoolConfig?.id) {
       fetchExams();
+      fetchMetrics();
     }
   }, [schoolConfig?.id]);
 
@@ -58,6 +62,30 @@ function App() {
       setExamsList(data || []);
     } catch (err) {
       console.error('Error fetching exams:', err);
+    }
+  };
+
+  const fetchMetrics = async () => {
+    try {
+      // Fetch student count
+      const { count: sCount, error: sError } = await supabase
+        .from('students')
+        .select('*', { count: 'exact', head: true })
+        .eq('school_id', schoolConfig.id);
+      
+      if (sError) throw sError;
+      setStudentCount(sCount || 0);
+
+      // Fetch staff count
+      const { count: stCount, error: stError } = await supabase
+        .from('staff')
+        .select('*', { count: 'exact', head: true })
+        .eq('school_id', schoolConfig.id);
+      
+      if (stError) throw stError;
+      setStaffCount(stCount || 0);
+    } catch (err) {
+      console.error('Error fetching metrics:', err);
     }
   };
   
@@ -87,6 +115,11 @@ function App() {
   const handleRegistrationComplete = async (formData) => {
     console.log("Starting school registration update...", formData);
     try {
+      const students = parseInt(formData.totalStudents) || 0;
+      const cost = students <= 300 
+        ? students * 35 
+        : (300 * 35) + (students - 300) * 20;
+
       const dbPayload = {
         school_name: formData.schoolName,
         reg_number: formData.regNumber,
@@ -97,8 +130,10 @@ function App() {
         address: formData.address,
         school_type: formData.schoolType,
         activated_modules: formData.modules,
-        plan: plan || 'starter',
+        plan: 'enterprise',
         user_id: user.id,
+        total_students: students,
+        subscription_cost: cost,
       };
 
       console.log("Attempting Database Upsert for:", dbPayload.email);
@@ -130,14 +165,7 @@ function App() {
     }
   };
 
-  const handlePlanSelected = async (planId) => {
-    await updatePlan(planId);
-    setNeedsPlanSelection(false);
-    // If school doesn't exist yet, go to registration
-    if (!schoolConfig) {
-      setNeedsRegistration(true);
-    }
-  };
+
 
   // Filter navigation based on selected modules AND plan
   const filteredNav = navigation.filter(item => {
@@ -175,10 +203,7 @@ function App() {
     return <LoginPage />;
   }
 
-  // --- Plan Selection (after signup, before registration) ---
-  if (needsPlanSelection && !schoolConfig) {
-    return <PlanSelection onSelectPlan={handlePlanSelected} />;
-  }
+
 
   // --- School Registration (no school for this email yet) ---
   if (needsRegistration || !schoolConfig) {
@@ -256,6 +281,7 @@ function App() {
           userEmail={user?.email}
           currentPlan={plan}
           onSignOut={signOut}
+          studentCount={studentCount}
         />
         
         <main 
@@ -281,6 +307,8 @@ function App() {
                 currentPlan={plan}
                 userEmail={user?.email}
                 onComplete={handleRegistrationComplete}
+                studentCount={studentCount}
+                staffCount={staffCount}
               />
             ) : (
               <PlanGate

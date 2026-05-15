@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { PLANS } from '../../lib/planConfig';
 
-const Header = ({ onMenuClick, activePageLabel, userEmail, currentPlan, onSignOut }) => {
+const Header = ({ onMenuClick, activePageLabel, userEmail, currentPlan, onSignOut, studentCount = 0 }) => {
   const [showDropdown, setShowDropdown] = useState(false);
   const planData = PLANS[currentPlan] || PLANS.starter;
   const initials = userEmail
@@ -47,19 +47,6 @@ const Header = ({ onMenuClick, activePageLabel, userEmail, currentPlan, onSignOu
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-        {/* Plan Badge */}
-        <div style={{
-          padding: "5px 12px", borderRadius: 20,
-          background: planData.bg, color: planData.color,
-          fontSize: 11, fontWeight: 800,
-          letterSpacing: "0.03em",
-          display: "flex", alignItems: "center", gap: 5,
-        }}>
-          <span>{planData.icon}</span> {planData.name}
-        </div>
-        
-        <button style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", opacity: 0.7 }}>🔔</button>
-        
         {/* User Avatar + Dropdown */}
         <div style={{ position: "relative" }}>
           <div
@@ -95,7 +82,7 @@ const Header = ({ onMenuClick, activePageLabel, userEmail, currentPlan, onSignOu
                 position: "absolute", top: 44, right: 0, zIndex: 99,
                 background: "#fff", border: "1px solid #e6dfd8", borderRadius: 12,
                 boxShadow: "0 8px 32px rgba(0,0,0,0.1)", padding: "8px 0",
-                minWidth: 220, overflow: "hidden",
+                minWidth: 260, overflow: "hidden",
               }}>
                 {/* User info */}
                 <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0" }}>
@@ -106,18 +93,29 @@ const Header = ({ onMenuClick, activePageLabel, userEmail, currentPlan, onSignOu
                     {userEmail || 'admin@educonnect.com'}
                   </div>
                 </div>
-                {/* Plan info */}
-                <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0" }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#8a8fa8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
-                    Current Plan
+
+                {/* Subscription info */}
+                <div style={{ padding: "16px", borderBottom: "1px solid #f0f0f0", background: "#fcfcfc" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#8a8fa8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+                    Subscription Details
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: planData.color }}>
-                    <span>{planData.icon}</span> {planData.name}
-                    <span style={{ fontSize: 11, color: "#8a8fa8", fontWeight: 500 }}>
-                      ({planData.price === 0 ? 'Free' : planData.label})
-                    </span>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 12, color: "#4A4A6A" }}>Current Students:</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#1B6B3A" }}>{studentCount}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 12, color: "#4A4A6A" }}>Annual Cost:</span>
+                      <span style={{ fontSize: 14, fontWeight: 800, color: "#D4AF37" }}>
+                        KES {(studentCount <= 300 ? studentCount * 35 : (300 * 35) + (studentCount - 300) * 20).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 10, color: "#8a8fa8", fontStyle: "italic" }}>
+                    * Pricing: 35/student (first 300), then 20/student.
                   </div>
                 </div>
+
                 {/* Sign out */}
                 <button
                   onClick={() => { setShowDropdown(false); onSignOut(); }}

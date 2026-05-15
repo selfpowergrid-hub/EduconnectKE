@@ -13,7 +13,8 @@ const Registration = ({ onComplete, schoolConfig, userEmail }) => {
     phone: "",
     address: "",
     schoolType: "", // Primary, JSS, SS
-    modules: [] // Examinations, Accounts, Library
+    modules: [], // Examinations, Accounts, Library
+    totalStudents: ""
   });
 
   const [errors, setErrors] = useState({});
@@ -58,6 +59,7 @@ const Registration = ({ onComplete, schoolConfig, userEmail }) => {
     if (!formData.phone) newErrors.phone = "Required";
     if (!formData.schoolType) newErrors.schoolType = "Select school type";
     if (formData.modules.length === 0) newErrors.modules = "Select at least one module";
+    if (!formData.totalStudents || formData.totalStudents <= 0) newErrors.totalStudents = "Required, must be greater than 0";
     
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -189,6 +191,45 @@ const Registration = ({ onComplete, schoolConfig, userEmail }) => {
                 </div>
               ))}
               {errors.schoolType && <p style={{ color: "#C0392B", fontSize: 12, fontWeight: 600, margin: "4px 0 0" }}>{errors.schoolType}</p>}
+            </div>
+          </section>
+
+          {/* Enrollment Section */}
+          <section style={{ background: "#fff", padding: 28, borderRadius: 16, border: "1px solid #E8EAF0" }}>
+            <h2 style={{ fontSize: 16, fontWeight: 800, color: "#1B6B3A", margin: "0 0 4px" }}>Enrollment & Subscription</h2>
+            <p style={{ fontSize: 13, color: "#8A8FA8", marginBottom: 20 }}>Indicate the total number of students in your school to calculate your subscription cost.</p>
+            
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div>
+                <label style={labelStyle}>Total Number of Students</label>
+                <input 
+                  type="number" 
+                  name="totalStudents" 
+                  placeholder="e.g. 500" 
+                  value={formData.totalStudents} 
+                  onChange={handleInputChange} 
+                  style={{...inputStyle, borderColor: errors.totalStudents ? "#C0392B" : "#E8EAF0"}} 
+                  min="1"
+                />
+                {errors.totalStudents && <p style={{ color: "#C0392B", fontSize: 12, fontWeight: 600, margin: "4px 0 0" }}>{errors.totalStudents}</p>}
+              </div>
+
+              {formData.totalStudents > 0 && (
+                <div style={{ background: "#E8F5EE", padding: 16, borderRadius: 12, border: "1px solid #1B6B3A", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontSize: 13, color: "#1B6B3A", fontWeight: 700 }}>Subscription Cost</div>
+                    <div style={{ fontSize: 11, color: "#8A8FA8", maxWidth: 300 }}>
+                      KES 35/student (first 300), then KES 20/student thereafter.
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: "#1A1A2E", textAlign: "right" }}>
+                    <div style={{ fontSize: 10, color: "#8A8FA8", fontWeight: 600, textTransform: "uppercase" }}>Annual Total</div>
+                    KES {((parseInt(formData.totalStudents) || 0) <= 300 
+                      ? (parseInt(formData.totalStudents) || 0) * 35 
+                      : (300 * 35) + ((parseInt(formData.totalStudents) || 0) - 300) * 20).toLocaleString()}
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 

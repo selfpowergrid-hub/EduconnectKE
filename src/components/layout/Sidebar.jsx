@@ -239,7 +239,8 @@ const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, o
         ))}
       </div>
 
-      {/* Plan Badge */}
+      {/* Plan Badge hidden as per request */}
+      {/* 
       <div style={{
         padding: "12px 24px",
         borderTop: `1px solid ${hairline}`,
@@ -264,6 +265,7 @@ const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, o
           </div>
         </div>
       </div>
+      */}
 
       {/* User Footer */}
       <div style={{ 

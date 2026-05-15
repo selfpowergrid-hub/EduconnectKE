@@ -45,7 +45,7 @@ export function AuthProvider({ children }) {
       if (error && error.code === 'PGRST116') {
         // No school found for this email — user needs to register
         setNeedsRegistration(true);
-        setNeedsPlanSelection(true);
+        setNeedsPlanSelection(false);
         setSchoolConfig(null);
         setPlan('starter');
         return;
@@ -65,6 +65,8 @@ export function AuthProvider({ children }) {
           address: data.address,
           schoolType: data.school_type,
           modules: data.activated_modules,
+          totalStudents: data.total_students,
+          subscriptionCost: data.subscription_cost,
         };
         setSchoolConfig(config);
         setPlan(data.plan || 'starter');
