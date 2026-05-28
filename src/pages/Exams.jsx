@@ -26,7 +26,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
 
   // --- Exam Listings State ---
   // Received as props from App.jsx
-  const [newExam, setNewExam] = useState({ name: "", subject: "Mathematics", weight: "" });
+  const [newExam, setNewExam] = useState({ name: "", subject: "Mathematics", weight: "", total_marks: "100", order: "" });
 
   const [filterLevel, setFilterLevel] = useState("Senior Secondary");
   const [filterGrade, setFilterGrade] = useState("Grade 10");
@@ -183,7 +183,12 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
       ...exam,
       level: detectedLevel,
       grade: gradeName,
-      weight: exam.weight || 0
+      weight: exam.weight || 0,
+      total_marks: exam.total_marks || 100,
+      order: exam.display_order || 1,
+      _originalLevelId: exam.level_id,
+      _originalTerm: exam.term,
+      _originalOrder: exam.display_order || 1
     });
     setShowEditModal(true);
   };
@@ -198,14 +203,62 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
         "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
         "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
       };
-      
+
+      const newLevelId = gradeIdMap[editingExam.grade];
+      const newTerm = editingExam.term;
+      const scopeChanged = newLevelId !== editingExam._originalLevelId || newTerm !== editingExam._originalTerm;
+
+      const newScopeSiblings = examsList.filter(e =>
+        e.id !== editingExam.id && e.level_id === newLevelId && e.term === newTerm
+      );
+      const requested = parseInt(editingExam.order);
+      const maxAllowed = newScopeSiblings.length + 1;
+      const newOrder = Number.isFinite(requested) && requested > 0
+        ? Math.min(requested, maxAllowed)
+        : maxAllowed;
+
+      // Compute sibling shifts
+      const updates = [];
+      if (scopeChanged) {
+        newScopeSiblings.forEach(e => {
+          if ((e.display_order || 0) >= newOrder) {
+            updates.push({ id: e.id, display_order: (e.display_order || 0) + 1 });
+          }
+        });
+      } else if (newOrder !== editingExam._originalOrder) {
+        const oldOrder = editingExam._originalOrder;
+        if (newOrder < oldOrder) {
+          // moving up: bump items in [newOrder, oldOrder-1] down by +1
+          newScopeSiblings.forEach(e => {
+            const o = e.display_order || 0;
+            if (o >= newOrder && o < oldOrder) updates.push({ id: e.id, display_order: o + 1 });
+          });
+        } else {
+          // moving down: bump items in [oldOrder+1, newOrder] up by -1
+          newScopeSiblings.forEach(e => {
+            const o = e.display_order || 0;
+            if (o > oldOrder && o <= newOrder) updates.push({ id: e.id, display_order: o - 1 });
+          });
+        }
+      }
+
+      if (updates.length > 0) {
+        const results = await Promise.all(updates.map(u =>
+          supabase.from('exams').update({ display_order: u.display_order }).eq('id', u.id)
+        ));
+        const firstErr = results.find(r => r.error);
+        if (firstErr) throw firstErr.error;
+      }
+
       const payload = {
         name: editingExam.name,
-        term: editingExam.term,
+        term: newTerm,
         level: editingExam.level,
-        level_id: gradeIdMap[editingExam.grade],
+        level_id: newLevelId,
         weight: parseInt(editingExam.weight) || 0,
-        status: editingExam.status
+        total_marks: parseInt(editingExam.total_marks) || 100,
+        status: editingExam.status,
+        display_order: newOrder
       };
 
       const { error } = await supabase
@@ -214,8 +267,16 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
         .eq('id', editingExam.id);
 
       if (error) throw error;
-      
-      setExamsList(prev => prev.map(e => e.id === editingExam.id ? { ...e, ...payload } : e));
+
+      const updatedIds = new Map(updates.map(u => [u.id, u.display_order]));
+      setExamsList(prev => {
+        const next = prev.map(e => {
+          if (e.id === editingExam.id) return { ...e, ...payload };
+          if (updatedIds.has(e.id)) return { ...e, display_order: updatedIds.get(e.id) };
+          return e;
+        });
+        return [...next].sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
+      });
       setShowEditModal(false);
       alert('Exam updated successfully!');
     } catch (err) {
@@ -253,6 +314,23 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
       };
       const gid = gradeIdMap[filterGrade];
 
+      const scopeExams = examsList.filter(e => e.level_id === gid && e.term === filterTerm);
+      const nextOrder = scopeExams.reduce((max, e) => Math.max(max, e.display_order || 0), 0) + 1;
+      const requested = parseInt(newExam.order);
+      const chosenOrder = Number.isFinite(requested) && requested > 0
+        ? Math.min(requested, nextOrder)
+        : nextOrder;
+
+      // Push down existing siblings at or after the chosen slot
+      const toBump = scopeExams.filter(e => (e.display_order || 0) >= chosenOrder);
+      if (toBump.length > 0) {
+        const bumpResults = await Promise.all(toBump.map(e =>
+          supabase.from('exams').update({ display_order: (e.display_order || 0) + 1 }).eq('id', e.id)
+        ));
+        const bumpErr = bumpResults.find(r => r.error);
+        if (bumpErr) throw bumpErr.error;
+      }
+
       const payload = {
         school_id: schoolConfig.id,
         name: newExam.name,
@@ -261,7 +339,9 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
         level: filterLevel,
         level_id: gid,
         weight: parseInt(newExam.weight) || 0,
-        status: "Upcoming"
+        total_marks: parseInt(newExam.total_marks) || 100,
+        status: "Upcoming",
+        display_order: chosenOrder
       };
 
       const { data, error } = await supabase
@@ -271,9 +351,17 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
         .single();
 
       if (error) throw error;
-      
-      setExamsList(prev => [data, ...prev]);
-      setNewExam({ ...newExam, name: "", weight: "" });
+
+      setExamsList(prev => {
+        const bumpedIds = new Set(toBump.map(e => e.id));
+        const next = prev.map(e => bumpedIds.has(e.id) ? { ...e, display_order: (e.display_order || 0) + 1 } : e);
+        next.push(data);
+        return [...next].sort((a, b) => {
+          if (a.school_id !== b.school_id) return 0;
+          return (a.display_order || 0) - (b.display_order || 0);
+        });
+      });
+      setNewExam({ ...newExam, name: "", weight: "", total_marks: "100", order: "" });
       alert('Exam registered successfully!');
     } catch (err) {
       alert('Failed to register exam: ' + err.message);
@@ -340,6 +428,39 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
       alert('Failed to save grading: ' + err.message);
     } finally {
       setIsGradingLoading(false);
+    }
+  };
+
+  const moveExam = async (exam, direction) => {
+    const siblings = examsList
+      .filter(e => e.level_id === exam.level_id && e.term === exam.term)
+      .sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
+    const idx = siblings.findIndex(e => e.id === exam.id);
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= siblings.length) return;
+    const neighbour = siblings[swapIdx];
+
+    const a = { id: exam.id, order: neighbour.display_order };
+    const b = { id: neighbour.id, order: exam.display_order };
+
+    try {
+      const [r1, r2] = await Promise.all([
+        supabase.from('exams').update({ display_order: a.order }).eq('id', a.id),
+        supabase.from('exams').update({ display_order: b.order }).eq('id', b.id),
+      ]);
+      if (r1.error) throw r1.error;
+      if (r2.error) throw r2.error;
+
+      setExamsList(prev => {
+        const next = prev.map(e => {
+          if (e.id === a.id) return { ...e, display_order: a.order };
+          if (e.id === b.id) return { ...e, display_order: b.order };
+          return e;
+        });
+        return [...next].sort((x, y) => (x.display_order || 0) - (y.display_order || 0));
+      });
+    } catch (err) {
+      alert('Failed to reorder: ' + err.message);
     }
   };
 
@@ -442,23 +563,46 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
           <section style={sectionCardStyle}>
             <h4 style={{ margin: "0 0 28px", fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Register New Examination</h4>
 
-            {/* ROW 1: Exam Name, Cut Off Mark, Register Button */}
-            <div style={{ 
-              display: "grid", 
-              gridTemplateColumns: "1fr 1fr 1fr", 
-              gap: 24, 
-              alignItems: "flex-end" 
+            {/* ROW 1: Order, Exam Name, Cut Off Mark, Register Button */}
+            {(() => {
+              const gradeIdMap = {
+                "PP1": "pp1", "PP2": "pp2",
+                "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
+                "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
+                "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
+              };
+              const scopeGid = gradeIdMap[filterGrade];
+              const scopeCount = examsList.filter(e => e.level_id === scopeGid && e.term === filterTerm).length;
+              const nextOrderPlaceholder = String(scopeCount + 1);
+              return (
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "100px 2fr 1fr 1.2fr",
+              gap: 20,
+              alignItems: "flex-end"
             }}>
+              <div>
+                <label style={labelStyle}>Order #</label>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder={nextOrderPlaceholder}
+                  value={newExam.order}
+                  onChange={(e) => setNewExam({...newExam, order: e.target.value})}
+                  style={{ ...inputStyle, textAlign: "center", fontWeight: 700 }}
+                  title={`Leave blank to append at position ${nextOrderPlaceholder}. Enter a lower number to insert and push others down.`}
+                />
+              </div>
               <div>
                 <label style={labelStyle}>Exam Name</label>
                 <input type="text" placeholder="e.g. End of Term 1" value={newExam.name} onChange={(e) => setNewExam({...newExam, name: e.target.value})} style={inputStyle} />
               </div>
               <div>
-                <label style={labelStyle}>Cut Off Mark (%)</label>
-                <input type="number" placeholder="0" value={newExam.weight} onChange={(e) => setNewExam({...newExam, weight: e.target.value})} style={inputStyle} />
+                <label style={labelStyle}>Marks Out Of</label>
+                <input type="number" min="1" placeholder="100" value={newExam.total_marks} onChange={(e) => setNewExam({...newExam, total_marks: e.target.value})} style={inputStyle} title="What the exam is graded against (e.g. 30, 50, 100). Independent of other exams." />
               </div>
               <div>
-                <button 
+                <button
                   onClick={handleAddExam}
                   style={{ 
                     width: "100%",
@@ -482,6 +626,8 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                 </button>
               </div>
             </div>
+              );
+            })()}
           </section>
 
           {/* Exams Selection & Editable Grid */}
@@ -496,7 +642,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                   <tr>
                     <th style={{ padding: "14px 18px", textAlign: "left", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>EXAMINATION NAME</th>
                     <th style={{ padding: "14px 18px", textAlign: "left", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>TERM</th>
-                    <th style={{ padding: "14px 18px", textAlign: "center", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>CUT OFF MARK</th>
+                    <th style={{ padding: "14px 18px", textAlign: "center", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>MARKS OUT OF</th>
                     <th style={{ padding: "14px 18px", textAlign: "center", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>STATUS</th>
                     <th style={{ padding: "14px 18px", textAlign: "center", color: "#8A8FA8", fontSize: 11, fontWeight: 700 }}>ACTIONS</th>
                   </tr>
@@ -505,19 +651,22 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                   {filteredExams.map((exam, idx) => (
                     <tr key={exam.id} style={{ borderBottom: "1px solid #e6dfd8", background: idx % 2 === 0 ? "#fff" : "#fafafa" }}>
                       <td style={{ padding: "12px 18px", fontWeight: 700, color: "#2a2421" }}>
+                        <span style={{ display: "inline-block", minWidth: 22, marginRight: 8, color: "#8A8FA8", fontWeight: 700, fontSize: 12 }}>
+                          {idx + 1}.
+                        </span>
                         {exam.name}
                       </td>
                       <td style={{ padding: "12px 18px", color: "#4A4A6A" }}>
                         {exam.term}
                       </td>
                       <td style={{ padding: "12px 18px", textAlign: "center", fontWeight: 800, color: activeColor }}>
-                        {exam.weight}%
+                        / {exam.total_marks || 100}
                       </td>
                       <td style={{ padding: "12px 18px", textAlign: "center" }}>
-                        <select 
-                          value={exam.status} 
+                        <select
+                          value={exam.status}
                           onChange={(e) => updateExam(exam.id, 'status', e.target.value)}
-                          style={{ 
+                          style={{
                             padding: "4px 8px", borderRadius: 12, fontSize: 11, fontWeight: 700, border: "none", outline: "none", cursor: "pointer",
                             background: exam.status === "Published" || exam.status === "Completed" ? "#ebf5ee" : exam.status === "Ongoing" ? "#fff9e6" : "#f4f5f7",
                             color: exam.status === "Published" || exam.status === "Completed" ? "#1B6B3A" : exam.status === "Ongoing" ? "#D97706" : "#8A8FA8"
@@ -530,18 +679,28 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                         </select>
                       </td>
                       <td style={{ padding: "10px 18px", textAlign: "center" }}>
-                        <div style={{ display: "flex", gap: 12, justifyContent: "center", alignItems: "center" }}>
-                          <button 
+                        <div style={{ display: "flex", gap: 8, justifyContent: "center", alignItems: "center" }}>
+                          <button
+                            onClick={() => moveExam(exam, 'up')}
+                            disabled={idx === 0}
+                            style={{ background: "none", border: "none", cursor: idx === 0 ? "not-allowed" : "pointer", fontSize: 14, color: idx === 0 ? "#d4d4d4" : "#1A5F9C", padding: 2 }}
+                            title="Move up"
+                          >▲</button>
+                          <button
+                            onClick={() => moveExam(exam, 'down')}
+                            disabled={idx === filteredExams.length - 1}
+                            style={{ background: "none", border: "none", cursor: idx === filteredExams.length - 1 ? "not-allowed" : "pointer", fontSize: 14, color: idx === filteredExams.length - 1 ? "#d4d4d4" : "#1A5F9C", padding: 2 }}
+                            title="Move down"
+                          >▼</button>
+                          <button
                             onClick={() => openEditModal(exam)}
-                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16 }} 
+                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16 }}
                             title="Edit Exam"
                           >
                             ✏️
                           </button>
-                          <button 
+                          <button
                             onClick={() => {
-                              // If onNavigate prop is available, we can switch tabs
-                              // For now, we'll alert or we can add it to props later
                               alert("To enter marks, please select 'Exam Entries' from the sidebar and filter for this exam.");
                             }}
                             style={{ background: "#f5f2eb", border: "1px solid #e6dfd8", borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: "#1B6B3A", cursor: "pointer" }}
@@ -589,7 +748,12 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                   <tbody>
                     {filteredExams.map((exam, idx) => (
                       <tr key={exam.id} style={{ borderBottom: "1px solid #F0F2F5", background: idx % 2 === 0 ? "#fff" : "#F8FAFC" }}>
-                        <td style={{ padding: "12px 18px", fontWeight: 700, color: "#1A1A2E" }}>{exam.name}</td>
+                        <td style={{ padding: "12px 18px", fontWeight: 700, color: "#1A1A2E" }}>
+                          {exam.name}
+                          <span style={{ marginLeft: 8, fontSize: 11, color: "#8A8FA8", fontWeight: 600 }}>
+                            (out of {exam.total_marks || 100})
+                          </span>
+                        </td>
                         <td style={{ padding: "12px 18px", textAlign: "center" }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                             <input 
@@ -791,9 +955,22 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
             </div>
             
             <div style={{ padding: "32px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
-              <div style={{ gridColumn: "span 2" }}>
-                <label style={labelStyle}>Exam Name</label>
-                <input type="text" value={editingExam.name} onChange={(e) => setEditingExam({...editingExam, name: e.target.value})} style={inputStyle} />
+              <div style={{ gridColumn: "span 2", display: "flex", gap: 16, alignItems: "flex-end" }}>
+                <div style={{ width: 100, flexShrink: 0 }}>
+                  <label style={labelStyle}>Order #</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={editingExam.order}
+                    onChange={(e) => setEditingExam({...editingExam, order: e.target.value})}
+                    style={{ ...inputStyle, textAlign: "center", fontWeight: 700 }}
+                    title="Position of this exam in the listing. Changing it will shift other exams accordingly."
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Exam Name</label>
+                  <input type="text" value={editingExam.name} onChange={(e) => setEditingExam({...editingExam, name: e.target.value})} style={inputStyle} />
+                </div>
               </div>
 
               <div>
@@ -820,8 +997,8 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
               </div>
 
               <div>
-                <label style={labelStyle}>Cut Off Mark (%)</label>
-                <input type="number" value={editingExam.weight} onChange={(e) => setEditingExam({...editingExam, weight: e.target.value})} style={inputStyle} />
+                <label style={labelStyle}>Marks Out Of</label>
+                <input type="number" min="1" value={editingExam.total_marks} onChange={(e) => setEditingExam({...editingExam, total_marks: e.target.value})} style={inputStyle} title="What the exam is graded against (e.g. 30, 50, 100)." />
               </div>
 
               <div>
@@ -833,6 +1010,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                   <option value="Published">Published</option>
                 </select>
               </div>
+
             </div>
 
             <div style={{ padding: "20px 32px", background: "#f9f7f2", display: "flex", justifyContent: "flex-end", gap: 12 }}>

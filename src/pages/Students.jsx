@@ -2,6 +2,9 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { getClassesByType } from '../data/mockData';
 import { supabase } from '../lib/supabase';
 import { getPlanLimits } from '../lib/planConfig';
+import BulkImportWizard from '../components/students/BulkImportWizard';
+import PhotoUpload, { StudentAvatar } from '../components/students/PhotoUpload';
+import { uploadStudentPhoto, deleteStudentPhoto, getStudentPhotoUrl } from '../lib/imageProcessing';
 
 const GRADES_BY_LEVEL = {
   "Pre-Primary": ["PP1", "PP2"],
@@ -10,7 +13,8 @@ const GRADES_BY_LEVEL = {
   "Senior Secondary": ["Grade 10", "Grade 11", "Grade 12"]
 };
 
-const Students = ({ schoolConfig, currentPlan }) => {
+const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
+  const isTeacher = role === 'teacher';
   const [studentsList, setStudentsList] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -99,6 +103,9 @@ const Students = ({ schoolConfig, currentPlan }) => {
 
   // Admission Modal State
   const [showModal, setShowModal] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
+  const [pendingPhotoBlob, setPendingPhotoBlob] = useState(null);
+  const [removeExistingPhoto, setRemoveExistingPhoto] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [editingStudentId, setEditingStudentId] = useState(null);
   const [newStudent, setNewStudent] = useState({
@@ -108,7 +115,8 @@ const Students = ({ schoolConfig, currentPlan }) => {
     gender: "M",
     level_id: currentTypeClasses[0]?.id || "",
     stream_id: "",
-    parent_phone: ""
+    parent_phone: "",
+    photo_path: ""
   });
 
   const resetForm = () => {
@@ -119,9 +127,12 @@ const Students = ({ schoolConfig, currentPlan }) => {
       gender: "M",
       level_id: currentTypeClasses[0]?.id || "",
       stream_id: "",
-      parent_phone: ""
+      parent_phone: "",
+      photo_path: ""
     });
     setEditingStudentId(null);
+    setPendingPhotoBlob(null);
+    setRemoveExistingPhoto(false);
   };
 
   const handleEditClick = (student) => {
@@ -132,16 +143,20 @@ const Students = ({ schoolConfig, currentPlan }) => {
       gender: student.gender || "M",
       level_id: student.level_id,
       stream_id: student.stream_id || "",
-      parent_phone: student.parent_phone || ""
+      parent_phone: student.parent_phone || "",
+      photo_path: student.photo_path || ""
     });
     setEditingStudentId(student.id);
+    setPendingPhotoBlob(null);
+    setRemoveExistingPhoto(false);
     setShowModal(true);
   };
 
   const handleDeleteStudent = async (id) => {
     if (!confirm("Are you sure you want to delete this student? This action cannot be undone.")) return;
-    
+
     try {
+      const target = studentsList.find(s => s.id === id);
       const { data, error } = await supabase
         .from('students')
         .delete()
@@ -149,9 +164,13 @@ const Students = ({ schoolConfig, currentPlan }) => {
         .select();
 
       if (error) throw error;
-      
+
       if (!data || data.length === 0) {
         throw new Error("No rows were deleted. This usually means you don't have permission (RLS policy) or the student no longer exists.");
+      }
+
+      if (target?.photo_path) {
+        try { await deleteStudentPhoto(target.photo_path); } catch (e) { console.error('Photo cleanup failed:', e); }
       }
 
       await fetchStudents();
@@ -165,14 +184,12 @@ const Students = ({ schoolConfig, currentPlan }) => {
       alert("Please fill in all required fields.");
       return;
     }
-    
+
     setIsSaving(true);
     try {
-      // Calculate full_name for local display consistency if needed, 
-      // though DB might handle it.
-      const payload = {
-        ...newStudent
-      };
+      const payload = { ...newStudent };
+
+      let studentId = editingStudentId;
 
       if (editingStudentId) {
         const { data, error } = await supabase
@@ -180,7 +197,7 @@ const Students = ({ schoolConfig, currentPlan }) => {
           .update(payload)
           .eq('id', editingStudentId)
           .select();
-        
+
         if (error) throw error;
         if (!data || data.length === 0) {
           throw new Error("No rows were updated. Check your database permissions (RLS policies).");
@@ -194,13 +211,35 @@ const Students = ({ schoolConfig, currentPlan }) => {
           .from('students')
           .insert([finalPayload])
           .select();
-          
+
         if (error) throw error;
         if (!data || data.length === 0) {
           throw new Error("Student was not added. Check your database permissions (RLS policies).");
         }
+        studentId = data[0].id;
       }
-      
+
+      // Photo handling — happens after the row exists so we have a stable ID
+      if (pendingPhotoBlob && studentId) {
+        try {
+          const path = await uploadStudentPhoto({
+            schoolId: schoolConfig.id,
+            studentId,
+            blob: pendingPhotoBlob,
+          });
+          await supabase.from('students').update({ photo_path: path }).eq('id', studentId);
+        } catch (e) {
+          alert('Student saved, but photo upload failed: ' + e.message);
+        }
+      } else if (removeExistingPhoto && newStudent.photo_path) {
+        try {
+          await deleteStudentPhoto(newStudent.photo_path);
+          await supabase.from('students').update({ photo_path: null }).eq('id', studentId);
+        } catch (e) {
+          console.error('Photo removal failed:', e);
+        }
+      }
+
       await fetchStudents();
       setShowModal(false);
       resetForm();
@@ -369,26 +408,50 @@ const Students = ({ schoolConfig, currentPlan }) => {
             >
               <span>🖨️</span> Print
             </button>
-            <button 
-              onClick={() => {
-                if (isAtLimit) {
-                  alert(`Student limit reached (${planLimits.maxStudents}). Please upgrade your plan to add more students.`);
-                  return;
-                }
-                resetForm();
-                setShowModal(true);
-              }}
-              style={{
-                padding: "8px 16px",
-                background: isAtLimit ? "#8a8fa8" : "#1B6B3A",
-                color: "#fff", border: "none", borderRadius: 8,
-                fontSize: 13, fontWeight: 600,
-                cursor: isAtLimit ? "not-allowed" : "pointer",
-                whiteSpace: "nowrap"
-              }}
-            >
-              + New
-            </button>
+            {!isTeacher && (
+              <>
+                <button
+                  onClick={() => {
+                    if (isAtLimit) {
+                      alert(`Student limit reached (${planLimits.maxStudents}). Please upgrade your plan to add more students.`);
+                      return;
+                    }
+                    setShowBulkImport(true);
+                  }}
+                  style={{
+                    padding: "8px 16px",
+                    background: "#fff",
+                    color: "#1B6B3A", border: "1px solid #1B6B3A", borderRadius: 8,
+                    fontSize: 13, fontWeight: 600,
+                    cursor: isAtLimit ? "not-allowed" : "pointer",
+                    display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap"
+                  }}
+                  title="Import a list of students from an Excel file"
+                >
+                  <span>📊</span> Bulk Import
+                </button>
+                <button
+                  onClick={() => {
+                    if (isAtLimit) {
+                      alert(`Student limit reached (${planLimits.maxStudents}). Please upgrade your plan to add more students.`);
+                      return;
+                    }
+                    resetForm();
+                    setShowModal(true);
+                  }}
+                  style={{
+                    padding: "8px 16px",
+                    background: isAtLimit ? "#8a8fa8" : "#1B6B3A",
+                    color: "#fff", border: "none", borderRadius: 8,
+                    fontSize: 13, fontWeight: 600,
+                    cursor: isAtLimit ? "not-allowed" : "pointer",
+                    whiteSpace: "nowrap"
+                  }}
+                >
+                  + New
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -420,9 +483,18 @@ const Students = ({ schoolConfig, currentPlan }) => {
                     <tr key={s.id} style={{ borderBottom: "1px solid #F7F8FA", background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
                       <td style={{ padding: "12px 18px", fontWeight: 700, color: "#1A5F9C" }}>{s.adm_no}</td>
                       <td style={{ padding: "12px 18px" }}>
-                        <div style={{ fontWeight: 700, color: "#1A1A2E" }}>{s.full_name}</div>
-                        <div className="show-mobile" style={{ fontSize: 11, color: "#8A8FA8" }}>
-                          {grade?.name} · {s.streams?.name || "No Stream"}
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <StudentAvatar
+                            photoUrl={getStudentPhotoUrl(s.photo_path, s.id)}
+                            name={s.full_name || `${s.first_name} ${s.last_name}`}
+                            size={32}
+                          />
+                          <div>
+                            <div style={{ fontWeight: 700, color: "#1A1A2E" }}>{s.full_name}</div>
+                            <div className="show-mobile" style={{ fontSize: 11, color: "#8A8FA8" }}>
+                              {grade?.name} · {s.streams?.name || "No Stream"}
+                            </div>
+                          </div>
                         </div>
                       </td>
                       <td className="hide-mobile" style={{ padding: "12px 18px" }}>
@@ -453,20 +525,26 @@ const Students = ({ schoolConfig, currentPlan }) => {
                       </td>
                       <td style={{ padding: "12px 18px", textAlign: "right" }}>
                         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                          <button 
-                            onClick={() => handleEditClick(s)}
-                            style={{ background: "none", border: "none", color: "#1A5F9C", cursor: "pointer", fontSize: 16, padding: 4 }}
-                            title="Edit"
-                          >
-                            ✏️
-                          </button>
-                          <button 
-                            onClick={() => handleDeleteStudent(s.id)}
-                            style={{ background: "none", border: "none", color: "#C0392B", cursor: "pointer", fontSize: 16, padding: 4 }}
-                            title="Delete"
-                          >
-                            🗑️
-                          </button>
+                          {isTeacher ? (
+                            <span style={{ fontSize: 11, color: "#8A8FA8" }}>read-only</span>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => handleEditClick(s)}
+                                style={{ background: "none", border: "none", color: "#1A5F9C", cursor: "pointer", fontSize: 16, padding: 4 }}
+                                title="Edit"
+                              >
+                                ✏️
+                              </button>
+                              <button
+                                onClick={() => handleDeleteStudent(s.id)}
+                                style={{ background: "none", border: "none", color: "#C0392B", cursor: "pointer", fontSize: 16, padding: 4 }}
+                                title="Delete"
+                              >
+                                🗑️
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -500,6 +578,18 @@ const Students = ({ schoolConfig, currentPlan }) => {
         </>
       )}
 
+      {/* Bulk Import Wizard */}
+      {showBulkImport && (
+        <BulkImportWizard
+          schoolConfig={schoolConfig}
+          streams={streams}
+          existingStudents={studentsList}
+          planRemaining={Math.max(0, planLimits.maxStudents - studentsList.length)}
+          onClose={() => setShowBulkImport(false)}
+          onImported={fetchStudents}
+        />
+      )}
+
       {/* Admission Modal */}
       {showModal && (
         <div style={{
@@ -520,6 +610,20 @@ const Students = ({ schoolConfig, currentPlan }) => {
             </div>
             
             <div style={{ padding: "20px 28px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px 20px" }}>
+              {/* Photo */}
+              <div style={{ gridColumn: "span 2", padding: "10px 0", borderBottom: "1px dashed #e6dfd8" }}>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#4A4A6A", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Student Photo</label>
+                <PhotoUpload
+                  currentUrl={newStudent.photo_path && !removeExistingPhoto ? getStudentPhotoUrl(newStudent.photo_path, editingStudentId) : null}
+                  studentName={`${newStudent.first_name} ${newStudent.last_name}`.trim()}
+                  size={80}
+                  onChange={(blob, meta) => {
+                    setPendingPhotoBlob(blob);
+                    setRemoveExistingPhoto(!!meta?.removed);
+                  }}
+                />
+              </div>
+
               {/* Admission Number */}
               <div>
                 <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#4A4A6A", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Admission Number</label>

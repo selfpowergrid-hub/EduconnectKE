@@ -31,3 +31,6 @@ dist-ssr
 scratch/
 eslint_*.txt
 design-resources/
+
+# Supabase CLI local cache (contains pooler-url with DB credentials)
+supabase/.temp/

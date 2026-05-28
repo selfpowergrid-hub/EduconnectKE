@@ -18,7 +18,7 @@ export const PLANS = {
     maxStreams: Infinity,
     allowedNavIds: [
       'dashboard', 'registration-form', 'school-info', 'streams-dorms',
-      'students', 'teachers', 'exams', 'exam-entries', 'reports',
+      'students', 'teachers', 'teacher-allocations', 'exams', 'exam-entries', 'reports',
       'merit-list', 'subjects', 'grading', 'fees-structure', 'fees',
       'users', 'library',
     ],
@@ -41,7 +41,7 @@ export const PLANS = {
     maxStreams: Infinity,
     allowedNavIds: [
       'dashboard', 'registration-form', 'school-info', 'streams-dorms',
-      'students', 'teachers', 'exams', 'exam-entries', 'reports',
+      'students', 'teachers', 'teacher-allocations', 'exams', 'exam-entries', 'reports',
       'merit-list', 'subjects', 'grading', 'fees-structure', 'fees',
       'users', 'library',
     ],
@@ -64,7 +64,7 @@ export const PLANS = {
     maxStreams: Infinity,
     allowedNavIds: [
       'dashboard', 'registration-form', 'school-info', 'streams-dorms',
-      'students', 'teachers', 'exams', 'exam-entries', 'reports',
+      'students', 'teachers', 'teacher-allocations', 'exams', 'exam-entries', 'reports',
       'merit-list', 'subjects', 'grading', 'fees-structure', 'fees',
       'users', 'library',
     ],

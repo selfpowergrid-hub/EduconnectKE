@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { getStudentPhotoUrl } from '../lib/imageProcessing';
 import { CLASSES } from '../data/mockData';
 
 const Reports = ({ schoolConfig, examsList }) => {
@@ -130,13 +131,18 @@ const Reports = ({ schoolConfig, examsList }) => {
   }, [dbGrades, selectedClass]);
 
   // Compute weighted score for a student + subject
+  // Each raw mark is normalised to a 0-100 percentage using the exam's total_marks
+  // (default 100), then multiplied by the exam's weight share.
   const getStudentSubjectScore = useCallback((studentId, subjectId) => {
     if (!gradeExams.length) return 0;
     const totalWeight = gradeExams.reduce((s, e) => s + (e.weight || 0), 0);
     if (!totalWeight) return 0;
     const weighted = gradeExams.reduce((sum, exam) => {
       const mark = allMarks.find(m => m.student_id === studentId && m.exam_id === exam.id && m.subject_id === subjectId);
-      return sum + (mark?.score || 0) * ((exam.weight || 0) / 100);
+      const raw = mark?.score || 0;
+      const outOf = exam.total_marks || 100;
+      const pct = outOf > 0 ? (raw / outOf) * 100 : 0;
+      return sum + pct * ((exam.weight || 0) / 100);
     }, 0);
     return weighted;
   }, [allMarks, gradeExams]);
@@ -180,15 +186,49 @@ const Reports = ({ schoolConfig, examsList }) => {
 
     return (
       <div style={{ maxWidth: 750, margin: '0 auto', border: '1px solid #000', padding: '20px', background: '#fff', fontSize: 12 }}>
-        {/* Header */}
-        <div style={{ textAlign: 'center', borderBottom: '2px solid #000', paddingBottom: 16, marginBottom: 16 }}>
-          {schoolInfo?.logo_url && (
-            <img src={schoolInfo.logo_url} alt="School Logo" style={{ height: 80, marginBottom: 8, objectFit: 'contain' }} />
-          )}
-          <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: 1 }}>{schoolConfig?.schoolName?.toUpperCase() || 'INSTITUTION NAME'}</div>
-          <div style={{ fontSize: 11, fontWeight: 700, marginTop: 4 }}>MOTTO: {schoolInfo?.motto?.toUpperCase() || 'EDUCATION FOR EXCELLENCE'}</div>
-          <div style={{ fontSize: 10, marginTop: 4 }}>EMAIL: {schoolConfig?.email} · TEL: {schoolConfig?.phone}</div>
-          <div style={{ display: 'inline-block', marginTop: 12, padding: '4px 20px', border: '2px solid #000', fontSize: 13, fontWeight: 900 }}>STUDENT PROGRESS REPORT</div>
+        {/* Header: photo (left) · school info (centre) · logo (right) */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: '110px 1fr 110px',
+          gap: 16, alignItems: 'center',
+          borderBottom: '2px solid #000', paddingBottom: 16, marginBottom: 16,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+            {student.photo_path ? (
+              <img
+                src={getStudentPhotoUrl(student.photo_path, student.id)}
+                alt={student.first_name}
+                style={{ width: 100, height: 100, objectFit: 'cover', border: '1px solid #000' }}
+              />
+            ) : (
+              <div style={{
+                width: 100, height: 100, border: '1px dashed #888',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#888', fontSize: 10, textAlign: 'center', padding: 4,
+              }}>STUDENT PHOTO</div>
+            )}
+          </div>
+
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: 1 }}>{schoolConfig?.schoolName?.toUpperCase() || 'INSTITUTION NAME'}</div>
+            {schoolConfig?.address && (
+              <div style={{ fontSize: 10, marginTop: 4 }}>{schoolConfig.address}{schoolConfig.county ? ` · ${schoolConfig.county}` : ''}</div>
+            )}
+            <div style={{ fontSize: 11, fontWeight: 700, marginTop: 4 }}>MOTTO: {schoolInfo?.motto?.toUpperCase() || 'EDUCATION FOR EXCELLENCE'}</div>
+            <div style={{ fontSize: 10, marginTop: 4 }}>EMAIL: {schoolConfig?.email} · TEL: {schoolConfig?.phone}</div>
+            <div style={{ display: 'inline-block', marginTop: 10, padding: '4px 20px', border: '2px solid #000', fontSize: 13, fontWeight: 900 }}>STUDENT PROGRESS REPORT</div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            {schoolInfo?.logo_url ? (
+              <img src={schoolInfo.logo_url} alt="School Logo" style={{ width: 100, height: 100, objectFit: 'contain' }} />
+            ) : (
+              <div style={{
+                width: 100, height: 100, border: '1px dashed #888',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#888', fontSize: 10, textAlign: 'center', padding: 4,
+              }}>SCHOOL LOGO</div>
+            )}
+          </div>
         </div>
 
         {/* Student Info */}
@@ -211,7 +251,10 @@ const Reports = ({ schoolConfig, examsList }) => {
             <tr style={{ background: '#F0F2F5' }}>
               <th style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'left' }}>SUBJECT</th>
               {gradeExams.map(e => (
-                <th key={e.id} style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', minWidth: 60 }}>{e.name.toUpperCase()}</th>
+                <th key={e.id} style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', minWidth: 60 }}>
+                  {e.name.toUpperCase()}
+                  <div style={{ fontSize: 9, fontWeight: 400, color: '#555' }}>/ {e.total_marks || 100}</div>
+                </th>
               ))}
               <th style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', background: '#e8f5ee' }}>TOTAL</th>
               <th style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center' }}>GRADE</th>
@@ -234,7 +277,7 @@ const Reports = ({ schoolConfig, examsList }) => {
             ))}
           </tbody>
           <tfoot>
-            <tr style={{ background: '#1A1A2E', color: '#fff' }}>
+            <tr style={{ background: '#e8f5ee', color: '#1A1A2E' }}>
               <td style={{ border: '1px solid #000', padding: '6px 8px', fontWeight: 700 }}>SUMMARY</td>
               {gradeExams.map((_, i) => <td key={i} style={{ border: '1px solid #000' }} />)}
               <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 900 }}>{Math.round(total)}</td>
@@ -272,10 +315,18 @@ const Reports = ({ schoolConfig, examsList }) => {
       th, td { border: 1px solid #000; padding: 6px 8px; }
       .page { max-width: 750px; margin: 0 auto; padding: 20px; page-break-after: always; }
       .page:last-child { page-break-after: auto; }
-      .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 16px; margin-bottom: 16px; }
+      .header-grid { display: grid; grid-template-columns: 110px 1fr 110px; gap: 16px; align-items: center; border-bottom: 2px solid #000; padding-bottom: 16px; margin-bottom: 16px; }
+      .header-school { text-align: center; }
+      .header-photo, .header-logo { display: flex; }
+      .header-photo { justify-content: flex-start; }
+      .header-logo { justify-content: flex-end; }
+      .photo-box, .logo-box { width: 100px; height: 100px; }
+      .photo-box img { width: 100px; height: 100px; object-fit: cover; border: 1px solid #000; }
+      .logo-box img { width: 100px; height: 100px; object-fit: contain; }
+      .placeholder { width: 100px; height: 100px; border: 1px dashed #888; display: flex; align-items: center; justify-content: center; color: #888; font-size: 10px; text-align: center; padding: 4px; box-sizing: border-box; }
       .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
       .info-right { text-align: right; }
-      .tfoot-row { background: #1A1A2E; color: #fff; }
+      .tfoot-row { background: #e8f5ee; color: #1A1A2E; }
       .remarks { border: 1px solid #000; padding: 10px; margin-bottom: 20px; }
       .sigs { display: flex; justify-content: space-between; margin-top: 40px; }
       .sig { text-align: center; border-top: 1px solid #000; padding-top: 5px; width: 120px; }
@@ -291,12 +342,24 @@ const Reports = ({ schoolConfig, examsList }) => {
       const className = currentTypeClasses.find(c => c.id === student.level_id)?.name || '';
 
       win.document.write(`<div class="page">
-        <div class="header">
-          ${schoolInfo?.logo_url ? `<img src="${schoolInfo.logo_url}" alt="School Logo" style="height:80px;margin-bottom:8px;object-fit:contain;" />` : ''}
-          <div style="font-size:20px;font-weight:900">${(schoolConfig?.schoolName || '').toUpperCase()}</div>
-          <div style="font-size:11px;font-weight:700;margin-top:4px">MOTTO: ${(schoolInfo?.motto || 'EDUCATION FOR EXCELLENCE').toUpperCase()}</div>
-          <div style="font-size:10px;margin-top:4px">EMAIL: ${schoolConfig?.email || ''} · TEL: ${schoolConfig?.phone || ''}</div>
-          <div style="display:inline-block;margin-top:12px;padding:4px 20px;border:2px solid #000;font-size:13px;font-weight:900">STUDENT PROGRESS REPORT</div>
+        <div class="header-grid">
+          <div class="header-photo">
+            ${student.photo_path
+              ? `<div class="photo-box"><img src="${getStudentPhotoUrl(student.photo_path, student.id)}" alt="" /></div>`
+              : `<div class="placeholder">STUDENT PHOTO</div>`}
+          </div>
+          <div class="header-school">
+            <div style="font-size:20px;font-weight:900">${(schoolConfig?.schoolName || '').toUpperCase()}</div>
+            ${schoolConfig?.address ? `<div style="font-size:10px;margin-top:4px">${schoolConfig.address}${schoolConfig?.county ? ` · ${schoolConfig.county}` : ''}</div>` : ''}
+            <div style="font-size:11px;font-weight:700;margin-top:4px">MOTTO: ${(schoolInfo?.motto || 'EDUCATION FOR EXCELLENCE').toUpperCase()}</div>
+            <div style="font-size:10px;margin-top:4px">EMAIL: ${schoolConfig?.email || ''} · TEL: ${schoolConfig?.phone || ''}</div>
+            <div style="display:inline-block;margin-top:10px;padding:4px 20px;border:2px solid #000;font-size:13px;font-weight:900">STUDENT PROGRESS REPORT</div>
+          </div>
+          <div class="header-logo">
+            ${schoolInfo?.logo_url
+              ? `<div class="logo-box"><img src="${schoolInfo.logo_url}" alt="School Logo" /></div>`
+              : `<div class="placeholder">SCHOOL LOGO</div>`}
+          </div>
         </div>
         <div class="info-grid">
           <div>
@@ -313,7 +376,7 @@ const Reports = ({ schoolConfig, examsList }) => {
         <table>
           <thead><tr style="background:#F0F2F5">
             <th style="text-align:left">SUBJECT</th>
-            ${gradeExams.map(e => `<th style="text-align:center">${e.name.toUpperCase()}</th>`).join('')}
+            ${gradeExams.map(e => `<th style="text-align:center">${e.name.toUpperCase()}<div style="font-size:9px;font-weight:400;color:#555">/ ${e.total_marks || 100}</div></th>`).join('')}
             <th style="text-align:center;background:#e8f5ee">TOTAL</th>
             <th style="text-align:center">GRADE</th>
             <th style="text-align:center;background:#fff4e5">CLASS BEST</th>

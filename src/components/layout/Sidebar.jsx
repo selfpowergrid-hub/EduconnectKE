@@ -2,7 +2,15 @@ import React, { useState } from 'react';
 import { canAccessNav, PLANS } from '../../lib/planConfig';
 import logo from '../../assets/logo.jpg';
 
-const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, onSignOut, isMobile, isOpen, onClose }) => {
+const TEACHER_ALLOWED = new Set([
+  'students',
+  'exam-entries',
+  'reports',
+  'merit-list',
+]);
+
+const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, onSignOut, isMobile, isOpen, onClose, role }) => {
+  const isTeacher = role === 'teacher';
   const menuSections = [
     {
       title: "Administration",
@@ -13,6 +21,7 @@ const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, o
         { id: "streams-dorms", label: "Streams & Dorms", icon: "🏘️" },
         { id: "students", label: "Students & Admission", icon: "🎓" },
         { id: "teachers", label: "Staff & Teachers", icon: "👥" },
+        { id: "teacher-allocations", label: "Teacher Allocations", icon: "🧑‍🏫" },
       ]
     },
     {
@@ -154,7 +163,15 @@ const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, o
           <span style={{ fontSize: 14 }}>Dashboard</span>
         </div>
 
-        {menuSections.map((section) => (
+        {menuSections
+          .map(section => ({
+            ...section,
+            items: section.items
+              .filter(item => isModuleEnabled(item.module))
+              .filter(item => !isTeacher || TEACHER_ALLOWED.has(item.id)),
+          }))
+          .filter(section => section.items.length > 0)
+          .map((section) => (
           <div key={section.title} style={{ marginBottom: 4 }}>
             <div 
               onClick={() => toggleSection(section.title)}
@@ -198,9 +215,7 @@ const Sidebar = ({ activeId, onNavigate, schoolConfig, currentPlan, userEmail, o
               paddingLeft: 12,
               marginTop: 4
             }}>
-              {section.items
-                .filter(item => isModuleEnabled(item.module))
-                .map((item) => {
+              {section.items.map((item) => {
                   const allowed = canAccessNav(currentPlan, item.id);
                   return (
                     <div

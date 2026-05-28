@@ -11,6 +11,7 @@ import Staff from './pages/Staff';
 import Settings from './pages/Settings';
 import Registration from './pages/Registration';
 import ExamEntries from './pages/ExamEntries';
+import TeacherAllocations from './pages/TeacherAllocations';
 import LoginPage from './pages/LoginPage';
 import PlanGate from './components/common/PlanGate';
 import { useAuth } from './contexts/AuthContext';
@@ -30,6 +31,7 @@ function App() {
   const {
     user, session, schoolConfig, plan, isLoading,
     needsRegistration, needsPlanSelection,
+    role, teacherInfo,
     updateSchoolConfig, updatePlan, signOut,
     setNeedsRegistration, setNeedsPlanSelection,
     fetchSchoolForUser,
@@ -38,6 +40,10 @@ function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+
+  // Focus mode is page-local — reset it whenever the user switches pages
+  useEffect(() => { setFocusMode(false); }, [activeTab]);
 
   // State for metrics
   const [studentCount, setStudentCount] = useState(0);
@@ -56,7 +62,8 @@ function App() {
         .from('exams')
         .select('*')
         .eq('school_id', schoolConfig.id)
-        .order('created_at', { ascending: false });
+        .order('display_order', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: true });
       
       if (error) throw error;
       setExamsList(data || []);
@@ -100,6 +107,7 @@ function App() {
     { id: "streams-dorms", label: "Streams/Dorms", component: Settings, tab: "streams" },
     { id: "students", label: "Students & Admission", component: Students },
     { id: "teachers", label: "Staff & Teachers", component: Staff },
+    { id: "teacher-allocations", label: "Teacher Allocations", component: TeacherAllocations },
     { id: "exams", label: "Exam Settings", component: Exams, module: "Examinations" },
     { id: "exam-entries", label: "Exam Entries", component: ExamEntries, module: "Examinations" },
     { id: "reports", label: "Report Cards", component: Reports },
@@ -167,8 +175,17 @@ function App() {
 
 
 
-  // Filter navigation based on selected modules AND plan
+  // Teachers see only a narrow subset of pages.
+  const TEACHER_ALLOWED_NAV = new Set([
+    'students',       // read-only, scoped to their classes
+    'exam-entries',   // their subject + classes only
+    'reports',        // read-only, their classes
+    'merit-list',     // read-only, their classes
+  ]);
+
+  // Filter navigation based on role, selected modules, AND plan
   const filteredNav = navigation.filter(item => {
+    if (role === 'teacher' && !TEACHER_ALLOWED_NAV.has(item.id)) return false;
     if (!item.module) return true;
     return schoolConfig?.modules?.includes(item.module);
   });
@@ -254,52 +271,57 @@ function App() {
       }}
     >
       {/* Mobile Backdrop */}
-      <div 
+      <div
         className={`overlay-backdrop ${isMobileMenuOpen ? 'active' : ''}`}
         onClick={() => setIsMobileMenuOpen(false)}
       />
 
-      <Sidebar 
-        activeId={activeTab} 
-        onNavigate={handlePageChange} 
-        schoolConfig={schoolConfig}
-        currentPlan={plan}
-        userEmail={user?.email}
-        onSignOut={signOut}
-        isMobile={window.innerWidth <= 768}
-        isOpen={isSidebarOpen || isMobileMenuOpen}
-        onClose={() => {
-          setIsSidebarOpen(false);
-          setIsMobileMenuOpen(false);
-        }}
-      />
-      
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <Header 
-          activePageLabel={activeNavLink?.label || 'Dashboard'}
-          onMenuClick={toggleMobileMenu}
-          userEmail={user?.email}
+      {!focusMode && (
+        <Sidebar
+          activeId={activeTab}
+          onNavigate={handlePageChange}
+          schoolConfig={schoolConfig}
           currentPlan={plan}
+          userEmail={user?.email}
           onSignOut={signOut}
-          studentCount={studentCount}
+          isMobile={window.innerWidth <= 768}
+          isOpen={isSidebarOpen || isMobileMenuOpen}
+          role={role}
+          onClose={() => {
+            setIsSidebarOpen(false);
+            setIsMobileMenuOpen(false);
+          }}
         />
-        
-        <main 
+      )}
+
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        {!focusMode && (
+          <Header
+            activePageLabel={activeNavLink?.label || 'Dashboard'}
+            onMenuClick={toggleMobileMenu}
+            userEmail={user?.email}
+            currentPlan={plan}
+            onSignOut={signOut}
+            studentCount={studentCount}
+          />
+        )}
+
+        <main
           className="main-scroll main-content"
-          style={{ 
-            flex: 1, 
-            overflowY: "auto", 
-            padding: "32px 40px",
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            padding: focusMode ? "12px 16px" : "32px 40px",
             scrollBehavior: "smooth",
             background: "#f5f2eb",
             fontFamily: "'Inter', sans-serif"
           }}
         >
-          <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+          <div style={{ maxWidth: focusMode ? '100%' : 1200, margin: "0 auto" }}>
             {isPageAllowed ? (
-              <ActivePage 
-                schoolConfig={schoolConfig} 
-                initialTab={activeNavLink?.tab} 
+              <ActivePage
+                schoolConfig={schoolConfig}
+                initialTab={activeNavLink?.tab}
                 examsList={examsList}
                 setExamsList={setExamsList}
                 marksData={marksData}
@@ -309,6 +331,10 @@ function App() {
                 onComplete={handleRegistrationComplete}
                 studentCount={studentCount}
                 staffCount={staffCount}
+                role={role}
+                teacherInfo={teacherInfo}
+                focusMode={focusMode}
+                setFocusMode={setFocusMode}
               />
             ) : (
               <PlanGate

@@ -17,6 +17,8 @@ export function AuthProvider({ children }) {
   const [isLoading, setIsLoading] = useState(true);
   const [needsRegistration, setNeedsRegistration] = useState(false);
   const [needsPlanSelection, setNeedsPlanSelection] = useState(false);
+  const [role, setRole] = useState(null); // 'admin' | 'teacher' | null
+  const [teacherInfo, setTeacherInfo] = useState(null); // { staff_id, full_name, assignments[] }
 
   const userRef = useRef(null);
 
@@ -43,7 +45,14 @@ export function AuthProvider({ children }) {
       ]);
 
       if (error && error.code === 'PGRST116') {
-        // No school found for this email — user needs to register
+        // Not an admin (no school registered to this email).
+        // Try the teacher path: do we have a staff row with auth_user_id = this user?
+        const teacher = await loadTeacherContext(authUser);
+        if (teacher) return;
+
+        // Neither admin nor teacher — user needs to register a school.
+        setRole(null);
+        setTeacherInfo(null);
         setNeedsRegistration(true);
         setNeedsPlanSelection(false);
         setSchoolConfig(null);
@@ -67,14 +76,71 @@ export function AuthProvider({ children }) {
           modules: data.activated_modules,
           totalStudents: data.total_students,
           subscriptionCost: data.subscription_cost,
+          login_code: data.login_code,
         };
         setSchoolConfig(config);
         setPlan(data.plan || 'starter');
+        setRole('admin');
+        setTeacherInfo(null);
         setNeedsRegistration(false);
         setNeedsPlanSelection(false);
       }
     } catch (err) {
       console.error('Error fetching school for user:', err);
+    }
+  };
+
+  // Resolve a teacher's school + assignments from their auth.user
+  const loadTeacherContext = async (authUser) => {
+    try {
+      const { data: staffRow, error: staffErr } = await supabase
+        .from('staff')
+        .select('id, full_name, school_id, email')
+        .eq('auth_user_id', authUser.id)
+        .single();
+      if (staffErr || !staffRow) return false;
+
+      const { data: schoolRow, error: schoolErr } = await supabase
+        .from('school_registrations')
+        .select('*')
+        .eq('id', staffRow.school_id)
+        .single();
+      if (schoolErr || !schoolRow) return false;
+
+      const { data: assigns } = await supabase
+        .from('teacher_assignments')
+        .select('*')
+        .eq('teacher_staff_id', staffRow.id);
+
+      setSchoolConfig({
+        id: schoolRow.id,
+        schoolName: schoolRow.school_name,
+        regNumber: schoolRow.reg_number,
+        county: schoolRow.county,
+        subCounty: schoolRow.sub_county,
+        email: schoolRow.email,
+        phone: schoolRow.phone,
+        address: schoolRow.address,
+        schoolType: schoolRow.school_type,
+        modules: schoolRow.activated_modules,
+        totalStudents: schoolRow.total_students,
+        subscriptionCost: schoolRow.subscription_cost,
+        login_code: schoolRow.login_code,
+      });
+      setPlan(schoolRow.plan || 'starter');
+      setRole('teacher');
+      setTeacherInfo({
+        staff_id: staffRow.id,
+        full_name: staffRow.full_name,
+        email: staffRow.email,
+        assignments: assigns || [],
+      });
+      setNeedsRegistration(false);
+      setNeedsPlanSelection(false);
+      return true;
+    } catch (err) {
+      console.error('Teacher context load failed:', err);
+      return false;
     }
   };
 
@@ -129,6 +195,8 @@ export function AuthProvider({ children }) {
             setPlan('starter');
             setNeedsRegistration(false);
             setNeedsPlanSelection(false);
+            setRole(null);
+            setTeacherInfo(null);
           }
         } catch (err) {
           console.error('Error in auth state change handler:', err);
@@ -149,6 +217,8 @@ export function AuthProvider({ children }) {
     setPlan('starter');
     setNeedsRegistration(false);
     setNeedsPlanSelection(false);
+    setRole(null);
+    setTeacherInfo(null);
   };
 
   const updateSchoolConfig = (config) => {
@@ -175,6 +245,8 @@ export function AuthProvider({ children }) {
     isLoading,
     needsRegistration,
     needsPlanSelection,
+    role,
+    teacherInfo,
     signOut,
     updateSchoolConfig,
     updatePlan,

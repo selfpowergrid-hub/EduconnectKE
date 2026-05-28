@@ -145,7 +145,9 @@ const Marksheets = ({ schoolConfig, examsList }) => {
     return { grade: '-' };
   }, [dbGrades, selectedClass]);
 
-  // Calculate score for one student + one subject based on selected mode
+  // Calculate score for one student + one subject based on selected mode.
+  // All scores are returned as a 0-100 percentage so columns are comparable
+  // regardless of whether each exam was out of 30, 50, 100, etc.
   const getSubjectScore = useCallback((studentId, subjectId) => {
     if (selectedExamId === 'average') {
       if (!gradeExams.length) return null;
@@ -153,12 +155,18 @@ const Marksheets = ({ schoolConfig, examsList }) => {
       const weighted = gradeExams.reduce((sum, exam) => {
         const mark = allMarks.find(m => m.student_id === studentId && m.exam_id === exam.id && m.subject_id === subjectId);
         if (mark && mark.score !== null) hasAnyMark = true;
-        return sum + (mark?.score || 0) * ((exam.weight || 0) / 100);
+        const raw = mark?.score || 0;
+        const outOf = exam.total_marks || 100;
+        const pct = outOf > 0 ? (raw / outOf) * 100 : 0;
+        return sum + pct * ((exam.weight || 0) / 100);
       }, 0);
       return hasAnyMark ? weighted : null;
     } else {
       const mark = allMarks.find(m => m.student_id === studentId && m.exam_id === selectedExamId && m.subject_id === subjectId);
-      return mark && mark.score !== null ? mark.score : null;
+      if (!mark || mark.score === null) return null;
+      const exam = gradeExams.find(e => e.id === selectedExamId);
+      const outOf = exam?.total_marks || 100;
+      return outOf > 0 ? (mark.score / outOf) * 100 : 0;
     }
   }, [selectedExamId, gradeExams, allMarks]);
 

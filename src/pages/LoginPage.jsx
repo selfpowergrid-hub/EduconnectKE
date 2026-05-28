@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import logo from '../assets/logo.jpg';
 
 const LoginPage = () => {
+  const [audience, setAudience] = useState('admin'); // 'admin' | 'teacher'
   const [mode, setMode] = useState('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -10,6 +11,54 @@ const LoginPage = () => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  // Teacher login state
+  const [schoolCode, setSchoolCode] = useState(() => localStorage.getItem('teacher_school_code') || '');
+  const [teacherList, setTeacherList] = useState([]);
+  const [schoolNameLookup, setSchoolNameLookup] = useState('');
+  const [selectedTeacherEmail, setSelectedTeacherEmail] = useState('');
+  const [isLookingUp, setIsLookingUp] = useState(false);
+
+  const handleLookupSchool = async () => {
+    const code = schoolCode.trim().toUpperCase();
+    if (!code) { setError('Enter your school code first.'); return; }
+    setError('');
+    setIsLookingUp(true);
+    try {
+      const { data, error: err } = await supabase.functions.invoke('list-school-teachers', { body: { login_code: code } });
+      if (err) throw err;
+      if (data?.error) throw new Error(data.error);
+      setSchoolNameLookup(data.school_name || '');
+      setTeacherList(data.teachers || []);
+      setSelectedTeacherEmail('');
+      localStorage.setItem('teacher_school_code', code);
+      if ((data.teachers || []).length === 0) {
+        setError('No teacher logins have been created for this school yet. Ask your admin.');
+      }
+    } catch (err) {
+      setError(err.message || 'Could not find that school.');
+      setTeacherList([]);
+      setSchoolNameLookup('');
+    } finally {
+      setIsLookingUp(false);
+    }
+  };
+
+  const handleTeacherSignIn = async (e) => {
+    e.preventDefault();
+    if (!selectedTeacherEmail || !password) { setError('Pick your name and enter your password.'); return; }
+    setError('');
+    setIsLoading(true);
+    try {
+      const { error: err } = await supabase.auth.signInWithPassword({ email: selectedTeacherEmail, password });
+      if (err) throw err;
+    } catch (err) {
+      if (err.message?.includes('Invalid login credentials')) setError('Wrong password. Ask your admin to reset it if you forgot.');
+      else setError(err.message || 'Could not sign in.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -92,23 +141,39 @@ const LoginPage = () => {
 
         <div style={{ maxWidth: 400, margin: '0 auto', width: '100%' }}>
           <h2 style={{ fontSize: 28, fontWeight: 800, color: '#2a2421', margin: '0 0 8px' }}>
-            {mode === 'signin' ? 'Welcome back' : 'Create your account'}
+            {audience === 'teacher' ? 'Teacher sign in' : (mode === 'signin' ? 'Welcome back' : 'Create your account')}
           </h2>
-          <p style={{ fontSize: 15, color: '#8a8fa8', margin: '0 0 32px', lineHeight: 1.5 }}>
-            {mode === 'signin' ? 'Sign in to access your school dashboard' : 'Set up your school on LOGIQ'}
+          <p style={{ fontSize: 15, color: '#8a8fa8', margin: '0 0 24px', lineHeight: 1.5 }}>
+            {audience === 'teacher'
+              ? 'Enter your school code, pick your name, and sign in'
+              : (mode === 'signin' ? 'Sign in to access your school dashboard' : 'Set up your school on LOGIQ')}
           </p>
 
-          {/* Tabs */}
-          <div style={{ display: 'flex', marginBottom: 28, background: '#f5f2eb', borderRadius: 12, padding: 4 }}>
-            {['signin', 'signup'].map(t => (
-              <button key={t} onClick={() => { setMode(t); setError(''); }} style={{
-                flex: 1, padding: '12px 0', borderRadius: 10, border: 'none',
-                background: mode === t ? '#fff' : 'transparent', color: mode === t ? '#2a2421' : '#8a8fa8',
-                fontWeight: 700, fontSize: 14, cursor: 'pointer',
-                boxShadow: mode === t ? '0 2px 8px rgba(0,0,0,0.06)' : 'none', transition: 'all 0.2s',
-              }}>{t === 'signin' ? 'Sign In' : 'Sign Up'}</button>
+          {/* Audience toggle */}
+          <div style={{ display: 'flex', marginBottom: 20, background: '#fff', border: '1.5px solid #e6dfd8', borderRadius: 12, padding: 4 }}>
+            {[{ id: 'admin', label: '🏫 Admin' }, { id: 'teacher', label: '👩‍🏫 Teacher' }].map(t => (
+              <button key={t.id} onClick={() => { setAudience(t.id); setError(''); }} style={{
+                flex: 1, padding: '10px 0', borderRadius: 10, border: 'none',
+                background: audience === t.id ? '#D4AF37' : 'transparent',
+                color: audience === t.id ? '#fff' : '#8a8fa8',
+                fontWeight: 700, fontSize: 13, cursor: 'pointer', transition: 'all 0.2s',
+              }}>{t.label}</button>
             ))}
           </div>
+
+          {/* Admin: signin/signup sub-tabs */}
+          {audience === 'admin' && (
+            <div style={{ display: 'flex', marginBottom: 28, background: '#f5f2eb', borderRadius: 12, padding: 4 }}>
+              {['signin', 'signup'].map(t => (
+                <button key={t} onClick={() => { setMode(t); setError(''); }} style={{
+                  flex: 1, padding: '12px 0', borderRadius: 10, border: 'none',
+                  background: mode === t ? '#fff' : 'transparent', color: mode === t ? '#2a2421' : '#8a8fa8',
+                  fontWeight: 700, fontSize: 14, cursor: 'pointer',
+                  boxShadow: mode === t ? '0 2px 8px rgba(0,0,0,0.06)' : 'none', transition: 'all 0.2s',
+                }}>{t === 'signin' ? 'Sign In' : 'Sign Up'}</button>
+              ))}
+            </div>
+          )}
 
           {error && (
             <div style={{ padding: '12px 16px', borderRadius: 10, background: '#FDF0ED', border: '1px solid #FADBD8', color: '#C0392B', fontSize: 13, fontWeight: 600, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -116,6 +181,7 @@ const LoginPage = () => {
             </div>
           )}
 
+          {audience === 'admin' && (
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             {mode === 'signup' && (
               <div>
@@ -155,7 +221,94 @@ const LoginPage = () => {
               transition: 'all 0.2s', marginTop: 4, letterSpacing: '0.02em',
             }}>{isLoading ? '⏳ Please wait...' : mode === 'signin' ? 'Sign In →' : 'Create Account →'}</button>
           </form>
+          )}
 
+          {audience === 'teacher' && (
+            <form onSubmit={handleTeacherSignIn} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <div>
+                <label style={labelBase}>School Code</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ position: 'relative', flex: 1 }}>
+                    <span style={iconPos}>🏷️</span>
+                    <input
+                      type="text"
+                      value={schoolCode}
+                      onChange={e => { setSchoolCode(e.target.value.toUpperCase()); setTeacherList([]); setSelectedTeacherEmail(''); }}
+                      placeholder="e.g. TABOLWA-HIGH"
+                      style={{ ...inputBase, textTransform: 'uppercase' }}
+                      onFocus={e => e.target.style.borderColor = '#D4AF37'}
+                      onBlur={e => e.target.style.borderColor = '#e6dfd8'}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleLookupSchool}
+                    disabled={isLookingUp}
+                    style={{
+                      padding: '0 18px', borderRadius: 12, border: '1.5px solid #1B6B3A',
+                      background: isLookingUp ? '#8A8FA8' : '#fff', color: isLookingUp ? '#fff' : '#1B6B3A',
+                      fontWeight: 700, fontSize: 13, cursor: isLookingUp ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+                    }}
+                  >{isLookingUp ? '…' : 'Find'}</button>
+                </div>
+                {schoolNameLookup && (
+                  <div style={{ fontSize: 12, color: '#1B6B3A', fontWeight: 700, marginTop: 6 }}>✓ {schoolNameLookup}</div>
+                )}
+              </div>
+
+              {teacherList.length > 0 && (
+                <>
+                  <div>
+                    <label style={labelBase}>Your Name</label>
+                    <div style={{ position: 'relative' }}>
+                      <span style={iconPos}>👤</span>
+                      <select
+                        value={selectedTeacherEmail}
+                        onChange={e => setSelectedTeacherEmail(e.target.value)}
+                        style={{ ...inputBase, appearance: 'auto' }}
+                        required
+                      >
+                        <option value="">— Select your name —</option>
+                        {teacherList.map(t => (
+                          <option key={t.id} value={t.email}>{t.full_name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={labelBase}>Password</label>
+                    <div style={{ position: 'relative' }}>
+                      <span style={iconPos}>🔒</span>
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        placeholder="Enter your password"
+                        required
+                        style={{ ...inputBase, paddingRight: 48 }}
+                        onFocus={e => e.target.style.borderColor = '#D4AF37'}
+                        onBlur={e => e.target.style.borderColor = '#e6dfd8'}
+                      />
+                      <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, opacity: 0.5 }}>
+                        {showPassword ? '🙈' : '👁️'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button type="submit" disabled={isLoading} style={{
+                    padding: 16, background: isLoading ? '#8a8fa8' : '#1B6B3A',
+                    color: '#fff', border: 'none', borderRadius: 12, fontSize: 15, fontWeight: 800,
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    boxShadow: '0 4px 16px rgba(27,107,58,0.3)', transition: 'all 0.2s', marginTop: 4,
+                  }}>{isLoading ? '⏳ Signing in…' : 'Sign In →'}</button>
+                </>
+              )}
+            </form>
+          )}
+
+          {audience === 'admin' && (
+          <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, margin: '28px 0' }}>
             <div style={{ flex: 1, height: 1, background: '#e6dfd8' }} />
             <span style={{ fontSize: 12, color: '#8a8fa8', fontWeight: 600 }}>OR</span>
@@ -169,6 +322,8 @@ const LoginPage = () => {
           }}>
             <span style={{ fontSize: 18 }}>G</span> Continue with Google
           </button>
+          </>
+          )}
 
           <p style={{ textAlign: 'center', fontSize: 12, color: '#8a8fa8', marginTop: 28, lineHeight: 1.6 }}>
             {mode === 'signup' ? 'By creating an account, you agree to our Terms of Service.' : 'Forgot password? Contact support@logiq.co.ke'}

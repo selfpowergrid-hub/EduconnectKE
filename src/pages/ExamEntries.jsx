@@ -25,7 +25,23 @@ const getGradeId = (gradeName) => {
   return gradeIdMap[gradeName];
 };
 
-const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData }) => {
+const GRADE_CODE_TO_NAME = {
+  "pp1": "PP1", "pp2": "PP2",
+  "g1": "Grade 1", "g2": "Grade 2", "g3": "Grade 3", "g4": "Grade 4", "g5": "Grade 5", "g6": "Grade 6",
+  "g7": "Grade 7", "g8": "Grade 8", "g9": "Grade 9",
+  "g10": "Grade 10", "g11": "Grade 11", "g12": "Grade 12"
+};
+const gradeNameToLevel = (gradeName) => {
+  for (const [lvl, grades] of Object.entries(GRADES_BY_LEVEL)) {
+    if (grades.includes(gradeName)) return lvl;
+  }
+  return null;
+};
+
+const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, teacherInfo, focusMode, setFocusMode }) => {
+  const isTeacher = role === 'teacher';
+  const assignments = teacherInfo?.assignments || [];
+  const [filterBarHidden, setFilterBarHidden] = useState(false);
   const [students, setStudents] = useState([]);
   const [dbSubjects, setDbSubjects] = useState([]);
   const [dbGrades, setDbGrades] = useState([]);
@@ -158,10 +174,49 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData }) => {
     setMarksData(formatted);
   };
 
+  // Levels/grades/streams a teacher is allowed to pick from. Admin = no restriction.
+  const teacherAllowed = useMemo(() => {
+    if (!isTeacher) return null;
+    const levels = new Set();
+    const gradesByLevel = {};
+    const streamsByGrade = {};       // grade name -> Set of stream_id|null
+    const subjectsByGrade = {};      // grade name -> Set of subject_id
+    assignments.forEach(a => {
+      const gName = GRADE_CODE_TO_NAME[a.level_id];
+      if (!gName) return;
+      const lvl = gradeNameToLevel(gName);
+      if (!lvl) return;
+      levels.add(lvl);
+      (gradesByLevel[lvl] = gradesByLevel[lvl] || new Set()).add(gName);
+      (streamsByGrade[gName] = streamsByGrade[gName] || new Set()).add(a.stream_id || null);
+      (subjectsByGrade[gName] = subjectsByGrade[gName] || new Set()).add(a.subject_id);
+    });
+    return { levels, gradesByLevel, streamsByGrade, subjectsByGrade };
+  }, [isTeacher, assignments]);
+
+  // Snap level/grade selections to something the teacher is allowed to see
+  useEffect(() => {
+    if (!teacherAllowed) return;
+    const allowedLevels = [...teacherAllowed.levels];
+    if (allowedLevels.length === 0) return;
+    if (!teacherAllowed.levels.has(entryLevel)) {
+      setEntryLevel(allowedLevels[0]);
+      return;
+    }
+    const allowedGrades = [...(teacherAllowed.gradesByLevel[entryLevel] || [])];
+    if (allowedGrades.length === 0) return;
+    if (!teacherAllowed.gradesByLevel[entryLevel].has(entryGrade)) {
+      setEntryGrade(allowedGrades[0]);
+    }
+  }, [teacherAllowed, entryLevel, entryGrade]);
+
   const entryAvailableSubjects = useMemo(() => {
     const gid = getGradeId(entryGrade);
-    return dbSubjects.filter(s => s.level_category === gid).map(s => s.name);
-  }, [dbSubjects, entryGrade]);
+    const all = dbSubjects.filter(s => s.level_category === gid);
+    if (!isTeacher) return all.map(s => s.name);
+    const allowedSubjectIds = teacherAllowed?.subjectsByGrade[entryGrade] || new Set();
+    return all.filter(s => allowedSubjectIds.has(s.id)).map(s => s.name);
+  }, [dbSubjects, entryGrade, isTeacher, teacherAllowed]);
 
   useEffect(() => {
     if (entryAvailableSubjects.length > 0 && !entryAvailableSubjects.includes(entrySubject)) {
@@ -181,7 +236,11 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData }) => {
   const entryStudents = students;
 
   const handleScoreChange = (studentId, examId, value) => {
-    const val = parseInt(value) || 0;
+    const exam = examsList.find(e => e.id === examId);
+    const maxAllowed = exam?.total_marks || 100;
+    let val = parseInt(value) || 0;
+    if (val > maxAllowed) val = maxAllowed;
+    if (val < 0) val = 0;
     setMarksData(prev => {
       const next = {
         ...prev,
@@ -423,23 +482,80 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData }) => {
           </div>
         )}
 
-        {/* View Mode Toggle */}
-        <div className="ee-toggle" style={{ display: "flex", gap: 0, borderRadius: 8, overflow: "hidden", border: "1px solid #e6dfd8", alignSelf: "flex-start" }}>
-          <button onClick={() => setViewMode("class")} style={{
-            padding: "8px 20px", fontSize: 12, fontWeight: 700, border: "none", cursor: "pointer",
-            background: viewMode === "class" ? activeColor : "#fff", color: viewMode === "class" ? "#fff" : "#2a2421",
-            transition: "all 0.2s ease"
-          }}>📋 Class View</button>
-          <button onClick={() => setViewMode("student")} style={{
-            padding: "8px 20px", fontSize: 12, fontWeight: 700, border: "none", cursor: "pointer", borderLeft: "1px solid #e6dfd8",
-            background: viewMode === "student" ? activeColor : "#fff", color: viewMode === "student" ? "#fff" : "#2a2421",
-            transition: "all 0.2s ease"
-          }}>👤 Student View</button>
-        </div>
+        {/* View Mode Toggle (admin only — by-student view aggregates across all subjects) */}
+        {!isTeacher && (
+          <div className="ee-toggle" style={{ display: "flex", gap: 0, borderRadius: 8, overflow: "hidden", border: "1px solid #e6dfd8", alignSelf: "flex-start" }}>
+            <button onClick={() => setViewMode("class")} style={{
+              padding: "8px 20px", fontSize: 12, fontWeight: 700, border: "none", cursor: "pointer",
+              background: viewMode === "class" ? activeColor : "#fff", color: viewMode === "class" ? "#fff" : "#2a2421",
+              transition: "all 0.2s ease"
+            }}>📋 Class View</button>
+            <button onClick={() => setViewMode("student")} style={{
+              padding: "8px 20px", fontSize: 12, fontWeight: 700, border: "none", cursor: "pointer", borderLeft: "1px solid #e6dfd8",
+              background: viewMode === "student" ? activeColor : "#fff", color: viewMode === "student" ? "#fff" : "#2a2421",
+              transition: "all 0.2s ease"
+            }}>👤 Student View</button>
+          </div>
+        )}
 
         {viewMode === "class" && (<>
+        {/* Focus + filter-bar toggles */}
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: filterBarHidden ? 8 : 8 }}>
+          {filterBarHidden && (
+            <button
+              onClick={handleSaveMarks}
+              disabled={isLoading || !hasUnsavedChanges}
+              style={{
+                padding: "6px 14px", borderRadius: 6, border: "none",
+                background: hasUnsavedChanges ? "#D35400" : "#2a2421", color: "#fff",
+                fontSize: 11, fontWeight: 700,
+                cursor: (isLoading || !hasUnsavedChanges) ? "not-allowed" : "pointer",
+                opacity: (isLoading || !hasUnsavedChanges) ? 0.7 : 1,
+                boxShadow: hasUnsavedChanges ? "0 2px 8px rgba(211,84,0,0.3)" : "none",
+              }}
+            >
+              {isLoading ? "⌛ Saving..." : (hasUnsavedChanges ? "⚠️ Sync to Cloud" : "✓ All Synced")}
+            </button>
+          )}
+          {focusMode && (
+            <button
+              onClick={() => setFilterBarHidden(v => !v)}
+              style={{
+                padding: "6px 12px", borderRadius: 6, border: "1px solid #e6dfd8",
+                background: "#fff", color: "#2a2421", fontSize: 11, fontWeight: 700, cursor: "pointer",
+              }}
+              title={filterBarHidden ? "Show filters" : "Hide filters for more screen space"}
+            >
+              {filterBarHidden ? "▼ Show Filters" : "▲ Hide Filters"}
+            </button>
+          )}
+          {!focusMode ? (
+            <button
+              onClick={() => setFocusMode?.(true)}
+              style={{
+                padding: "6px 14px", borderRadius: 6, border: "1px solid #1B6B3A",
+                background: "#fff", color: "#1B6B3A", fontSize: 11, fontWeight: 700, cursor: "pointer",
+              }}
+              title="Hide the sidebar and header for a full-screen marks view"
+            >
+              🪟 Focus Mode
+            </button>
+          ) : (
+            <button
+              onClick={() => { setFocusMode?.(false); setFilterBarHidden(false); }}
+              style={{
+                padding: "6px 14px", borderRadius: 6, border: "1px solid #C0392B",
+                background: "#fff", color: "#C0392B", fontSize: 11, fontWeight: 700, cursor: "pointer",
+              }}
+            >
+              ✕ Exit Focus
+            </button>
+          )}
+        </div>
+
         {/* Filters Bar */}
-        <div className="ee-filters-class" style={{ 
+        {!filterBarHidden && (
+        <div className="ee-filters-class" style={{
           display: "grid", gridTemplateColumns: "repeat(5, 1fr) auto", gap: 10, padding: "16px 20px",
           background: "#fff", borderRadius: 12, border: "1px solid #e6dfd8", alignItems: "flex-end",
           boxShadow: "0 10px 25px -5px rgba(0,0,0,0.05), 0 8px 10px -6px rgba(0,0,0,0.01)"
@@ -448,24 +564,50 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData }) => {
             <label style={labelStyle}>Level</label>
             <select value={entryLevel} onChange={(e) => {
               setEntryLevel(e.target.value);
-              setEntryGrade(GRADES_BY_LEVEL[e.target.value][0]);
+              const grades = isTeacher && teacherAllowed
+                ? [...(teacherAllowed.gradesByLevel[e.target.value] || [])]
+                : GRADES_BY_LEVEL[e.target.value];
+              setEntryGrade(grades[0]);
             }} style={inputStyle}>
-              {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl}>{lvl}</option>)}
+              {(isTeacher && teacherAllowed
+                ? [...teacherAllowed.levels]
+                : Object.keys(GRADES_BY_LEVEL)
+              ).map(lvl => <option key={lvl}>{lvl}</option>)}
             </select>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <label style={labelStyle}>Grade</label>
             <select value={entryGrade} onChange={(e) => setEntryGrade(e.target.value)} style={inputStyle}>
-              {GRADES_BY_LEVEL[entryLevel].map(g => <option key={g}>{g}</option>)}
+              {(isTeacher && teacherAllowed
+                ? [...(teacherAllowed.gradesByLevel[entryLevel] || [])]
+                : GRADES_BY_LEVEL[entryLevel]
+              ).map(g => <option key={g}>{g}</option>)}
             </select>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <label style={labelStyle}>Stream</label>
             <select value={entryStream} onChange={(e) => setEntryStream(e.target.value)} style={inputStyle}>
-              <option value="All">All Streams</option>
-              {dbStreams.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              {(() => {
+                if (!isTeacher) {
+                  return (
+                    <>
+                      <option value="All">All Streams</option>
+                      {dbStreams.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </>
+                  );
+                }
+                const allowedStreamIds = teacherAllowed?.streamsByGrade[entryGrade] || new Set();
+                const hasWildcard = allowedStreamIds.has(null);
+                const allowedSpecific = dbStreams.filter(s => allowedStreamIds.has(s.id));
+                return (
+                  <>
+                    {hasWildcard && <option value="All">All Streams</option>}
+                    {allowedSpecific.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </>
+                );
+              })()}
             </select>
           </div>
 
@@ -506,6 +648,7 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData }) => {
             {isLoading ? "⌛ Saving..." : (hasUnsavedChanges ? "⚠️ Sync to Cloud" : "✓ All Synced")}
           </button>
         </div>
+        )}
 
         {/* Toolbar */}
         <div className="ee-toolbar" style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12, padding: "0 4px", marginTop: -4 }}>
@@ -536,7 +679,8 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData }) => {
                 {entryExams.map(exam => (
                   <th key={exam.id} style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", textAlign: "center", width: 120 }}>
                     <div style={{ fontSize: 10, color: "#8a8fa8", textTransform: "uppercase", letterSpacing: "0.05em" }}>{exam.name}</div>
-                    <div style={{ fontWeight: 700, color: "#2a2421" }}>Marks (%)</div>
+                    <div style={{ fontWeight: 700, color: "#2a2421" }}>Out of {exam.total_marks || 100}</div>
+                    <div style={{ fontSize: 10, color: "#8a8fa8", fontWeight: 600 }}>· weight {exam.weight || 0}%</div>
                   </th>
                 ))}
                 <th style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", textAlign: "center", background: "#f5f2eb", width: 100, color: "#2a2421", fontWeight: 700 }}>AVG %</th>
@@ -546,7 +690,12 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData }) => {
             <tbody>
               {entryStudents.map((s, sIdx) => {
                 const studentMarks = marksData[s.id] || {};
-                const total = entryExams.reduce((sum, exam) => sum + (parseInt(studentMarks[exam.id]) || 0) * (exam.weight / 100), 0);
+                const total = entryExams.reduce((sum, exam) => {
+                  const raw = parseInt(studentMarks[exam.id]) || 0;
+                  const outOf = exam.total_marks || 100;
+                  const pct = outOf > 0 ? (raw / outOf) * 100 : 0;
+                  return sum + pct * ((exam.weight || 0) / 100);
+                }, 0);
                 const grade = getGrade(total);
 
                 return (
