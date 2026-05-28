@@ -283,35 +283,39 @@ input:focus, select:focus, textarea:focus {
     justify-content: space-between !important;
   }
 
-  .table-container {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
   .table-container table {
     min-width: 600px;
-    border-collapse: separate; /* Required for sticky borders in some browsers */
-    border-spacing: 0;
   }
+}
 
-  /* Sticky Column Base */
-  .sticky-col {
-    position: sticky !important;
-    z-index: 20 !important;
-    background-color: inherit !important;
-    box-shadow: 2px 0 5px rgba(0,0,0,0.05);
-  }
+/* === Sticky columns (work at all viewport sizes) ===
+   Used in Exam Entries so ADM NO + STUDENT NAME stay visible while the
+   user horizontally scrolls through CAT 1, CAT 2, MID TERM, END TERM... */
+.table-container {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.table-container table {
+  border-collapse: separate; /* Required for sticky borders to render */
+  border-spacing: 0;
+}
 
-  .sticky-left-0 {
-    left: 0 !important;
-  }
+.sticky-col {
+  position: sticky !important;
+  z-index: 20 !important;
+  background-color: inherit !important;
+  box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+}
 
-  .sticky-left-1 {
-    left: 80px !important; /* Adjusted for mobile ADM width */
-  }
+.sticky-left-0 {
+  left: 0 !important;
+}
 
-  /* Header sticky needs higher z-index */
-  thead th.sticky-col {
-    z-index: 30 !important;
-    background-color: #fafafa !important;
-  }
+.sticky-left-1 {
+  left: 80px !important; /* matches the ADM NO column width */
+}
+
+thead th.sticky-col {
+  z-index: 30 !important;
+  background-color: #fafafa !important;
 }

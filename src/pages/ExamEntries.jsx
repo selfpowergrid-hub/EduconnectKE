@@ -664,11 +664,12 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
         </div>
 
         {/* Marks Entry Spreadsheet */}
-        <div className="table-container" style={{ 
-          background: "#fff", 
-          border: "1px solid #e6dfd8", 
-          borderRadius: 12, 
-          overflow: "hidden",
+        <div className="table-container" style={{
+          background: "#fff",
+          border: "1px solid #e6dfd8",
+          borderRadius: 12,
+          overflowX: "auto",
+          overflowY: "hidden",
           boxShadow: "0 10px 25px -5px rgba(0,0,0,0.05)"
         }}>
           <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
@@ -825,7 +826,8 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
         {/* Student Marks Grid (rows=subjects, cols=exams) */}
         {selectedStudent && (
         <div className="table-container" style={{
-          background: "#fff", border: "1px solid #e6dfd8", borderRadius: 12, overflow: "hidden",
+          background: "#fff", border: "1px solid #e6dfd8", borderRadius: 12,
+          overflowX: "auto", overflowY: "hidden",
           boxShadow: "0 10px 25px -5px rgba(0,0,0,0.05)"
         }}>
           <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
