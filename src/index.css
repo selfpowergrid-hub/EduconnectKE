@@ -303,8 +303,6 @@ input:focus, select:focus, textarea:focus {
 .sticky-col {
   position: sticky !important;
   z-index: 20 !important;
-  background-color: inherit !important;
-  box-shadow: 2px 0 5px rgba(0,0,0,0.05);
 }
 
 .sticky-left-0 {
@@ -315,7 +313,27 @@ input:focus, select:focus, textarea:focus {
   left: 80px !important; /* matches the ADM NO column width */
 }
 
+/* Sticky cells need a SOLID, opaque background — otherwise the exam
+   columns scroll into view through them. Match the alternating
+   stripe of body rows + a fixed colour for the header. */
+.table-container tbody tr:nth-child(odd) .sticky-col {
+  background-color: #fff !important;
+}
+.table-container tbody tr:nth-child(even) .sticky-col {
+  background-color: #fafafa !important;
+}
 thead th.sticky-col {
   z-index: 30 !important;
   background-color: #fafafa !important;
+}
+
+/* Hard right edge so the boundary between the frozen columns and the
+   scrolling exam columns is unmistakable from the moment the table
+   renders — not just when content scrolls underneath. */
+.sticky-col.sticky-left-1 {
+  border-right: 2px solid #2a2421 !important;
+  box-shadow: 6px 0 10px -2px rgba(0, 0, 0, 0.18) !important;
+}
+.sticky-col.sticky-left-0:not(.sticky-left-1) {
+  border-right: 1px solid #e6dfd8 !important;
 }
