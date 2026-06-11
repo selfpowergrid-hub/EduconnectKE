@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import logo from '../assets/logo.jpg';
+import SchoolCodeCard from '../components/school/SchoolCodeCard';
 
 const Registration = ({ onComplete, schoolConfig, userEmail }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -101,6 +102,13 @@ const Registration = ({ onComplete, schoolConfig, userEmail }) => {
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          {schoolConfig?.id && (
+            <SchoolCodeCard
+              schoolId={schoolConfig.id}
+              currentCode={schoolConfig.login_code}
+            />
+          )}
+
           {/* School Info Section */}
           <section style={{ background: "#fff", padding: 28, borderRadius: 16, border: "1px solid #E8EAF0" }}>
             <h2 style={{ fontSize: 16, fontWeight: 800, color: "#1B6B3A", margin: "0 0 20px" }}>School Information</h2>

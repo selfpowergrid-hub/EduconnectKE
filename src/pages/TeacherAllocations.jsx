@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import SchoolCodeCard from '../components/school/SchoolCodeCard';
 
 const GRADES_BY_LEVEL = {
   "Pre-Primary": ["PP1", "PP2"],
@@ -63,16 +64,20 @@ const TeacherAllocations = ({ schoolConfig }) => {
 
   return (
     <div style={{ paddingBottom: 40 }}>
+      <div style={{ marginBottom: 16 }}>
+        <SchoolCodeCard
+          schoolId={schoolConfig?.id}
+          currentCode={schoolConfig?.login_code}
+          dense
+        />
+      </div>
+
       <div style={{ background: "#fff", border: "1px solid #e6dfd8", borderRadius: 12, padding: 24, marginBottom: 24 }}>
         <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#1A1A2E" }}>Teacher Allocations</h3>
         <p style={{ margin: "8px 0 0", fontSize: 13, color: "#8A8FA8", lineHeight: 1.5 }}>
           Assign subjects and classes to each teacher, and create their login so they can enter marks.
           A teacher will only see students and exams that match the assignments below.
         </p>
-        <div style={{ marginTop: 12, padding: 10, background: "#EBF3FB", border: "1px solid #D1E3F8", borderRadius: 8, fontSize: 12, color: "#1A5F9C" }}>
-          <strong>School Login Code:</strong> <span style={{ fontFamily: "monospace", fontWeight: 800 }}>{schoolConfig?.login_code || '— not set —'}</span>
-          <span style={{ marginLeft: 8, color: "#8A8FA8" }}>(teachers enter this on the login page)</span>
-        </div>
       </div>
 
       <div style={{ background: "#fff", border: "1px solid #e6dfd8", borderRadius: 12, overflow: "hidden" }}>
@@ -165,7 +170,10 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
   const [password, setPassword] = useState('');
   const [isCreatingLogin, setIsCreatingLogin] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
-  const [feedback, setFeedback] = useState('');
+  const [feedback, setFeedback] = useState({ kind: 'idle', message: '', detail: '' });
+  // After a successful create/reset we remember the credentials that landed
+  // so the admin can copy them to the teacher without retyping.
+  const [savedCreds, setSavedCreds] = useState(null);
 
   const myStreams = streams.filter(s => s.level_id === GRADE_NAME_TO_CODE[newAssign.grade]);
   const subjectById = Object.fromEntries(subjects.map(s => [s.id, s]));
@@ -206,42 +214,84 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
 
   const invokeEdgeFn = async (fnName, body) => {
     const { data, error } = await supabase.functions.invoke(fnName, { body });
-    if (error) throw error;
+    if (error) {
+      // Supabase wraps non-2xx responses in a FunctionsHttpError whose body
+      // we need to read manually for the actual server message.
+      let serverMsg = error.message || 'Unknown error';
+      try {
+        const ctx = error.context;
+        if (ctx && typeof ctx.json === 'function') {
+          const body = await ctx.json();
+          if (body?.error) serverMsg = body.error;
+        }
+      } catch { /* ignore */ }
+      const e = new Error(serverMsg);
+      e.original = error;
+      throw e;
+    }
     if (data?.error) throw new Error(data.error);
     return data;
   };
 
+  const friendlyError = (err) => {
+    const m = err?.message || 'Unknown error';
+    if (m.includes('Failed to send a request')) {
+      return `Couldn't reach the server. Deploy the Edge Function: supabase functions deploy ${err?.fnName || 'reset-teacher-password'}`;
+    }
+    return m;
+  };
+
   const handleCreateLogin = async () => {
-    if (!email || !password) { setFeedback('Email and password are required.'); return; }
-    if (password.length < 6) { setFeedback('Password must be at least 6 characters.'); return; }
-    setFeedback('');
+    if (!email || !password) { setFeedback({ kind: 'error', message: 'Email and password are required.' }); return; }
+    if (password.length < 6) { setFeedback({ kind: 'error', message: 'Password must be at least 6 characters.' }); return; }
+    setFeedback({ kind: 'idle', message: '' });
     setIsCreatingLogin(true);
     try {
       await invokeEdgeFn('create-teacher-user', { staff_id: teacher.id, email, password });
-      setPassword('');
-      setFeedback('Login created.');
+      const creds = { email, password };
+      setSavedCreds(creds);
+      setFeedback({
+        kind: 'success',
+        message: `✓ Login created for ${teacher.full_name}.`,
+        detail: 'Share the credentials below with the teacher. They sign in on the Teacher Sign-In page using the school code.',
+      });
       onSaved();
     } catch (err) {
-      setFeedback('Failed: ' + err.message);
+      err.fnName = 'create-teacher-user';
+      console.error('create-teacher-user failed:', err.original || err);
+      setFeedback({ kind: 'error', message: 'Failed: ' + friendlyError(err) });
     } finally {
       setIsCreatingLogin(false);
     }
   };
 
   const handleResetPassword = async () => {
-    if (!password) { setFeedback('Enter the new password first.'); return; }
-    if (password.length < 6) { setFeedback('Password must be at least 6 characters.'); return; }
-    setFeedback('');
+    if (!password) { setFeedback({ kind: 'error', message: 'Enter the new password first.' }); return; }
+    if (password.length < 6) { setFeedback({ kind: 'error', message: 'Password must be at least 6 characters.' }); return; }
+    setFeedback({ kind: 'idle', message: '' });
     setIsResetting(true);
     try {
       await invokeEdgeFn('reset-teacher-password', { staff_id: teacher.id, password });
-      setPassword('');
-      setFeedback('Password reset.');
+      const creds = { email: teacher.email || email, password };
+      setSavedCreds(creds);
+      setFeedback({
+        kind: 'success',
+        message: `✓ Password updated for ${teacher.full_name}.`,
+        detail: 'The teacher must sign in with the credentials below. The old password no longer works.',
+      });
     } catch (err) {
-      setFeedback('Failed: ' + err.message);
+      err.fnName = 'reset-teacher-password';
+      console.error('reset-teacher-password failed:', err.original || err);
+      setFeedback({ kind: 'error', message: 'Failed: ' + friendlyError(err) });
     } finally {
       setIsResetting(false);
     }
+  };
+
+  const copyCreds = () => {
+    if (!savedCreds) return;
+    const txt = `Email: ${savedCreds.email}\nPassword: ${savedCreds.password}\nSchool code: ${schoolConfig?.login_code || ''}`;
+    navigator.clipboard?.writeText(txt);
   };
 
   return (
@@ -307,10 +357,51 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
                     style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: isCreatingLogin ? '#8A8FA8' : '#1B6B3A', color: '#fff', fontSize: 12, fontWeight: 700, cursor: isCreatingLogin ? 'not-allowed' : 'pointer' }}
                   >{isCreatingLogin ? 'Creating…' : 'Create Login'}</button>
                 )}
-                {feedback && (
-                  <span style={{ fontSize: 12, alignSelf: 'center', color: feedback.startsWith('Failed') ? '#C0392B' : '#1B6B3A', fontWeight: 600 }}>{feedback}</span>
-                )}
               </div>
+
+              {feedback.kind !== 'idle' && (
+                <div style={{
+                  marginTop: 12, padding: '12px 14px', borderRadius: 10,
+                  background: feedback.kind === 'success' ? '#E8F5EE' : '#FDF0ED',
+                  border: `1.5px solid ${feedback.kind === 'success' ? '#1B6B3A' : '#C0392B'}`,
+                  color: feedback.kind === 'success' ? '#1B6B3A' : '#C0392B',
+                  fontSize: 13, fontWeight: 700, lineHeight: 1.5,
+                }}>
+                  <div>{feedback.message}</div>
+                  {feedback.detail && (
+                    <div style={{ marginTop: 4, fontWeight: 500, fontSize: 12, opacity: 0.85 }}>{feedback.detail}</div>
+                  )}
+                </div>
+              )}
+
+              {savedCreds && feedback.kind === 'success' && (
+                <div style={{
+                  marginTop: 10, padding: 12, borderRadius: 10,
+                  background: '#fefbf2', border: '1.5px dashed #D4AF37',
+                  display: 'flex', flexDirection: 'column', gap: 6,
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: '#8A6A1F', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Credentials to share
+                    </div>
+                    <button
+                      type="button"
+                      onClick={copyCreds}
+                      style={{
+                        padding: '4px 10px', borderRadius: 6, border: '1px solid #D4AF37',
+                        background: '#fff', color: '#8A6A1F', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                      }}
+                    >📋 Copy all</button>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#2a2421', fontFamily: 'monospace', lineHeight: 1.7 }}>
+                    <div><strong>Email:</strong> {savedCreds.email}</div>
+                    <div><strong>Password:</strong> {savedCreds.password}</div>
+                    {schoolConfig?.login_code && (
+                      <div><strong>School code:</strong> {schoolConfig.login_code}</div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 

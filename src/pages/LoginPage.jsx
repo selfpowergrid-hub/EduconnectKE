@@ -1,10 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import logo from '../assets/logo.jpg';
 
+// Mirrors the Postgres normalize_login_code() rules so we can preview
+// the code locally before the server confirms it.
+const clientNormalizeCode = (raw) => {
+  if (!raw) return '';
+  let s = raw.toUpperCase().replace(/[^A-Z0-9]+/g, '-');
+  s = s.replace(/^-+|-+$/g, '').slice(0, 16).replace(/-+$/g, '');
+  return s;
+};
+
 const LoginPage = () => {
-  const [audience, setAudience] = useState('admin'); // 'admin' | 'teacher'
-  const [mode, setMode] = useState('signin');
+  const [view, setView] = useState('chooser'); // 'chooser' | 'admin' | 'register' | 'teacher'
+  const mode = view === 'register' ? 'signup' : 'signin';
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [schoolName, setSchoolName] = useState('');
@@ -12,12 +22,71 @@ const LoginPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  // School code picker (register view)
+  const [proposedCode, setProposedCode] = useState('');
+  const [codeEdited, setCodeEdited] = useState(false);
+  const [codeStatus, setCodeStatus] = useState('idle'); // idle | checking | ok | taken | invalid
+  const [codeMessage, setCodeMessage] = useState('');
+  const [normalizedCode, setNormalizedCode] = useState('');
+
   // Teacher login state
   const [schoolCode, setSchoolCode] = useState(() => localStorage.getItem('teacher_school_code') || '');
   const [teacherList, setTeacherList] = useState([]);
   const [schoolNameLookup, setSchoolNameLookup] = useState('');
   const [selectedTeacherEmail, setSelectedTeacherEmail] = useState('');
   const [isLookingUp, setIsLookingUp] = useState(false);
+
+  const goChooser = () => { setView('chooser'); setError(''); };
+
+  // Auto-derive the code from school name until the admin manually edits it.
+  useEffect(() => {
+    if (view !== 'register' || codeEdited) return;
+    setProposedCode(clientNormalizeCode(schoolName));
+  }, [schoolName, codeEdited, view]);
+
+  // Debounced availability check.
+  useEffect(() => {
+    if (view !== 'register') return;
+    const preview = clientNormalizeCode(proposedCode);
+    if (!preview || preview.length < 4) {
+      setCodeStatus(proposedCode ? 'invalid' : 'idle');
+      setCodeMessage(proposedCode ? 'Code must be at least 4 letters/numbers.' : '');
+      setNormalizedCode('');
+      return;
+    }
+    setCodeStatus('checking');
+    setCodeMessage('Checking…');
+    const handle = setTimeout(async () => {
+      try {
+        const { data: normalized, error: normErr } = await supabase
+          .rpc('normalize_login_code', { p_code: proposedCode });
+        if (normErr) throw normErr;
+        if (!normalized) {
+          setCodeStatus('invalid');
+          setCodeMessage('Code must be at least 4 letters/numbers.');
+          setNormalizedCode('');
+          return;
+        }
+        setNormalizedCode(normalized);
+        const { data: available, error: availErr } = await supabase
+          .rpc('is_login_code_available', { p_code: proposedCode });
+        if (availErr) throw availErr;
+        if (available) {
+          setCodeStatus('ok');
+          setCodeMessage(`Available — teachers will type ${normalized}`);
+        } else {
+          setCodeStatus('taken');
+          setCodeMessage('That code is already taken.');
+        }
+      } catch (e) {
+        setCodeStatus('invalid');
+        setCodeMessage(e?.message?.includes('function')
+          ? 'Database helpers not installed yet — run the school-code migration.'
+          : (e?.message || 'Could not check code.'));
+      }
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [proposedCode, view]);
 
   const handleLookupSchool = async () => {
     const code = schoolCode.trim().toUpperCase();
@@ -67,9 +136,13 @@ const LoginPage = () => {
     try {
       if (mode === 'signup') {
         if (!schoolName.trim()) { setError('Please enter your school name'); setIsLoading(false); return; }
+        if (codeStatus !== 'ok' || !normalizedCode) {
+          setError('Please pick an available school code before continuing.');
+          setIsLoading(false); return;
+        }
         const { data, error: err } = await supabase.auth.signUp({
           email, password,
-          options: { data: { school_name: schoolName } },
+          options: { data: { school_name: schoolName, school_login_code: normalizedCode } },
         });
         if (err) throw err;
         if (data.user && data.user.identities?.length === 0) {
@@ -88,13 +161,6 @@ const LoginPage = () => {
     } finally { setIsLoading(false); }
   };
 
-  const handleGoogleSignIn = async () => {
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
-      if (error) throw error;
-    } catch { setError('Google sign-in failed.'); }
-  };
-
   const inputBase = {
     width: '100%', padding: '14px 16px 14px 44px', borderRadius: 12,
     border: '1.5px solid #e6dfd8', fontSize: 14, color: '#2a2421',
@@ -108,82 +174,155 @@ const LoginPage = () => {
     position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', fontSize: 16, opacity: 0.6,
   };
 
+  const cardStyle = {
+    background: '#fff',
+    borderRadius: 20,
+    padding: '40px 36px',
+    boxShadow: '0 12px 40px rgba(42,36,33,0.08), 0 2px 8px rgba(42,36,33,0.04)',
+    border: '1px solid #ece5db',
+    width: '100%',
+    maxWidth: 460,
+    boxSizing: 'border-box',
+  };
+
+  const backBtnStyle = {
+    background: 'transparent', border: 'none', cursor: 'pointer',
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    color: '#8a8fa8', fontSize: 13, fontWeight: 600, padding: 0,
+    marginBottom: 20,
+  };
+
+  const primaryBtn = (loading) => ({
+    width: '100%', padding: 16, background: loading ? '#bfb89c' : '#D4AF37',
+    color: '#fff', border: 'none', borderRadius: 12, fontSize: 15, fontWeight: 800,
+    cursor: loading ? 'not-allowed' : 'pointer', boxShadow: '0 4px 16px rgba(212,175,55,0.3)',
+    transition: 'all 0.2s', marginTop: 4, letterSpacing: '0.02em',
+  });
+
+  const errorBlock = error && (
+    <div style={{
+      padding: '12px 16px', borderRadius: 10, background: '#FDF0ED',
+      border: '1px solid #FADBD8', color: '#C0392B', fontSize: 13,
+      fontWeight: 600, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8,
+    }}>
+      <span>⚠️</span> {error}
+    </div>
+  );
+
+  const Header = ({ title, subtitle }) => (
+    <div style={{ textAlign: 'center', marginBottom: 28 }}>
+      <img src={logo} alt="LOGIQ" style={{ width: 56, height: 'auto', borderRadius: 12, marginBottom: 14, boxShadow: '0 4px 14px rgba(212,175,55,0.18)' }} />
+      <div style={{ fontSize: 11, fontWeight: 800, color: '#D4AF37', letterSpacing: '0.18em', marginBottom: 14 }}>LOGIQ</div>
+      <h2 style={{ fontSize: 24, fontWeight: 800, color: '#2a2421', margin: '0 0 6px' }}>{title}</h2>
+      {subtitle && <p style={{ fontSize: 14, color: '#8a8fa8', margin: 0, lineHeight: 1.5 }}>{subtitle}</p>}
+    </div>
+  );
+
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', fontFamily: "'Inter', sans-serif", background: '#f5f2eb' }}>
-      {/* Left Branding */}
-      <div className="hide-mobile" style={{
-        flex: 1, background: 'linear-gradient(160deg, #2a2421 0%, #1a1714 50%, #2a2421 100%)',
-        display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-        padding: '60px 48px', position: 'relative', overflow: 'hidden',
-      }}>
-        <div style={{ position: 'absolute', top: -100, right: -100, width: 400, height: 400, borderRadius: '50%', background: 'radial-gradient(circle, rgba(204,120,92,0.12) 0%, transparent 70%)' }} />
-        <div style={{ position: 'absolute', bottom: -80, left: -80, width: 300, height: 300, borderRadius: '50%', background: 'radial-gradient(circle, rgba(27,107,58,0.12) 0%, transparent 70%)' }} />
-        <div style={{ position: 'relative', zIndex: 1, maxWidth: 440, textAlign: 'center' }}>
-          <img src={logo} alt="LOGIQ Logo" style={{ width: 120, height: 'auto', borderRadius: 18, marginBottom: 24, boxShadow: '0 8px 32px rgba(212,175,55,0.2)' }} />
-          <h1 style={{ fontFamily: "'Inter', sans-serif", fontSize: 44, fontWeight: 800, color: '#D4AF37', margin: '0 0 16px', lineHeight: 1.1, letterSpacing: '0.05em' }}>
-            LOGIQ
-          </h1>
-          <p style={{ fontSize: 17, color: 'rgba(255,255,255,0.7)', lineHeight: 1.7, margin: '0 0 48px', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}>
-            ONLINE SCHOOL MANAGEMENT
-          </p>
-        </div>
-        <div style={{ position: 'absolute', bottom: 32, left: 0, right: 0, textAlign: 'center', fontSize: 12, color: 'rgba(255,255,255,0.25)', fontWeight: 500 }}>
-          🇰🇪 Built for Kenyan Schools · CBC Aligned
-        </div>
-      </div>
+    <div style={{
+      minHeight: '100vh',
+      background: '#f5f2eb',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '40px 20px',
+      fontFamily: "'Inter', sans-serif",
+    }}>
+      <div style={{ width: '100%', maxWidth: 460 }}>
 
-      {/* Right Form */}
-      <div className="login-right-pane" style={{ width: '100%', maxWidth: 520, display: 'flex', flexDirection: 'column', justifyContent: 'center', background: '#fff', overflowY: 'auto', margin: '0 auto' }}>
-        <div className="show-mobile" style={{ textAlign: 'center', marginBottom: 32 }}>
-          <img src={logo} alt="LOGIQ Logo" style={{ width: 64, height: 'auto', borderRadius: 12, marginBottom: 16 }} />
-          <h2 style={{ fontFamily: "'Inter', sans-serif", fontSize: 28, fontWeight: 800, color: '#D4AF37', margin: 0, letterSpacing: '0.05em' }}>LOGIQ</h2>
-        </div>
+        {/* ───────── CHOOSER ───────── */}
+        {view === 'chooser' && (
+          <div style={cardStyle}>
+            <div style={{ textAlign: 'center', marginBottom: 32 }}>
+              <img src={logo} alt="LOGIQ" style={{ width: 72, height: 'auto', borderRadius: 14, marginBottom: 16, boxShadow: '0 6px 20px rgba(212,175,55,0.22)' }} />
+              <h1 style={{ fontSize: 30, fontWeight: 800, color: '#D4AF37', margin: '0 0 6px', letterSpacing: '0.08em' }}>LOGIQ</h1>
+              <p style={{ fontSize: 13, color: '#8a8fa8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 600 }}>
+                Online School Management
+              </p>
+            </div>
 
-        <div style={{ maxWidth: 400, margin: '0 auto', width: '100%' }}>
-          <h2 style={{ fontSize: 28, fontWeight: 800, color: '#2a2421', margin: '0 0 8px' }}>
-            {audience === 'teacher' ? 'Teacher sign in' : (mode === 'signin' ? 'Welcome back' : 'Create your account')}
-          </h2>
-          <p style={{ fontSize: 15, color: '#8a8fa8', margin: '0 0 24px', lineHeight: 1.5 }}>
-            {audience === 'teacher'
-              ? 'Enter your school code, pick your name, and sign in'
-              : (mode === 'signin' ? 'Sign in to access your school dashboard' : 'Set up your school on LOGIQ')}
-          </p>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#2a2421', textAlign: 'center', margin: '0 0 6px' }}>
+              How would you like to continue?
+            </h2>
+            <p style={{ fontSize: 13, color: '#8a8fa8', textAlign: 'center', margin: '0 0 24px' }}>
+              Choose the option that fits you best.
+            </p>
 
-          {/* Audience toggle */}
-          <div style={{ display: 'flex', marginBottom: 20, background: '#fff', border: '1.5px solid #e6dfd8', borderRadius: 12, padding: 4 }}>
-            {[{ id: 'admin', label: '🏫 Admin' }, { id: 'teacher', label: '👩‍🏫 Teacher' }].map(t => (
-              <button key={t.id} onClick={() => { setAudience(t.id); setError(''); }} style={{
-                flex: 1, padding: '10px 0', borderRadius: 10, border: 'none',
-                background: audience === t.id ? '#D4AF37' : 'transparent',
-                color: audience === t.id ? '#fff' : '#8a8fa8',
-                fontWeight: 700, fontSize: 13, cursor: 'pointer', transition: 'all 0.2s',
-              }}>{t.label}</button>
-            ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <ChooserCard
+                icon="🏫"
+                title="Admin Sign In"
+                body="Access your school dashboard, manage students, teachers and finances."
+                onClick={() => { setView('admin'); setError(''); }}
+                accent="#D4AF37"
+              />
+              <ChooserCard
+                icon="👩‍🏫"
+                title="Teacher Sign In"
+                body="Pick your school, select your name and enter your password."
+                onClick={() => { setView('teacher'); setError(''); }}
+                accent="#1B6B3A"
+              />
+              <ChooserCard
+                icon="✨"
+                title="Register a New School"
+                body="Set up your school on LOGIQ in a few minutes."
+                onClick={() => { setView('register'); setError(''); }}
+                accent="#2a2421"
+              />
+            </div>
+
+            <p style={{ textAlign: 'center', fontSize: 11, color: '#a0a4b0', marginTop: 28, letterSpacing: '0.05em' }}>
+              🇰🇪 Built for Kenyan Schools · CBC Aligned
+            </p>
           </div>
+        )}
 
-          {/* Admin: signin/signup sub-tabs */}
-          {audience === 'admin' && (
-            <div style={{ display: 'flex', marginBottom: 28, background: '#f5f2eb', borderRadius: 12, padding: 4 }}>
-              {['signin', 'signup'].map(t => (
-                <button key={t} onClick={() => { setMode(t); setError(''); }} style={{
-                  flex: 1, padding: '12px 0', borderRadius: 10, border: 'none',
-                  background: mode === t ? '#fff' : 'transparent', color: mode === t ? '#2a2421' : '#8a8fa8',
-                  fontWeight: 700, fontSize: 14, cursor: 'pointer',
-                  boxShadow: mode === t ? '0 2px 8px rgba(0,0,0,0.06)' : 'none', transition: 'all 0.2s',
-                }}>{t === 'signin' ? 'Sign In' : 'Sign Up'}</button>
-              ))}
-            </div>
-          )}
+        {/* ───────── ADMIN SIGN IN ───────── */}
+        {view === 'admin' && (
+          <div style={cardStyle}>
+            <button onClick={goChooser} style={backBtnStyle}>← Back</button>
+            <Header title="Welcome back" subtitle="Sign in to access your school dashboard" />
+            {errorBlock}
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <div>
+                <label style={labelBase}>Email Address</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={iconPos}>📧</span>
+                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="admin@school.ac.ke" required style={inputBase}
+                    onFocus={e => e.target.style.borderColor = '#D4AF37'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
+                </div>
+              </div>
+              <div>
+                <label style={labelBase}>Password</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={iconPos}>🔒</span>
+                  <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
+                    placeholder="Enter your password" required minLength={6}
+                    style={{ ...inputBase, paddingRight: 48 }}
+                    onFocus={e => e.target.style.borderColor = '#D4AF37'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
+                  <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, opacity: 0.5 }}>
+                    {showPassword ? '🙈' : '👁️'}
+                  </button>
+                </div>
+              </div>
+              <button type="submit" disabled={isLoading} style={primaryBtn(isLoading)}>
+                {isLoading ? '⏳ Please wait...' : 'Sign In →'}
+              </button>
+            </form>
+            <p style={{ textAlign: 'center', fontSize: 12, color: '#8a8fa8', marginTop: 24 }}>
+              Forgot password? Contact support@logiq.co.ke
+            </p>
+          </div>
+        )}
 
-          {error && (
-            <div style={{ padding: '12px 16px', borderRadius: 10, background: '#FDF0ED', border: '1px solid #FADBD8', color: '#C0392B', fontSize: 13, fontWeight: 600, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span>⚠️</span> {error}
-            </div>
-          )}
-
-          {audience === 'admin' && (
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            {mode === 'signup' && (
+        {/* ───────── REGISTER SCHOOL ───────── */}
+        {view === 'register' && (
+          <div style={cardStyle}>
+            <button onClick={goChooser} style={backBtnStyle}>← Back</button>
+            <Header title="Register your school" subtitle="Set up your school on LOGIQ" />
+            {errorBlock}
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
               <div>
                 <label style={labelBase}>School Name</label>
                 <div style={{ position: 'relative' }}>
@@ -192,38 +331,73 @@ const LoginPage = () => {
                     onFocus={e => e.target.style.borderColor = '#D4AF37'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
                 </div>
               </div>
-            )}
-            <div>
-              <label style={labelBase}>Email Address</label>
-              <div style={{ position: 'relative' }}>
-                <span style={iconPos}>📧</span>
-                <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="admin@school.ac.ke" required style={inputBase}
-                  onFocus={e => e.target.style.borderColor = '#D4AF37'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
+              <div>
+                <label style={labelBase}>School Code</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={iconPos}>🏷️</span>
+                  <input
+                    type="text"
+                    value={proposedCode}
+                    onChange={e => { setProposedCode(e.target.value.toUpperCase()); setCodeEdited(true); }}
+                    placeholder="e.g. MWANGA-ACADEMY"
+                    required
+                    style={{ ...inputBase, textTransform: 'uppercase', letterSpacing: '0.04em' }}
+                    onFocus={e => e.target.style.borderColor = '#D4AF37'}
+                    onBlur={e => e.target.style.borderColor = '#e6dfd8'}
+                  />
+                </div>
+                <div style={{
+                  fontSize: 11, marginTop: 6, display: 'flex', alignItems: 'center', gap: 6,
+                  color: codeStatus === 'ok' ? '#1B6B3A'
+                       : codeStatus === 'checking' ? '#8a8fa8'
+                       : codeStatus === 'idle' ? '#8a8fa8'
+                       : '#C0392B',
+                  fontWeight: 600,
+                }}>
+                  {codeStatus === 'ok' && '✓'}
+                  {codeStatus === 'checking' && '⏳'}
+                  {(codeStatus === 'taken' || codeStatus === 'invalid') && '✗'}
+                  {codeStatus === 'idle' && '💡'}
+                  <span>{codeMessage || 'Teachers will type this code on their sign-in page.'}</span>
+                </div>
               </div>
-            </div>
-            <div>
-              <label style={labelBase}>Password</label>
-              <div style={{ position: 'relative' }}>
-                <span style={iconPos}>🔒</span>
-                <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
-                  placeholder={mode === 'signup' ? 'Min 6 characters' : 'Enter your password'} required minLength={6}
-                  style={{ ...inputBase, paddingRight: 48 }}
-                  onFocus={e => e.target.style.borderColor = '#D4AF37'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
-                <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, opacity: 0.5 }}>
-                  {showPassword ? '🙈' : '👁️'}
-                </button>
+              <div>
+                <label style={labelBase}>Email Address</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={iconPos}>📧</span>
+                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="admin@school.ac.ke" required style={inputBase}
+                    onFocus={e => e.target.style.borderColor = '#D4AF37'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
+                </div>
               </div>
-            </div>
-            <button type="submit" disabled={isLoading} style={{
-              padding: 16, background: isLoading ? '#8a8fa8' : '#D4AF37',
-              color: '#fff', border: 'none', borderRadius: 12, fontSize: 15, fontWeight: 800,
-              cursor: isLoading ? 'not-allowed' : 'pointer', boxShadow: '0 4px 16px rgba(212,175,55,0.3)',
-              transition: 'all 0.2s', marginTop: 4, letterSpacing: '0.02em',
-            }}>{isLoading ? '⏳ Please wait...' : mode === 'signin' ? 'Sign In →' : 'Create Account →'}</button>
-          </form>
-          )}
+              <div>
+                <label style={labelBase}>Password</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={iconPos}>🔒</span>
+                  <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
+                    placeholder="Min 6 characters" required minLength={6}
+                    style={{ ...inputBase, paddingRight: 48 }}
+                    onFocus={e => e.target.style.borderColor = '#D4AF37'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
+                  <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, opacity: 0.5 }}>
+                    {showPassword ? '🙈' : '👁️'}
+                  </button>
+                </div>
+              </div>
+              <button type="submit" disabled={isLoading || codeStatus !== 'ok'} style={primaryBtn(isLoading || codeStatus !== 'ok')}>
+                {isLoading ? '⏳ Please wait...' : 'Create Account →'}
+              </button>
+            </form>
+            <p style={{ textAlign: 'center', fontSize: 12, color: '#8a8fa8', marginTop: 24, lineHeight: 1.6 }}>
+              By creating an account, you agree to our Terms of Service.
+            </p>
+          </div>
+        )}
 
-          {audience === 'teacher' && (
+        {/* ───────── TEACHER SIGN IN ───────── */}
+        {view === 'teacher' && (
+          <div style={cardStyle}>
+            <button onClick={goChooser} style={backBtnStyle}>← Back</button>
+            <Header title="Teacher sign in" subtitle="Enter your school code, pick your name, and sign in" />
+            {errorBlock}
             <form onSubmit={handleTeacherSignIn} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
               <div>
                 <label style={labelBase}>School Code</label>
@@ -297,7 +471,7 @@ const LoginPage = () => {
                   </div>
 
                   <button type="submit" disabled={isLoading} style={{
-                    padding: 16, background: isLoading ? '#8a8fa8' : '#1B6B3A',
+                    width: '100%', padding: 16, background: isLoading ? '#8a8fa8' : '#1B6B3A',
                     color: '#fff', border: 'none', borderRadius: 12, fontSize: 15, fontWeight: 800,
                     cursor: isLoading ? 'not-allowed' : 'pointer',
                     boxShadow: '0 4px 16px rgba(27,107,58,0.3)', transition: 'all 0.2s', marginTop: 4,
@@ -305,32 +479,49 @@ const LoginPage = () => {
                 </>
               )}
             </form>
-          )}
-
-          {audience === 'admin' && (
-          <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, margin: '28px 0' }}>
-            <div style={{ flex: 1, height: 1, background: '#e6dfd8' }} />
-            <span style={{ fontSize: 12, color: '#8a8fa8', fontWeight: 600 }}>OR</span>
-            <div style={{ flex: 1, height: 1, background: '#e6dfd8' }} />
           </div>
+        )}
 
-          <button onClick={handleGoogleSignIn} style={{
-            width: '100%', padding: 14, background: '#fff', border: '1.5px solid #e6dfd8',
-            borderRadius: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            gap: 10, fontSize: 14, fontWeight: 700, color: '#2a2421', transition: 'all 0.2s',
-          }}>
-            <span style={{ fontSize: 18 }}>G</span> Continue with Google
-          </button>
-          </>
-          )}
-
-          <p style={{ textAlign: 'center', fontSize: 12, color: '#8a8fa8', marginTop: 28, lineHeight: 1.6 }}>
-            {mode === 'signup' ? 'By creating an account, you agree to our Terms of Service.' : 'Forgot password? Contact support@logiq.co.ke'}
-          </p>
-        </div>
       </div>
     </div>
+  );
+};
+
+const ChooserCard = ({ icon, title, body, onClick, accent }) => {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 14,
+        padding: '16px 18px',
+        background: hover ? '#fafaf5' : '#fff',
+        border: `1.5px solid ${hover ? accent : '#ece5db'}`,
+        borderRadius: 14,
+        cursor: 'pointer',
+        textAlign: 'left',
+        transition: 'all 0.18s ease',
+        boxShadow: hover ? '0 4px 14px rgba(42,36,33,0.06)' : 'none',
+      }}
+    >
+      <div style={{
+        width: 44, height: 44, borderRadius: 12,
+        background: `${accent}15`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 22, flexShrink: 0,
+      }}>{icon}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#2a2421', marginBottom: 2 }}>{title}</div>
+        <div style={{ fontSize: 12, color: '#8a8fa8', lineHeight: 1.4 }}>{body}</div>
+      </div>
+      <div style={{ color: accent, fontSize: 18, fontWeight: 700, flexShrink: 0 }}>→</div>
+    </button>
   );
 };
 

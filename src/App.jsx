@@ -144,6 +144,14 @@ function App() {
         subscription_cost: cost,
       };
 
+      // First-time onboarding: honour the school code the admin picked at
+      // signup. On subsequent saves we leave login_code untouched so a code
+      // changed later (via Teacher Allocations) is not clobbered.
+      if (!schoolConfig?.login_code) {
+        const chosen = user?.user_metadata?.school_login_code;
+        if (chosen) dbPayload.login_code = chosen;
+      }
+
       console.log("Attempting Database Upsert for:", dbPayload.email);
       
       const { error } = await Promise.race([
