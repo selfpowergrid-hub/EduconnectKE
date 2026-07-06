@@ -95,7 +95,7 @@ export function AuthProvider({ children }) {
     try {
       const { data: staffRow, error: staffErr } = await supabase
         .from('staff')
-        .select('id, full_name, school_id, email')
+        .select('id, full_name, school_id, email, app_role')
         .eq('auth_user_id', authUser.id)
         .single();
       if (staffErr || !staffRow) return false;
@@ -133,6 +133,7 @@ export function AuthProvider({ children }) {
         staff_id: staffRow.id,
         full_name: staffRow.full_name,
         email: staffRow.email,
+        app_role: staffRow.app_role || 'teacher',
         assignments: assigns || [],
       });
       setNeedsRegistration(false);

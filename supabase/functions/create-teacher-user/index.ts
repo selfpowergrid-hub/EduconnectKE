@@ -36,7 +36,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
-  let payload: { staff_id?: string; email?: string; password?: string };
+  let payload: { staff_id?: string; email?: string; password?: string; app_role?: string };
   try {
     payload = await req.json();
   } catch {
@@ -50,6 +50,13 @@ Deno.serve(async (req) => {
   if (password.length < 6) {
     return json({ error: "Password must be at least 6 characters" }, 400);
   }
+
+  // Which module shell this login works in (staff.app_role). Defaults to
+  // teacher for backwards compatibility with older clients.
+  const APP_ROLES = ["teacher", "exams_officer", "accountant", "bursar", "auditor"];
+  const appRole = payload.app_role && APP_ROLES.includes(payload.app_role)
+    ? payload.app_role
+    : "teacher";
 
   // 1. Identify caller from their JWT
   const authHeader = req.headers.get("Authorization");
@@ -95,7 +102,7 @@ Deno.serve(async (req) => {
     password,
     email_confirm: true,
     user_metadata: {
-      role: "teacher",
+      role: appRole,
       school_id: staffRow.school_id,
       staff_id: staffRow.id,
     },
@@ -105,7 +112,7 @@ Deno.serve(async (req) => {
   // 5. Link to staff
   const { error: linkErr } = await admin
     .from("staff")
-    .update({ auth_user_id: created.user.id, email })
+    .update({ auth_user_id: created.user.id, email, app_role: appRole })
     .eq("id", staff_id);
   if (linkErr) {
     // Roll back the auth user so we don't leak a dangling account

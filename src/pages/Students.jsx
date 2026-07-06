@@ -18,16 +18,19 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
   const [studentsList, setStudentsList] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [boardingFilter, setBoardingFilter] = useState("all"); // all | day | boarder
   const [selectedLevel, setSelectedLevel] = useState("Junior Secondary");
   const [selectedGrade, setSelectedGrade] = useState("Grade 7");
   const [currentPage, setCurrentPage] = useState(1);
   const [streams, setStreams] = useState([]);
+  const [dorms, setDorms] = useState([]);
   const itemsPerPage = 15;
 
   useEffect(() => {
     if (schoolConfig?.id) {
       fetchStudents();
       fetchStreams();
+      fetchDorms();
     }
   }, [schoolConfig?.id]);
 
@@ -65,6 +68,22 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
     }
   };
 
+  // Dorms drive boarding status: a student with a dorm is a boarder and gets
+  // billed boarder voteheads by the fees module. No dorm = day scholar.
+  const fetchDorms = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('dorms')
+        .select('*')
+        .eq('school_id', schoolConfig.id)
+        .order('name');
+      if (error) throw error;
+      setDorms(data || []);
+    } catch (err) {
+      console.error('Error fetching dorms:', err);
+    }
+  };
+
   const currentTypeClasses = useMemo(() => {
     return getClassesByType(schoolConfig?.schoolType || "Primary");
   }, [schoolConfig]);
@@ -84,13 +103,14 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
       const nameMatch = s.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
       const admMatch = s.adm_no?.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesSearch = nameMatch || admMatch;
-      
+
       const matchesLevel = levelGrades.includes(s.level_id);
       const matchesGrade = selectedGrade === "all" ? true : s.level_id === targetGradeId;
-      
-      return matchesSearch && matchesLevel && matchesGrade;
+      const matchesBoarding = boardingFilter === "all" ? true : (s.boarding_status || 'day') === boardingFilter;
+
+      return matchesSearch && matchesLevel && matchesGrade && matchesBoarding;
     });
-  }, [searchTerm, selectedLevel, selectedGrade, studentsList]);
+  }, [searchTerm, selectedLevel, selectedGrade, boardingFilter, studentsList]);
 
   // Sync selectedGrade when selectedLevel changes
   useEffect(() => {
@@ -115,6 +135,8 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
     gender: "M",
     level_id: currentTypeClasses[0]?.id || "",
     stream_id: "",
+    boarding_status: "day",
+    dorm_id: "",
     parent_phone: "",
     photo_path: ""
   });
@@ -127,6 +149,7 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
       gender: "M",
       level_id: currentTypeClasses[0]?.id || "",
       stream_id: "",
+      dorm_id: "",
       parent_phone: "",
       photo_path: ""
     });
@@ -143,6 +166,8 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
       gender: student.gender || "M",
       level_id: student.level_id,
       stream_id: student.stream_id || "",
+      boarding_status: student.boarding_status || (student.dorm_id ? "boarder" : "day"),
+      dorm_id: student.dorm_id || "",
       parent_phone: student.parent_phone || "",
       photo_path: student.photo_path || ""
     });
@@ -188,6 +213,12 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
     setIsSaving(true);
     try {
       const payload = { ...newStudent };
+      // Empty selects come through as "" — store NULL, not an invalid UUID.
+      payload.stream_id = payload.stream_id || null;
+      // Boarding status is authoritative; a dorm bed is optional detail and
+      // only kept for boarders.
+      payload.boarding_status = payload.boarding_status === 'boarder' ? 'boarder' : 'day';
+      payload.dorm_id = payload.boarding_status === 'boarder' ? (payload.dorm_id || null) : null;
 
       let studentId = editingStudentId;
 
@@ -393,6 +424,18 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
                 {GRADES_BY_LEVEL[selectedLevel].map(g => <option key={g} value={g}>{g}</option>)}
               </select>
             </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>BOARDING:</span>
+              <select
+                value={boardingFilter}
+                onChange={(e) => { setBoardingFilter(e.target.value); setCurrentPage(1); }}
+                style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none" }}
+              >
+                <option value="all">All</option>
+                <option value="boarder">Boarders</option>
+                <option value="day">Day scholars</option>
+              </select>
+            </div>
             <button 
               onClick={handlePrint}
               style={{
@@ -490,7 +533,12 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
                             size={32}
                           />
                           <div>
-                            <div style={{ fontWeight: 700, color: "#1A1A2E" }}>{s.full_name}</div>
+                            <div style={{ fontWeight: 700, color: "#1A1A2E", display: "flex", alignItems: "center", gap: 8 }}>
+                              {s.full_name}
+                              {s.boarding_status === 'boarder' && (
+                                <span style={{ padding: "1px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#EAF2FA", color: "#1A5F9C" }}>🛏 Boarder</span>
+                              )}
+                            </div>
                             <div className="show-mobile" style={{ fontSize: 11, color: "#8A8FA8" }}>
                               {grade?.name} · {s.streams?.name || "No Stream"}
                             </div>
@@ -583,6 +631,7 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
         <BulkImportWizard
           schoolConfig={schoolConfig}
           streams={streams}
+          dorms={dorms}
           existingStudents={studentsList}
           planRemaining={Math.max(0, planLimits.maxStudents - studentsList.length)}
           onClose={() => setShowBulkImport(false)}
@@ -748,6 +797,46 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
                   {streams.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
+
+              {/* Boarding status — authoritative billing signal */}
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#4A4A6A", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Boarding Status</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {[["day", "☀ Day Scholar"], ["boarder", "🛏 Boarder"]].map(([val, lbl]) => {
+                    const active = newStudent.boarding_status === val;
+                    return (
+                      <button
+                        key={val}
+                        type="button"
+                        onClick={() => setNewStudent({ ...newStudent, boarding_status: val, dorm_id: val === 'day' ? '' : newStudent.dorm_id })}
+                        style={{
+                          flex: 1, padding: "10px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700,
+                          border: active ? "1.5px solid #1A5F9C" : "1.5px solid #e6dfd8",
+                          background: active ? "#EAF2FA" : "#fff", color: active ? "#1A5F9C" : "#8a8fa8",
+                        }}
+                      >{lbl}</button>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 11, color: "#8a8fa8", marginTop: 4 }}>
+                  Boarders are billed boarder-scoped voteheads; day scholars are not.
+                </div>
+              </div>
+
+              {/* Dormitory — optional detail, only for boarders */}
+              {newStudent.boarding_status === 'boarder' && (
+                <div>
+                  <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#4A4A6A", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Dormitory (Optional)</label>
+                  <select
+                    value={newStudent.dorm_id}
+                    onChange={(e) => setNewStudent({...newStudent, dorm_id: e.target.value})}
+                    style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1.5px solid #e6dfd8", fontSize: 13, boxSizing: "border-box", background: "#ffffff", outline: "none", cursor: "pointer", transition: "border-color 0.2s" }}
+                  >
+                    <option value="">Not assigned to a dorm yet</option>
+                    {dorms.map(d => <option key={d.id} value={d.id}>{d.name}{d.gender && d.gender !== 'Mixed' ? ` (${d.gender})` : ''}</option>)}
+                  </select>
+                </div>
+              )}
 
               {/* Phone */}
               <div>

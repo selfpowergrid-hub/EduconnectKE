@@ -20,7 +20,7 @@ const inputStyle = {
   background: '#ffffff', outline: 'none'
 };
 
-const BulkImportWizard = ({ schoolConfig, streams, existingStudents, planRemaining, onClose, onImported }) => {
+const BulkImportWizard = ({ schoolConfig, streams, dorms, existingStudents, planRemaining, onClose, onImported }) => {
   const [step, setStep] = useState(0);
   const [defaults, setDefaults] = useState({
     level: 'Junior Secondary',
@@ -41,6 +41,11 @@ const BulkImportWizard = ({ schoolConfig, streams, existingStudents, planRemaini
     () => Object.fromEntries(streams.map(s => [s.name, s.id])),
     [streams]
   );
+  const validDormNames = (dorms || []).map(d => d.name);
+  const dormNameToId = useMemo(
+    () => Object.fromEntries((dorms || []).map(d => [d.name, d.id])),
+    [dorms]
+  );
   const existingAdmNos = useMemo(
     () => new Set(existingStudents.map(s => s.adm_no).filter(Boolean)),
     [existingStudents]
@@ -54,6 +59,7 @@ const BulkImportWizard = ({ schoolConfig, streams, existingStudents, planRemaini
       defaultGender: defaults.gender,
       validGrades,
       validStreams: validStreamNames,
+      validDorms: validDormNames,
     });
   };
 
@@ -68,6 +74,7 @@ const BulkImportWizard = ({ schoolConfig, streams, existingStudents, planRemaini
       const validated = validateRows(rows, {
         validGrades,
         validStreams: validStreamNames,
+        validDorms: validDormNames,
         existingAdmNos,
       });
       setParsedRows(validated);
@@ -86,7 +93,7 @@ const BulkImportWizard = ({ schoolConfig, streams, existingStudents, planRemaini
     setImportProgress({ done: 0, total: validRows.length });
 
     const payload = validRows.map(r =>
-      toInsertPayload(r, { schoolId: schoolConfig.id, streamNameToId })
+      toInsertPayload(r, { schoolId: schoolConfig.id, streamNameToId, dormNameToId })
     );
 
     const CHUNK = 100;

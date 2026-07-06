@@ -17,6 +17,16 @@ const GRADE_NAME_TO_CODE = {
 };
 const GRADE_CODE_TO_NAME = Object.fromEntries(Object.entries(GRADE_NAME_TO_CODE).map(([k, v]) => [v, k]));
 
+// Which module shell a staff login lands in (staff.app_role). Finance roles
+// get the Accounting module only; teachers get Examinations only.
+const APP_ROLES = [
+  { value: 'teacher', label: 'Teacher — Examinations module' },
+  { value: 'bursar', label: 'Bursar — Accounting module' },
+  { value: 'accountant', label: 'Accountant — Accounting module' },
+  { value: 'auditor', label: 'Auditor — Accounting, read-only' },
+];
+const FINANCE_ROLES = ['bursar', 'accountant', 'auditor'];
+
 const labelStyle = { display: "block", fontSize: 10, fontWeight: 800, color: "#4A4A6A", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" };
 const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 8, border: "1.5px solid #e6dfd8", fontSize: 13, boxSizing: "border-box", background: "#ffffff", outline: "none" };
 
@@ -36,7 +46,7 @@ const TeacherAllocations = ({ schoolConfig }) => {
     setIsLoading(true);
     try {
       const [t, s, st, a] = await Promise.all([
-        supabase.from('staff').select('*').eq('school_id', schoolConfig.id).eq('type', 'Teaching').order('full_name'),
+        supabase.from('staff').select('*').eq('school_id', schoolConfig.id).order('full_name'),
         supabase.from('subjects').select('*').eq('school_id', schoolConfig.id),
         supabase.from('streams').select('*').eq('school_id', schoolConfig.id),
         supabase.from('teacher_assignments').select('*').eq('school_id', schoolConfig.id),
@@ -73,10 +83,11 @@ const TeacherAllocations = ({ schoolConfig }) => {
       </div>
 
       <div style={{ background: "#fff", border: "1px solid #e6dfd8", borderRadius: 12, padding: 24, marginBottom: 24 }}>
-        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#1A1A2E" }}>Teacher Allocations</h3>
+        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#1A1A2E" }}>Staff Logins &amp; Teacher Allocations</h3>
         <p style={{ margin: "8px 0 0", fontSize: 13, color: "#8A8FA8", lineHeight: 1.5 }}>
-          Assign subjects and classes to each teacher, and create their login so they can enter marks.
-          A teacher will only see students and exams that match the assignments below.
+          Create logins for your staff and assign subjects and classes to each teacher.
+          A teacher only sees students and exams matching their assignments; bursars and accountants
+          get the Accounting module only and never see marks.
         </p>
       </div>
 
@@ -114,7 +125,11 @@ const TeacherAllocations = ({ schoolConfig }) => {
                       )}
                     </td>
                     <td style={{ padding: "14px 18px" }}>
-                      {myAssigns.length === 0 ? (
+                      {FINANCE_ROLES.includes(t.app_role) ? (
+                        <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: "#EAF2FA", color: "#1A5F9C" }}>
+                          💰 {t.app_role.charAt(0).toUpperCase() + t.app_role.slice(1)} · Accounting module
+                        </span>
+                      ) : myAssigns.length === 0 ? (
                         <span style={{ color: "#8A8FA8", fontStyle: "italic", fontSize: 12 }}>No assignments yet</span>
                       ) : (
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -168,6 +183,7 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
   const [isAdding, setIsAdding] = useState(false);
   const [email, setEmail] = useState(teacher.email || '');
   const [password, setPassword] = useState('');
+  const [appRole, setAppRole] = useState(teacher.app_role || 'teacher');
   const [isCreatingLogin, setIsCreatingLogin] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [feedback, setFeedback] = useState({ kind: 'idle', message: '', detail: '' });
@@ -247,13 +263,19 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
     setFeedback({ kind: 'idle', message: '' });
     setIsCreatingLogin(true);
     try {
-      await invokeEdgeFn('create-teacher-user', { staff_id: teacher.id, email, password });
+      await invokeEdgeFn('create-teacher-user', { staff_id: teacher.id, email, password, app_role: appRole });
+      // Belt-and-braces: set app_role directly too, so account routing works
+      // even if the deployed edge function predates the app_role parameter.
+      await supabase.from('staff').update({ app_role: appRole }).eq('id', teacher.id);
       const creds = { email, password };
       setSavedCreds(creds);
+      const isFinanceLogin = FINANCE_ROLES.includes(appRole);
       setFeedback({
         kind: 'success',
         message: `✓ Login created for ${teacher.full_name}.`,
-        detail: 'Share the credentials below with the teacher. They sign in on the Teacher Sign-In page using the school code.',
+        detail: isFinanceLogin
+          ? 'Share the credentials below. They sign in on the Staff Sign-In page using the school code and will land in the Accounting module.'
+          : 'Share the credentials below with the teacher. They sign in on the Teacher Sign-In page using the school code.',
       });
       onSaved();
     } catch (err) {
@@ -285,6 +307,25 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
       setFeedback({ kind: 'error', message: 'Failed: ' + friendlyError(err) });
     } finally {
       setIsResetting(false);
+    }
+  };
+
+  // For staff who already have a login, changing the account type takes
+  // effect on their next sign-in (AuthContext reads staff.app_role).
+  const handleAppRoleChange = async (value) => {
+    setAppRole(value);
+    if (!teacher.auth_user_id) return; // sent along with Create Login instead
+    try {
+      const { error } = await supabase.from('staff').update({ app_role: value }).eq('id', teacher.id);
+      if (error) throw error;
+      setFeedback({
+        kind: 'success',
+        message: `✓ Account type changed to ${APP_ROLES.find(r => r.value === value)?.label || value}.`,
+        detail: 'Takes effect the next time they sign in.',
+      });
+      onSaved();
+    } catch (err) {
+      setFeedback({ kind: 'error', message: 'Failed to change account type: ' + err.message });
     }
   };
 
@@ -320,6 +361,20 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
           <section style={{ marginBottom: 24 }}>
             <h4 style={{ margin: '0 0 12px', fontSize: 13, color: '#1A1A2E', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Login</h4>
             <div style={{ padding: 14, background: '#F8FAFC', border: '1px solid #E8EAF0', borderRadius: 10 }}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={labelStyle}>Account Type</label>
+                <select
+                  value={appRole}
+                  onChange={(e) => handleAppRoleChange(e.target.value)}
+                  style={inputStyle}
+                >
+                  {APP_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                </select>
+                <div style={{ fontSize: 11, color: '#8A8FA8', marginTop: 4, lineHeight: 1.5 }}>
+                  Teachers work in the Examinations module only; bursars, accountants and auditors work in the
+                  Accounting module only. Neither can see the other's data.
+                </div>
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
                 <div>
                   <label style={labelStyle}>Email</label>
@@ -405,7 +460,16 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
             </div>
           </section>
 
-          {/* Assignments section */}
+          {/* Assignments section — class/subject assignments only apply to
+              exam-side roles; finance logins see the Accounting module only. */}
+          {FINANCE_ROLES.includes(appRole) ? (
+            <section>
+              <div style={{ padding: 16, background: '#EAF2FA', border: '1px solid #B9D4EC', borderRadius: 10, fontSize: 13, color: '#1A5F9C', lineHeight: 1.6 }}>
+                💰 This is a finance account. It works in the <strong>Accounting module</strong> (fee structures,
+                payments, balances) and needs no subject or class assignments. It cannot view exams or marks.
+              </div>
+            </section>
+          ) : (
           <section>
             <h4 style={{ margin: '0 0 12px', fontSize: 13, color: '#1A1A2E', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Assignments</h4>
 
@@ -480,6 +544,7 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
               </div>
             )}
           </section>
+          )}
         </div>
 
         <div style={{ padding: '14px 24px', background: '#f5f2eb', borderTop: '1px solid #E8EAF0', display: 'flex', justifyContent: 'flex-end' }}>

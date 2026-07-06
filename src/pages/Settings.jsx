@@ -29,6 +29,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
       fetchDorms();
       fetchSubjects();
       fetchGradingSystems();
+      fetchVoteheads();
     }
   }, [schoolConfig?.id]);
 
@@ -504,54 +505,266 @@ const Settings = ({ schoolConfig, initialTab }) => {
   // ------------------------------
 
   // --- Fee Structure State ---
-  const [voteheads, setVoteheads] = useState([
-    { id: 1, code: "TUI", description: "Tuition Fee" },
-    { id: 2, code: "BDI", description: "Boarding Fee" },
-    { id: 3, code: "TRN", description: "Transport" },
-    { id: 4, code: "EXM", description: "Examination" },
-  ]);
-  const [newVotehead, setNewVotehead] = useState({ code: "", description: "" });
-  const [voteheadsExpanded, setVoteheadsExpanded] = useState(false);
+  // voteheads + feeStructures are loaded from / persisted to Supabase.
+  const [voteheads, setVoteheads] = useState([]);
+  const [newVotehead, setNewVotehead] = useState({ code: "", description: "", applies_to: "all" });
+
+  // Fee Structure has two sub-tabs: the votehead catalog and level pricing.
+  const [feeSubTab, setFeeSubTab] = useState("voteheads");
+
+  // Inline votehead editing (rename / re-scope).
+  const [editingVoteheadId, setEditingVoteheadId] = useState(null);
+  const [voteheadEdit, setVoteheadEdit] = useState({ code: "", description: "", applies_to: "all" });
+
+  // Human labels for votehead scoping (who gets billed).
+  const APPLIES_TO_LABEL = { all: "All students", boarders: "Boarders only", day: "Day scholars only" };
+  const APPLIES_TO_BADGE = {
+    all: { bg: "#EEF1F4", fg: "#4A4A6A", icon: "👥", text: "All students" },
+    boarders: { bg: "#EAF2FA", fg: "#1A5F9C", icon: "🛏", text: "Boarders" },
+    day: { bg: "#FEF6E7", fg: "#8A6A1F", icon: "☀", text: "Day scholars" },
+  };
 
   // Mapping of fees by level: "pp", "lower_pri", "upper_pri", "jss", "sss"
-  const [feeStructures, setFeeStructures] = useState({
-    "jss": [
-      { id: 101, voteheadId: 1, t1: 15000, t2: 12000, t3: 10000 },
-      { id: 102, voteheadId: 2, t1: 20000, t2: 20000, t3: 15000 },
-      { id: 103, voteheadId: 4, t1: 2000, t2: 2000, t3: 2000 },
-    ]
-  });
+  // Each item: { id (fee_structure id), voteheadId, t1, t2, t3 }
+  const [feeStructures, setFeeStructures] = useState({});
   const [activeFeeLevel, setActiveFeeLevel] = useState("jss");
+  const [feeYear, setFeeYear] = useState(new Date().getFullYear());
+
+  const fetchVoteheads = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('voteheads')
+        .select('*')
+        .eq('school_id', schoolConfig.id)
+        .order('display_order', { ascending: true })
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      setVoteheads(data || []);
+    } catch (err) {
+      console.error('Error fetching voteheads:', err);
+    }
+  };
+
+  // Re-load fee structures whenever the school or selected year changes.
+  useEffect(() => {
+    if (!schoolConfig?.id) return;
+    const fetchFeeStructures = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('fee_structures')
+          .select('*')
+          .eq('school_id', schoolConfig.id)
+          .eq('year', feeYear);
+        if (error) throw error;
+        const byLevel = {};
+        (data || []).forEach(row => {
+          (byLevel[row.fee_level] = byLevel[row.fee_level] || []).push({
+            id: row.id,
+            voteheadId: row.votehead_id,
+            t1: Number(row.t1),
+            t2: Number(row.t2),
+            t3: Number(row.t3),
+            status: row.status || 'published',
+          });
+        });
+        setFeeStructures(byLevel);
+      } catch (err) {
+        console.error('Error fetching fee structures:', err);
+      }
+    };
+    fetchFeeStructures();
+  }, [schoolConfig?.id, feeYear]);
   const [newFeeItem, setNewFeeItem] = useState({ voteheadId: "", t1: "", t2: "", t3: "" });
 
-  const handleAddVotehead = () => {
+  const handleAddVotehead = async () => {
     if (!newVotehead.code.trim() || !newVotehead.description.trim()) return;
-    setVoteheads(prev => [...prev, { id: Date.now(), ...newVotehead }]);
-    setNewVotehead({ code: "", description: "" });
+    try {
+      const { data, error } = await supabase
+        .from('voteheads')
+        .insert([{
+          school_id: schoolConfig.id,
+          code: newVotehead.code.trim().toUpperCase(),
+          description: newVotehead.description.trim(),
+          applies_to: newVotehead.applies_to || 'all',
+          display_order: voteheads.length,
+        }])
+        .select()
+        .single();
+      if (error) throw error;
+      setVoteheads(prev => [...prev, data]);
+      setNewVotehead({ code: "", description: "", applies_to: "all" });
+    } catch (err) {
+      alert(err.code === '23505'
+        ? `A votehead with code "${newVotehead.code.toUpperCase()}" already exists.`
+        : 'Failed to add votehead: ' + err.message);
+    }
   };
 
+  const removeVotehead = async (id) => {
+    try {
+      // Once a votehead is used in any year's fee structure (or, later, on
+      // invoices/payments) it must be archived — not deleted — so history
+      // stays intact. Unused voteheads can still be hard-deleted.
+      const { count, error: countErr } = await supabase
+        .from('fee_structures')
+        .select('*', { count: 'exact', head: true })
+        .eq('votehead_id', id);
+      if (countErr) throw countErr;
 
-  const handleAddFeeItem = () => {
+      if (count > 0) {
+        if (!confirm('This votehead is used in a fee structure, so it will be archived instead of deleted. It stops billing but keeps past records intact. Continue?')) return;
+        const { error } = await supabase.from('voteheads').update({ is_active: false }).eq('id', id);
+        if (error) throw error;
+        setVoteheads(prev => prev.map(v => v.id === id ? { ...v, is_active: false } : v));
+      } else {
+        if (!confirm('Delete this votehead?')) return;
+        const { error } = await supabase.from('voteheads').delete().eq('id', id);
+        if (error) throw error;
+        setVoteheads(prev => prev.filter(v => v.id !== id));
+      }
+    } catch (err) {
+      alert('Failed to remove votehead: ' + err.message);
+    }
+  };
+
+  const startEditVotehead = (vh) => {
+    setEditingVoteheadId(vh.id);
+    setVoteheadEdit({ code: vh.code, description: vh.description, applies_to: vh.applies_to || 'all' });
+  };
+
+  const saveVoteheadEdit = async () => {
+    const code = voteheadEdit.code.trim().toUpperCase();
+    const description = voteheadEdit.description.trim();
+    if (!code || !description) { alert('Code and description are required.'); return; }
+    try {
+      const { error } = await supabase
+        .from('voteheads')
+        .update({ code, description, applies_to: voteheadEdit.applies_to })
+        .eq('id', editingVoteheadId);
+      if (error) throw error;
+      setVoteheads(prev => prev.map(v => v.id === editingVoteheadId
+        ? { ...v, code, description, applies_to: voteheadEdit.applies_to } : v));
+      setEditingVoteheadId(null);
+    } catch (err) {
+      alert(err.code === '23505'
+        ? `A votehead with code "${code}" already exists.`
+        : 'Failed to save votehead: ' + err.message);
+    }
+  };
+
+  // Move a votehead up/down. Order controls both display and — crucially —
+  // the priority in which a payment clears charges (top = cleared first).
+  // We renumber every row's display_order AND priority to its new index so
+  // the ordering is consistent with the billing/allocation logic.
+  const moveVotehead = async (id, dir) => {
+    const active = voteheads.filter(v => v.is_active !== false);
+    const idx = active.findIndex(v => v.id === id);
+    const swapWith = idx + dir;
+    if (idx < 0 || swapWith < 0 || swapWith >= active.length) return;
+
+    const reordered = [...active];
+    [reordered[idx], reordered[swapWith]] = [reordered[swapWith], reordered[idx]];
+
+    // Optimistic UI: archived rows keep their place at the end.
+    const archived = voteheads.filter(v => v.is_active === false);
+    setVoteheads([...reordered.map((v, i) => ({ ...v, display_order: i, priority: i })), ...archived]);
+
+    try {
+      await Promise.all(reordered.map((v, i) =>
+        supabase.from('voteheads').update({ display_order: i, priority: i }).eq('id', v.id)
+      ));
+    } catch (err) {
+      alert('Failed to reorder: ' + err.message);
+      fetchVoteheads();
+    }
+  };
+
+  // votehead id -> how many fee-structure rows (any level/year) reference it.
+  const [voteheadUsage, setVoteheadUsage] = useState({});
+  useEffect(() => {
+    if (!schoolConfig?.id) return;
+    (async () => {
+      const { data } = await supabase
+        .from('fee_structures')
+        .select('votehead_id')
+        .eq('school_id', schoolConfig.id);
+      const counts = {};
+      (data || []).forEach(r => { counts[r.votehead_id] = (counts[r.votehead_id] || 0) + 1; });
+      setVoteheadUsage(counts);
+    })();
+  }, [schoolConfig?.id, feeStructures]);
+
+  // A level's structure is "draft" if any of its rows are draft. New rows
+  // inherit the level's current state so a draft stays fully draft.
+  const levelIsDraft = (feeStructures[activeFeeLevel] || []).some(i => i.status === 'draft');
+
+  const setLevelStatus = async (newStatus) => {
+    try {
+      const { error } = await supabase
+        .from('fee_structures')
+        .update({ status: newStatus })
+        .eq('school_id', schoolConfig.id)
+        .eq('fee_level', activeFeeLevel)
+        .eq('year', feeYear);
+      if (error) throw error;
+      setFeeStructures(prev => ({
+        ...prev,
+        [activeFeeLevel]: (prev[activeFeeLevel] || []).map(i => ({ ...i, status: newStatus })),
+      }));
+    } catch (err) {
+      alert('Failed to change publish state: ' + err.message);
+    }
+  };
+
+  const handleAddFeeItem = async () => {
     if (!newFeeItem.voteheadId) return;
-    const item = {
-      id: Date.now(),
-      voteheadId: parseInt(newFeeItem.voteheadId),
-      t1: parseFloat(newFeeItem.t1) || 0,
-      t2: parseFloat(newFeeItem.t2) || 0,
-      t3: parseFloat(newFeeItem.t3) || 0,
-    };
-    setFeeStructures(prev => ({
-      ...prev,
-      [activeFeeLevel]: [...(prev[activeFeeLevel] || []), item]
-    }));
-    setNewFeeItem({ voteheadId: "", t1: "", t2: "", t3: "" });
+    try {
+      const { data, error } = await supabase
+        .from('fee_structures')
+        .insert([{
+          school_id: schoolConfig.id,
+          fee_level: activeFeeLevel,
+          votehead_id: newFeeItem.voteheadId,
+          year: feeYear,
+          t1: parseFloat(newFeeItem.t1) || 0,
+          t2: parseFloat(newFeeItem.t2) || 0,
+          t3: parseFloat(newFeeItem.t3) || 0,
+          status: levelIsDraft ? 'draft' : 'published',
+        }])
+        .select()
+        .single();
+      if (error) throw error;
+      const item = {
+        id: data.id,
+        voteheadId: data.votehead_id,
+        t1: Number(data.t1),
+        t2: Number(data.t2),
+        t3: Number(data.t3),
+        status: data.status || 'published',
+      };
+      setFeeStructures(prev => ({
+        ...prev,
+        [activeFeeLevel]: [...(prev[activeFeeLevel] || []), item]
+      }));
+      setNewFeeItem({ voteheadId: "", t1: "", t2: "", t3: "" });
+    } catch (err) {
+      alert(err.code === '23505'
+        ? 'This votehead is already in the fee structure for this level and year. Delete it first to change the amounts.'
+        : 'Failed to add fee item: ' + err.message);
+    }
   };
 
-  const removeFeeItem = (id) => {
-    setFeeStructures(prev => ({
-      ...prev,
-      [activeFeeLevel]: prev[activeFeeLevel].filter(item => item.id !== id)
-    }));
+  const removeFeeItem = async (id) => {
+    try {
+      const { error } = await supabase.from('fee_structures').delete().eq('id', id);
+      if (error) throw error;
+      setFeeStructures(prev => ({
+        ...prev,
+        [activeFeeLevel]: prev[activeFeeLevel].filter(item => item.id !== id)
+      }));
+    } catch (err) {
+      alert('Failed to delete fee item: ' + err.message);
+    }
   };
   // ---------------------------
 
@@ -1669,20 +1882,45 @@ const Settings = ({ schoolConfig, initialTab }) => {
           <div>
             {/* Page Header */}
             <div style={{
-              display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid #e6dfd8", flexWrap: "wrap", gap: 16,
+              display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, flexWrap: "wrap", gap: 16,
             }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: 20, color: "#2a2421", fontWeight: 800, letterSpacing: "-0.02em" }}>Fee Structure</h3>
                 <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "#8a8fa8", lineHeight: 1.5 }}>
-                  Manage global Voteheads and map fee structures to CBC learning levels.
+                  {feeSubTab === "voteheads"
+                    ? "Define the charges your school bills — order them to set how payments clear."
+                    : "Set the per-term amount for each charge, by CBC learning level."}
                 </p>
               </div>
-              <button style={{
-                padding: "11px 28px", background: "linear-gradient(135deg, #D4AF37, #28a05f)", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 13.5, boxShadow: "0 2px 8px rgba(27,107,58,0.25)", transition: "all 0.2s ease",
-              }}>💾 Save Changes</button>
+              <span style={{
+                padding: "8px 14px", background: "#f0f9f4", color: "#1B6B3A", borderRadius: 10,
+                fontWeight: 600, fontSize: 12.5, border: "1px solid #cdead9", whiteSpace: "nowrap",
+              }}>✓ Changes save automatically</span>
             </div>
 
-            {/* 1. VOTEHEADS MANAGEMENT (Hidden List/Dictionary) */}
+            {/* Sub-tab navigation */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 22, borderBottom: "1px solid #e6dfd8" }}>
+              {[
+                { id: "voteheads", label: "🧾 Voteheads", count: voteheads.filter(v => v.is_active !== false).length },
+                { id: "pricing", label: "🏫 Level Pricing" },
+              ].map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setFeeSubTab(t.id)}
+                  style={{
+                    padding: "10px 18px", background: "none", border: "none", cursor: "pointer",
+                    fontSize: 14, fontWeight: 700, color: feeSubTab === t.id ? "#1B6B3A" : "#8a8fa8",
+                    borderBottom: feeSubTab === t.id ? "2.5px solid #1B6B3A" : "2.5px solid transparent",
+                    marginBottom: -1,
+                  }}
+                >
+                  {t.label}{t.count != null ? ` (${t.count})` : ""}
+                </button>
+              ))}
+            </div>
+
+            {/* ============ TAB 1: VOTEHEADS (charge catalog) ============ */}
+            {feeSubTab === "voteheads" && (
             <div style={{ marginBottom: 24 }}>
               {/* Add Votehead Form for populating the dictionary */}
               <div style={{
@@ -1696,6 +1934,18 @@ const Settings = ({ schoolConfig, initialTab }) => {
                   <label style={labelStyle}>Description</label>
                   <input type="text" placeholder="e.g. Tuition Fee" value={newVotehead.description} onChange={(e) => setNewVotehead({ ...newVotehead, description: e.target.value })} style={{ ...inputStyle, paddingLeft: 14 }} onKeyDown={(e) => e.key === "Enter" && handleAddVotehead()} />
                 </div>
+                <div style={{ width: 170 }}>
+                  <label style={labelStyle}>Applies To</label>
+                  <select
+                    value={newVotehead.applies_to}
+                    onChange={(e) => setNewVotehead({ ...newVotehead, applies_to: e.target.value })}
+                    style={{ ...inputStyle, cursor: "pointer" }}
+                  >
+                    <option value="all">All students</option>
+                    <option value="boarders">Boarders only</option>
+                    <option value="day">Day scholars only</option>
+                  </select>
+                </div>
                 <button
                   onClick={handleAddVotehead}
                   style={{
@@ -1703,15 +1953,157 @@ const Settings = ({ schoolConfig, initialTab }) => {
                   }}
                 >+ Add Votehead</button>
               </div>
-            </div>
 
-            {/* 2. DYNAMIC FEE STRUCTURE (BY LEVEL) */}
+              {/* Votehead catalog — table */}
+              {voteheads.length === 0 ? (
+                <div style={{ marginTop: 16, padding: 30, textAlign: "center", color: "#8a8fa8", fontSize: 13, background: "#faf9f6", borderRadius: 12, border: "1px solid #e6dfd8" }}>
+                  No voteheads yet. Add your first charge above (e.g. Tuition, Lunch, Transport).
+                </div>
+              ) : (
+                <div style={{ marginTop: 16, borderRadius: 12, border: "1px solid #e6dfd8", overflow: "hidden" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
+                    <thead style={{ background: "#f5f2eb", borderBottom: "2px solid #e6dfd8" }}>
+                      <tr>
+                        <th style={{ padding: "11px 12px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 11, width: 70 }}>ORDER</th>
+                        <th style={{ padding: "11px 14px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 11, width: 90 }}>CODE</th>
+                        <th style={{ padding: "11px 14px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 11 }}>DESCRIPTION</th>
+                        <th style={{ padding: "11px 14px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 11, width: 160 }}>APPLIES TO</th>
+                        <th style={{ padding: "11px 14px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 11, width: 90 }}>STATUS</th>
+                        <th style={{ padding: "11px 14px", textAlign: "right", fontWeight: 700, color: "#8a8fa8", fontSize: 11, width: 130 }}>ACTIONS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        const activeVhs = voteheads.filter(v => v.is_active !== false);
+                        const archivedVhs = voteheads.filter(v => v.is_active === false);
+                        const ordered = [...activeVhs, ...archivedVhs];
+                        return ordered.map((vh, idx) => {
+                          const isEditing = editingVoteheadId === vh.id;
+                          const archived = vh.is_active === false;
+                          const badge = APPLIES_TO_BADGE[vh.applies_to || 'all'];
+                          const activeIdx = activeVhs.findIndex(v => v.id === vh.id);
+                          const used = voteheadUsage[vh.id] || 0;
+                          return (
+                            <tr key={vh.id} style={{ borderBottom: "1px solid #f0ece3", background: archived ? "#faf9f6" : (idx % 2 === 0 ? "#fff" : "#fbfaf7"), opacity: archived ? 0.7 : 1 }}>
+                              {/* Order controls */}
+                              <td style={{ padding: "8px 12px", textAlign: "center" }}>
+                                {!archived && !isEditing && (
+                                  <div style={{ display: "inline-flex", flexDirection: "column", gap: 1 }}>
+                                    <button onClick={() => moveVotehead(vh.id, -1)} disabled={activeIdx === 0}
+                                      title="Move up (clears earlier)"
+                                      style={{ border: "none", background: "none", cursor: activeIdx === 0 ? "default" : "pointer", color: activeIdx === 0 ? "#d5cfc4" : "#8a8fa8", fontSize: 11, lineHeight: 1, padding: "1px 4px" }}>▲</button>
+                                    <button onClick={() => moveVotehead(vh.id, 1)} disabled={activeIdx === activeVhs.length - 1}
+                                      title="Move down (clears later)"
+                                      style={{ border: "none", background: "none", cursor: activeIdx === activeVhs.length - 1 ? "default" : "pointer", color: activeIdx === activeVhs.length - 1 ? "#d5cfc4" : "#8a8fa8", fontSize: 11, lineHeight: 1, padding: "1px 4px" }}>▼</button>
+                                  </div>
+                                )}
+                              </td>
+                              {/* Code */}
+                              <td style={{ padding: "10px 14px" }}>
+                                {isEditing ? (
+                                  <input value={voteheadEdit.code} onChange={(e) => setVoteheadEdit({ ...voteheadEdit, code: e.target.value.toUpperCase() })} style={{ ...inputStyle, padding: "6px 8px", width: 70 }} />
+                                ) : (
+                                  <span style={{ fontWeight: 800, color: "#2a2421" }}>{vh.code}</span>
+                                )}
+                              </td>
+                              {/* Description */}
+                              <td style={{ padding: "10px 14px" }}>
+                                {isEditing ? (
+                                  <input value={voteheadEdit.description} onChange={(e) => setVoteheadEdit({ ...voteheadEdit, description: e.target.value })} style={{ ...inputStyle, padding: "6px 8px" }} />
+                                ) : (
+                                  <span style={{ color: "#2a2421", fontWeight: 500 }}>{vh.description}</span>
+                                )}
+                                {!isEditing && used > 0 && (
+                                  <span style={{ marginLeft: 8, fontSize: 10.5, color: "#8a8fa8" }}>· in {used} level{used === 1 ? "" : "s"}</span>
+                                )}
+                              </td>
+                              {/* Applies To */}
+                              <td style={{ padding: "10px 14px" }}>
+                                {isEditing ? (
+                                  <select value={voteheadEdit.applies_to} onChange={(e) => setVoteheadEdit({ ...voteheadEdit, applies_to: e.target.value })} style={{ ...inputStyle, padding: "6px 8px", cursor: "pointer" }}>
+                                    <option value="all">All students</option>
+                                    <option value="boarders">Boarders only</option>
+                                    <option value="day">Day scholars only</option>
+                                  </select>
+                                ) : (
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: badge.bg, color: badge.fg }}>
+                                    {badge.icon} {badge.text}
+                                  </span>
+                                )}
+                              </td>
+                              {/* Status */}
+                              <td style={{ padding: "10px 14px", textAlign: "center" }}>
+                                <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, background: archived ? "#F5F6F8" : "#E8F5EE", color: archived ? "#8a8fa8" : "#1B6B3A" }}>
+                                  {archived ? "Archived" : "Active"}
+                                </span>
+                              </td>
+                              {/* Actions */}
+                              <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
+                                {isEditing ? (
+                                  <>
+                                    <button onClick={saveVoteheadEdit} style={{ padding: "5px 12px", background: "#1B6B3A", border: "none", borderRadius: 6, fontSize: 11.5, color: "#fff", fontWeight: 700, cursor: "pointer", marginRight: 6 }}>Save</button>
+                                    <button onClick={() => setEditingVoteheadId(null)} style={{ padding: "5px 10px", background: "#fff", border: "1px solid #e6dfd8", borderRadius: 6, fontSize: 11.5, color: "#8a8fa8", fontWeight: 700, cursor: "pointer" }}>Cancel</button>
+                                  </>
+                                ) : archived ? (
+                                  <span style={{ fontSize: 11.5, color: "#b8b2a6", fontStyle: "italic" }}>kept for history</span>
+                                ) : (
+                                  <>
+                                    <button onClick={() => startEditVotehead(vh)} title="Edit" style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14, marginRight: 8, opacity: 0.7 }}>✏️</button>
+                                    <button onClick={() => removeVotehead(vh.id)} title={used > 0 ? "Archive (in use)" : "Delete"} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14, color: "#c0392b", opacity: 0.7 }}>{used > 0 ? "🗄️" : "🗑️"}</button>
+                                  </>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        });
+                      })()}
+                    </tbody>
+                  </table>
+                  <div style={{ padding: "10px 14px", background: "#faf9f6", borderTop: "1px solid #f0ece3", fontSize: 11.5, color: "#8a8fa8" }}>
+                    💡 Order matters: when a parent pays, the amount clears charges from the top of this list down.
+                  </div>
+                </div>
+              )}
+            </div>
+            )}
+
+            {/* ============ TAB 2: LEVEL PRICING ============ */}
+            {feeSubTab === "pricing" && (
             <section style={sectionCardStyle}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                 <h4 style={sectionTitleStyle}>🏫 Level-Specific Fee Structure</h4>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                   <h4 style={{ ...sectionTitleStyle, margin: 0 }}>🏫 Level-Specific Fee Structure</h4>
+                   {(feeStructures[activeFeeLevel] || []).length > 0 && (
+                     <button
+                       onClick={() => setLevelStatus(levelIsDraft ? 'published' : 'draft')}
+                       title={levelIsDraft
+                         ? 'Draft structures do not bill students. Publish to make them count toward balances.'
+                         : 'Published structures bill students. Switch to draft to edit without affecting balances.'}
+                       style={{
+                         padding: "5px 12px", borderRadius: 999, fontSize: 11.5, fontWeight: 800,
+                         cursor: "pointer", letterSpacing: "0.03em",
+                         border: levelIsDraft ? "1.5px solid #D4AF37" : "1.5px solid #1B6B3A",
+                         background: levelIsDraft ? "#FEF6E7" : "#E8F5EE",
+                         color: levelIsDraft ? "#8A6A1F" : "#1B6B3A",
+                       }}
+                     >
+                       {levelIsDraft ? '✎ DRAFT — click to publish' : '✓ PUBLISHED'}
+                     </button>
+                   )}
+                 </div>
                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                   <label style={{ fontSize: 13, fontWeight: 600, color: "#8a8fa8" }}>Year:</label>
+                   <select
+                     value={feeYear}
+                     onChange={(e) => setFeeYear(parseInt(e.target.value))}
+                     style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #e6dfd8", fontSize: 13, fontWeight: 600, color: "#2a2421", background: "#f5f2eb", cursor: "pointer" }}
+                   >
+                     {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1].map(y => (
+                       <option key={y} value={y}>{y}</option>
+                     ))}
+                   </select>
                    <label style={{ fontSize: 13, fontWeight: 600, color: "#8a8fa8" }}>Select Level:</label>
-                   <select 
+                   <select
                      value={activeFeeLevel}
                      onChange={(e) => setActiveFeeLevel(e.target.value)}
                      style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #e6dfd8", fontSize: 13, fontWeight: 600, color: "#2a2421", background: "#f5f2eb", cursor: "pointer" }}
@@ -1737,8 +2129,10 @@ const Settings = ({ schoolConfig, initialTab }) => {
                     style={{ ...inputStyle, borderColor: "#C4E1FA" }}
                   >
                     <option value="">-- Choose Votehead --</option>
-                    {voteheads.map(vh => (
-                      <option key={vh.id} value={vh.id}>{vh.code} - {vh.description}</option>
+                    {voteheads.filter(vh => vh.is_active !== false).map(vh => (
+                      <option key={vh.id} value={vh.id}>
+                        {vh.code} - {vh.description}{vh.applies_to && vh.applies_to !== 'all' ? ` (${APPLIES_TO_LABEL[vh.applies_to]})` : ''}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -1790,9 +2184,23 @@ const Settings = ({ schoolConfig, initialTab }) => {
                             <td style={{ padding: "12px 16px", color: "#8a8fa8", fontWeight: 600, fontSize: 12 }}>{idx + 1}</td>
                             <td style={{ padding: "12px 16px" }}>
                               {vh ? (
-                                <div>
-                                  <span style={{ fontWeight: 700, color: "#2a2421", marginRight: 8, fontSize: 12 }}>{vh.code}</span>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                  <span style={{ fontWeight: 700, color: "#2a2421", fontSize: 12 }}>{vh.code}</span>
                                   <span style={{ fontWeight: 600, color: "#2a2421" }}>{vh.description}</span>
+                                  {vh.applies_to && vh.applies_to !== 'all' && (
+                                    <span title={APPLIES_TO_LABEL[vh.applies_to]} style={{
+                                      padding: "2px 8px", borderRadius: 999, fontSize: 10.5, fontWeight: 700,
+                                      background: vh.applies_to === 'boarders' ? "#EAF2FA" : "#FEF6E7",
+                                      color: vh.applies_to === 'boarders' ? "#1A5F9C" : "#8A6A1F",
+                                    }}>
+                                      {vh.applies_to === 'boarders' ? '🛏 Boarders' : '☀ Day'}
+                                    </span>
+                                  )}
+                                  {vh.is_active === false && (
+                                    <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10.5, fontWeight: 700, background: "#F5F6F8", color: "#8A8FA8" }}>
+                                      Archived — not billing
+                                    </span>
+                                  )}
                                 </div>
                               ) : <span style={{ color: "red" }}>Warning: Deleted Votehead</span>}
                             </td>
@@ -1830,6 +2238,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                 </table>
               </div>
             </section>
+            )}
           </div>
         )}
 

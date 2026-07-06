@@ -19,15 +19,15 @@ export const GRADE_CODE_TO_NAME = Object.fromEntries(
   Object.entries(GRADE_NAME_TO_CODE).map(([k, v]) => [v, k])
 );
 
-const TEMPLATE_HEADERS = ["Adm No", "Full Name", "Grade", "Stream", "Gender", "Parent Phone"];
+const TEMPLATE_HEADERS = ["Adm No", "Full Name", "Grade", "Stream", "Gender", "Parent Phone", "Boarding", "Dorm"];
 
 const EXAMPLE_ROWS = [
-  ["2026/001", "Mary Wanjiku Kamau", "", "", "F", "0712345678"],
-  ["2026/002", "Brian Otieno Ouma", "", "", "M", "0723456789"],
-  ["2026/003", "Faith Achieng Odhiambo", "", "", "F", ""],
+  ["2026/001", "Mary Wanjiku Kamau", "", "", "F", "0712345678", "Day", ""],
+  ["2026/002", "Brian Otieno Ouma", "", "", "M", "0723456789", "Boarder", ""],
+  ["2026/003", "Faith Achieng Odhiambo", "", "", "F", "", "Day", ""],
 ];
 
-export function buildTemplate({ schoolName, defaultGrade, defaultStream, defaultGender, validGrades, validStreams }) {
+export function buildTemplate({ schoolName, defaultGrade, defaultStream, defaultGender, validGrades, validStreams, validDorms = [] }) {
   const wb = XLSX.utils.book_new();
 
   const rows = EXAMPLE_ROWS.map(r => {
@@ -39,7 +39,7 @@ export function buildTemplate({ schoolName, defaultGrade, defaultStream, default
   });
 
   while (rows.length < 50) {
-    rows.push(["", "", defaultGrade || "", defaultStream || "", defaultGender && defaultGender !== "per_row" ? defaultGender : "", ""]);
+    rows.push(["", "", defaultGrade || "", defaultStream || "", defaultGender && defaultGender !== "per_row" ? defaultGender : "", "", "Day", ""]);
   }
 
   const data = [TEMPLATE_HEADERS, ...rows];
@@ -52,6 +52,8 @@ export function buildTemplate({ schoolName, defaultGrade, defaultStream, default
     { wch: 14 },
     { wch: 8 },
     { wch: 16 },
+    { wch: 12 },
+    { wch: 14 },
   ];
 
   const lastRow = rows.length + 1;
@@ -79,6 +81,18 @@ export function buildTemplate({ schoolName, defaultGrade, defaultStream, default
     type: 'list',
     formulae: [`"M,F"`],
   });
+  ws['!dataValidation'].push({
+    sqref: `G2:G${lastRow}`,
+    type: 'list',
+    formulae: [`"Day,Boarder"`],
+  });
+  if (validDorms.length) {
+    ws['!dataValidation'].push({
+      sqref: `H2:H${lastRow}`,
+      type: 'list',
+      formulae: [`"${validDorms.join(',')}"`],
+    });
+  }
 
   XLSX.utils.book_append_sheet(wb, ws, "Students");
 
@@ -89,7 +103,7 @@ export function buildTemplate({ schoolName, defaultGrade, defaultStream, default
     ["1. Open the 'Students' sheet."],
     ["2. Fill one row per student. The first 3 rows are examples — overwrite or delete them."],
     ["3. Required fields: Adm No, Full Name."],
-    ["4. Optional fields: Grade, Stream, Gender, Parent Phone."],
+    ["4. Optional fields: Stream, Gender, Parent Phone, Boarding, Dorm."],
     ["5. Grade and Stream defaults are already pre-filled — change per row if needed."],
     ["6. Save the file and upload it back into the Bulk Import wizard."],
     [],
@@ -100,6 +114,8 @@ export function buildTemplate({ schoolName, defaultGrade, defaultStream, default
     [`Stream — must be one of: ${validStreams.join(', ') || '(no streams configured — leave blank)'}`],
     ["Gender — M or F."],
     ["Parent Phone — optional, free text (e.g. 0712345678)."],
+    ["Boarding — Day or Boarder. Blank defaults to Day."],
+    [`Dorm — boarders only (optional). Leave blank for day scholars. Must be one of: ${validDorms.join(', ') || '(no dorms configured — leave blank)'}`],
   ];
   const wsInfo = XLSX.utils.aoa_to_sheet(instructionRows);
   wsInfo['!cols'] = [{ wch: 80 }];
@@ -140,7 +156,7 @@ export async function parseExcelFile(file) {
   return { headers, rows: data };
 }
 
-export function validateRows(parsedRows, { validGrades, validStreams, existingAdmNos }) {
+export function validateRows(parsedRows, { validGrades, validStreams, validDorms = [], existingAdmNos }) {
   const seenAdmNos = new Set();
   const results = [];
 
@@ -154,6 +170,9 @@ export function validateRows(parsedRows, { validGrades, validStreams, existingAd
     const stream = row['Stream'] || '';
     const gender = (row['Gender'] || '').toUpperCase();
     const phone = row['Parent Phone'] || '';
+    const boardingRaw = (row['Boarding'] || '').toLowerCase();
+    const boarding = boardingRaw.startsWith('board') ? 'boarder' : 'day';
+    const dorm = row['Dorm'] || '';
 
     if (!admNo) errors.push('Adm No is required');
     if (!fullName) errors.push('Full Name is required');
@@ -173,6 +192,13 @@ export function validateRows(parsedRows, { validGrades, validStreams, existingAd
     if (gender && gender !== 'M' && gender !== 'F') errors.push(`Gender "${gender}" must be M or F`);
     if (!gender) warnings.push('Gender is blank — defaults to M');
 
+    if (dorm && !validDorms.includes(dorm)) {
+      errors.push(`Dorm "${dorm}" is not valid (expected one of: ${validDorms.join(', ') || 'none configured'})`);
+    }
+    if (dorm && boarding !== 'boarder') {
+      warnings.push('Dorm set but boarding is Day — student will be treated as a boarder');
+    }
+
     if (!phone) warnings.push('Phone is blank');
 
     results.push({
@@ -183,6 +209,8 @@ export function validateRows(parsedRows, { validGrades, validStreams, existingAd
       stream,
       gender: gender || 'M',
       phone,
+      boarding: dorm ? 'boarder' : boarding,
+      dorm,
       errors,
       warnings,
       isValid: errors.length === 0,
@@ -192,7 +220,7 @@ export function validateRows(parsedRows, { validGrades, validStreams, existingAd
   return results;
 }
 
-export function toInsertPayload(validatedRow, { schoolId, streamNameToId }) {
+export function toInsertPayload(validatedRow, { schoolId, streamNameToId, dormNameToId = {} }) {
   return {
     school_id: schoolId,
     adm_no: validatedRow.admNo,
@@ -201,6 +229,8 @@ export function toInsertPayload(validatedRow, { schoolId, streamNameToId }) {
     gender: validatedRow.gender,
     level_id: GRADE_NAME_TO_CODE[validatedRow.grade],
     stream_id: validatedRow.stream ? (streamNameToId[validatedRow.stream] || null) : null,
+    boarding_status: validatedRow.boarding === 'boarder' ? 'boarder' : 'day',
+    dorm_id: validatedRow.boarding === 'boarder' && validatedRow.dorm ? (dormNameToId[validatedRow.dorm] || null) : null,
     parent_phone: validatedRow.phone || null,
     status: 'Active',
   };

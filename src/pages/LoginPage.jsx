@@ -11,8 +11,8 @@ const clientNormalizeCode = (raw) => {
   return s;
 };
 
-const LoginPage = () => {
-  const [view, setView] = useState('chooser'); // 'chooser' | 'admin' | 'register' | 'teacher'
+const LoginPage = ({ onParentLogin }) => {
+  const [view, setView] = useState('chooser'); // 'chooser' | 'admin' | 'register' | 'teacher' | 'parent'
   const mode = view === 'register' ? 'signup' : 'signin';
 
   const [email, setEmail] = useState('');
@@ -36,7 +36,44 @@ const LoginPage = () => {
   const [selectedTeacherEmail, setSelectedTeacherEmail] = useState('');
   const [isLookingUp, setIsLookingUp] = useState(false);
 
+  // Parent login state
+  const [parentSchoolCode, setParentSchoolCode] = useState(() => localStorage.getItem('parent_school_code') || '');
+  const [parentPhone, setParentPhone] = useState('');
+  const [parentAdmNo, setParentAdmNo] = useState('');
+
   const goChooser = () => { setView('chooser'); setError(''); };
+
+  const handleParentSignIn = async (e) => {
+    e.preventDefault();
+    if (!parentSchoolCode.trim() || !parentPhone.trim() || !parentAdmNo.trim()) {
+      setError('Enter your school code, phone number and admission number.');
+      return;
+    }
+    setError('');
+    setIsLoading(true);
+    try {
+      const code = parentSchoolCode.trim().toUpperCase();
+      const { data, error: err } = await supabase.functions.invoke('parent-portal', {
+        body: { school_code: code, phone: parentPhone.trim(), adm_no: parentAdmNo.trim() },
+      });
+      // supabase-js wraps non-2xx responses in an error whose body is on err.context
+      if (err) {
+        let msg = 'Could not sign in. Please try again.';
+        if (err.context && typeof err.context.json === 'function') {
+          try { const body = await err.context.json(); if (body?.error) msg = body.error; } catch { /* ignore */ }
+        }
+        throw new Error(msg);
+      }
+      if (data?.error) throw new Error(data.error);
+      if (!data?.children?.length) throw new Error('No records found for those details.');
+      localStorage.setItem('parent_school_code', code);
+      onParentLogin?.(data);
+    } catch (err) {
+      setError(err.message || 'Could not sign in.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Auto-derive the code from school name until the admin manually edits it.
   useEffect(() => {
@@ -264,6 +301,13 @@ const LoginPage = () => {
                 accent="#1B6B3A"
               />
               <ChooserCard
+                icon="👨‍👩‍👧"
+                title="Parent / Guardian"
+                body="Check your child's results and fee balance with your phone number."
+                onClick={() => { setView('parent'); setError(''); }}
+                accent="#1A5F9C"
+              />
+              <ChooserCard
                 icon="✨"
                 title="Register a New School"
                 body="Set up your school on LOGIQ in a few minutes."
@@ -479,6 +523,74 @@ const LoginPage = () => {
                 </>
               )}
             </form>
+          </div>
+        )}
+
+        {/* ───────── PARENT / GUARDIAN ───────── */}
+        {view === 'parent' && (
+          <div style={cardStyle}>
+            <button onClick={goChooser} style={backBtnStyle}>← Back</button>
+            <Header title="Parent / Guardian" subtitle="Enter your school code, phone number and your child's admission number" />
+            {errorBlock}
+            <form onSubmit={handleParentSignIn} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <div>
+                <label style={labelBase}>School Code</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={iconPos}>🏷️</span>
+                  <input
+                    type="text"
+                    value={parentSchoolCode}
+                    onChange={e => setParentSchoolCode(e.target.value.toUpperCase())}
+                    placeholder="e.g. TABOLWA-HIGH"
+                    required
+                    style={{ ...inputBase, textTransform: 'uppercase' }}
+                    onFocus={e => e.target.style.borderColor = '#1A5F9C'}
+                    onBlur={e => e.target.style.borderColor = '#e6dfd8'}
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={labelBase}>Phone Number</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={iconPos}>📱</span>
+                  <input
+                    type="tel"
+                    value={parentPhone}
+                    onChange={e => setParentPhone(e.target.value)}
+                    placeholder="e.g. 0712345678"
+                    required
+                    style={inputBase}
+                    onFocus={e => e.target.style.borderColor = '#1A5F9C'}
+                    onBlur={e => e.target.style.borderColor = '#e6dfd8'}
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={labelBase}>Admission Number</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={iconPos}>🎓</span>
+                  <input
+                    type="text"
+                    value={parentAdmNo}
+                    onChange={e => setParentAdmNo(e.target.value)}
+                    placeholder="Your child's admission number"
+                    required
+                    style={inputBase}
+                    onFocus={e => e.target.style.borderColor = '#1A5F9C'}
+                    onBlur={e => e.target.style.borderColor = '#e6dfd8'}
+                  />
+                </div>
+              </div>
+              <button type="submit" disabled={isLoading} style={{
+                width: '100%', padding: 16, background: isLoading ? '#8a8fa8' : '#1A5F9C',
+                color: '#fff', border: 'none', borderRadius: 12, fontSize: 15, fontWeight: 800,
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                boxShadow: '0 4px 16px rgba(26,95,156,0.3)', transition: 'all 0.2s', marginTop: 4,
+              }}>{isLoading ? '⏳ Checking…' : 'View My Child →'}</button>
+            </form>
+            <p style={{ textAlign: 'center', fontSize: 12, color: '#8a8fa8', marginTop: 24, lineHeight: 1.6 }}>
+              Use the phone number you gave the school. If your details don't work, contact the school office.
+            </p>
           </div>
         )}
 

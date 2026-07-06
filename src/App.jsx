@@ -1,31 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Sidebar from './components/layout/Sidebar';
 import Header from './components/layout/Header';
 import Dashboard from './pages/Dashboard';
-import Students from './pages/Students';
-import Exams from './pages/Exams';
-import Reports from './pages/Reports';
-import Marksheets from './pages/Marksheets';
-import Fees from './pages/Fees';
-import Staff from './pages/Staff';
-import Settings from './pages/Settings';
 import Registration from './pages/Registration';
-import ExamEntries from './pages/ExamEntries';
-import TeacherAllocations from './pages/TeacherAllocations';
 import LoginPage from './pages/LoginPage';
+import ParentPortal from './pages/parent/ParentPortal';
 import PlanGate from './components/common/PlanGate';
 import { useAuth } from './contexts/AuthContext';
 import { supabase } from './lib/supabase';
 import { canAccessNav } from './lib/planConfig';
+import { MODULES, modulesForUser, navForModule, flatItemsForModule } from './lib/modules';
 import logo from './assets/logo.jpg';
-
-// Placeholder for Library
-const Library = () => (
-  <div style={{ padding: 20 }}>
-    <h2 style={{ color: "#1B6B3A" }}>Library Management</h2>
-    <p style={{ color: "#8A8FA8" }}>This module is currently being configured for your institution.</p>
-  </div>
-);
 
 function App() {
   const {
@@ -36,6 +21,23 @@ function App() {
     setNeedsRegistration, setNeedsPlanSelection,
     fetchSchoolForUser,
   } = useAuth();
+
+  // Parent portal "session" — parents have no Supabase auth user; their lookup
+  // result lives in sessionStorage for the tab and takes over the whole screen.
+  const [parentSession, setParentSession] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('parent_session') || 'null'); }
+    catch { return null; }
+  });
+
+  const handleParentLogin = (data) => {
+    sessionStorage.setItem('parent_session', JSON.stringify(data));
+    setParentSession(data);
+  };
+
+  const handleParentSignOut = () => {
+    sessionStorage.removeItem('parent_session');
+    setParentSession(null);
+  };
 
   const [activeTab, setActiveTab] = useState("dashboard");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -100,25 +102,42 @@ function App() {
   const [examsList, setExamsList] = useState([]);
   const [marksData, setMarksData] = useState({});
 
-  const navigation = [
-    { id: "dashboard", label: "Dashboard", component: Dashboard },
-    { id: "registration-form", label: "School Registration", component: Registration },
-    { id: "school-info", label: "School Info", component: Settings, tab: "school" },
-    { id: "streams-dorms", label: "Streams/Dorms", component: Settings, tab: "streams" },
-    { id: "students", label: "Students & Admission", component: Students },
-    { id: "teachers", label: "Staff & Teachers", component: Staff },
-    { id: "teacher-allocations", label: "Teacher Allocations", component: TeacherAllocations },
-    { id: "exams", label: "Exam Settings", component: Exams, module: "Examinations" },
-    { id: "exam-entries", label: "Exam Entries", component: ExamEntries, module: "Examinations" },
-    { id: "reports", label: "Report Cards", component: Reports },
-    { id: "merit-list", label: "Exam Marksheets", component: Marksheets },
-    { id: "subjects", label: "Subjects", component: Settings, tab: "subjects", module: "Examinations" },
-    { id: "grading", label: "Grading System", component: Settings, tab: "grading", module: "Examinations" },
-    { id: "fees-structure", label: "Fee Structure", component: Settings, tab: "fees" },
-    { id: "fees", label: "Fees Management", component: Fees },
-    { id: "users", label: "Users Management", component: Settings, tab: "users" },
-    { id: "library", label: "Library", component: Library, module: "Library" },
-  ];
+  // --- Module shells ---
+  // Which interface the user is in. Admin spans all modules and can switch;
+  // other staff get exactly the module their app_role maps to (teacher ->
+  // examination, bursar/accountant/auditor -> accounting).
+  const navRole = role === 'teacher' ? (teacherInfo?.app_role || 'teacher') : 'admin';
+
+  const availableModules = useMemo(
+    () => modulesForUser({
+      role: navRole,
+      appRole: teacherInfo?.app_role,
+      activatedModules: schoolConfig?.modules,
+    }),
+    [navRole, teacherInfo, schoolConfig?.modules]
+  );
+
+  const [activeModule, setActiveModule] = useState(() => localStorage.getItem('active_module') || null);
+
+  // Keep the active module valid for whoever is signed in.
+  useEffect(() => {
+    if (!availableModules.length) return;
+    if (!activeModule || !availableModules.includes(activeModule)) {
+      setActiveModule(availableModules[0]);
+    }
+  }, [availableModules, activeModule]);
+
+  const moduleKey = (activeModule && availableModules.includes(activeModule))
+    ? activeModule
+    : (availableModules[0] || 'examination');
+  const moduleAccent = MODULES[moduleKey]?.accent || '#1B6B3A';
+
+  const switchModule = (m) => {
+    if (!availableModules.includes(m)) return;
+    setActiveModule(m);
+    localStorage.setItem('active_module', m);
+    setActiveTab('dashboard');
+  };
 
   const handleRegistrationComplete = async (formData) => {
     console.log("Starting school registration update...", formData);
@@ -183,22 +202,11 @@ function App() {
 
 
 
-  // Teachers see only a narrow subset of pages.
-  const TEACHER_ALLOWED_NAV = new Set([
-    'students',       // read-only, scoped to their classes
-    'exam-entries',   // their subject + classes only
-    'reports',        // read-only, their classes
-    'merit-list',     // read-only, their classes
-  ]);
-
-  // Filter navigation based on role, selected modules, AND plan
-  const filteredNav = navigation.filter(item => {
-    if (role === 'teacher' && !TEACHER_ALLOWED_NAV.has(item.id)) return false;
-    if (!item.module) return true;
-    return schoolConfig?.modules?.includes(item.module);
-  });
-
-  const activeNavLink = filteredNav.find(n => n.id === activeTab) || filteredNav[0];
+  // Nav for the active module, scoped to the user's role (registry handles the
+  // module/role filtering that used to live here and in the Sidebar).
+  const { dashboard: dashboardItem, sections: navSections } = navForModule(moduleKey, navRole);
+  const flatItems = flatItemsForModule(moduleKey, navRole);
+  const activeNavLink = flatItems.find(n => n.id === activeTab) || dashboardItem;
 
   // Check if the active page is allowed by the plan
   const isPageAllowed = canAccessNav(plan, activeTab);
@@ -214,6 +222,12 @@ function App() {
     setIsMobileMenuOpen(false);
   };
 
+  // --- Parent Portal (separate from the admin/teacher Supabase session) ---
+  // Checked before the auth spinner so parents never wait on Supabase auth init.
+  if (parentSession) {
+    return <ParentPortal data={parentSession} onSignOut={handleParentSignOut} />;
+  }
+
   // --- Loading State ---
   if (isLoading) {
     return (
@@ -225,7 +239,7 @@ function App() {
 
   // --- Not Authenticated ---
   if (!session) {
-    return <LoginPage />;
+    return <LoginPage onParentLogin={handleParentLogin} />;
   }
 
 
@@ -295,6 +309,12 @@ function App() {
           isMobile={window.innerWidth <= 768}
           isOpen={isSidebarOpen || isMobileMenuOpen}
           role={role}
+          dashboardItem={dashboardItem}
+          navSections={navSections}
+          accent={moduleAccent}
+          availableModules={availableModules}
+          activeModule={moduleKey}
+          onSwitchModule={switchModule}
           onClose={() => {
             setIsSidebarOpen(false);
             setIsMobileMenuOpen(false);
