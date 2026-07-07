@@ -23,6 +23,11 @@ import FeeAuditLog from '../pages/FeeAuditLog';
 import FinanceDashboard from '../pages/FinanceDashboard';
 import FinanceReports from '../pages/FinanceReports';
 import FinanceSettings from '../pages/FinanceSettings';
+import PocketMoney from '../pages/PocketMoney';
+import Banking from '../pages/Banking';
+import Suppliers from '../pages/Suppliers';
+import Payroll from '../pages/Payroll';
+import FinalAccounts from '../pages/FinalAccounts';
 
 const DASHBOARD = { id: 'dashboard', label: 'Dashboard', icon: '🏠', component: Dashboard };
 
@@ -96,6 +101,15 @@ export const MODULES = {
         items: [
           { id: 'fees-structure', label: 'Fee Structure', icon: '🧾', component: Settings, tab: 'fees' },
           { id: 'fees', label: 'Fees Management', icon: '💳', component: Fees },
+          // Custodial student funds — separate from school fee finances.
+          { id: 'pocket-money', label: 'Pocket Money', icon: '👛', component: PocketMoney },
+          // Final Accounts Phase B: money locations, transfers, cashbook.
+          { id: 'banking', label: 'Banking & Cash', icon: '🏦', component: Banking },
+          // Final Accounts Phase C: accounts payable (bills, vouchers).
+          { id: 'suppliers', label: 'Suppliers & Expenses', icon: '🏪', component: Suppliers },
+          // Final Accounts Phase D: payroll — confidential, admin + bursar only
+          // (RLS enforces the same; accountants keep AP but not salaries).
+          { id: 'payroll', label: 'Payroll', icon: '🧑‍💼', component: Payroll, roles: ['admin', 'bursar'] },
           { id: 'fee-reports', label: 'Reports', icon: '📊', component: FinanceReports },
         ],
       },
@@ -103,6 +117,9 @@ export const MODULES = {
         title: 'Oversight',
         icon: '🛡️',
         items: [
+          // Final Accounts Phase E: TB / I&E / Balance Sheet / GL detail /
+          // manual journals / year-end close (close itself is admin-only via RPC).
+          { id: 'final-accounts', label: 'Final Accounts', icon: '📚', component: FinalAccounts, roles: ['admin', 'accountant', 'bursar', 'auditor'] },
           // PRD FR-11.4: audit log viewable by Admin and Auditor only
           // (RLS enforces the same at the database).
           { id: 'fee-audit', label: 'Audit Log', icon: '🔍', component: FeeAuditLog, roles: ['admin', 'auditor'] },

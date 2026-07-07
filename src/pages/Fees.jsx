@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 
 const GRADES_BY_LEVEL = {
@@ -14,17 +14,10 @@ const GRADE_NAME_TO_CODE = {
   "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
   "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
 };
+const GRADE_CODE_TO_NAME = Object.fromEntries(Object.entries(GRADE_NAME_TO_CODE).map(([k, v]) => [v, k]));
 
-// Mirrors public.fee_level_for_grade() so balances can be computed client-side
-// without an RPC round-trip per student.
-const feeLevelForGrade = (levelId) => {
-  if (["pp1", "pp2"].includes(levelId)) return "pp";
-  if (["g1", "g2", "g3"].includes(levelId)) return "lower_pri";
-  if (["g4", "g5", "g6"].includes(levelId)) return "upper_pri";
-  if (["g7", "g8", "g9"].includes(levelId)) return "jss";
-  if (["g10", "g11", "g12"].includes(levelId)) return "sss";
-  return null;
-};
+// Pricing is now keyed per grade (fee_level stores the grade code directly);
+// the CBC band only survives as an invoice-generation target on the server.
 
 const studentName = (s) => `${s.first_name || ""} ${s.last_name || ""}`.trim();
 
@@ -88,11 +81,15 @@ const Fees = ({ schoolConfig }) => {
 
   const [studentsList, setStudentsList] = useState([]);
   const [structureRows, setStructureRows] = useState([]);   // published fee_structures rows for the year
+  const [studentCharges, setStudentCharges] = useState([]); // per-student specific votehead charges
   const [voteheadsById, setVoteheadsById] = useState({});   // votehead id -> { applies_to, is_active, priority, code, description }
   const [paidByStudent, setPaidByStudent] = useState({});   // student_id -> total paid (active)
   const [payments, setPayments] = useState([]);             // recent fee_payments rows
   const [allocations, setAllocations] = useState([]);       // active allocations (real per-votehead/term paid)
   const [allocModeDefault, setAllocModeDefault] = useState("priority");
+  const [termDefaultSetting, setTermDefaultSetting] = useState(""); // '' = by calendar
+  const appliedWorkingYear = useRef(false); // apply the school's working year once
+  const [feeCats, setFeeCats] = useState([]);              // Day/Boarder + special categories
   const [isLoading, setIsLoading] = useState(true);
 
   // Fee Balances term filter + per-student drill-down
@@ -132,6 +129,85 @@ const Fees = ({ schoolConfig }) => {
   const [customCharge, setCustomCharge] = useState({ description: "", amount: "" });
   const [isAddingCharge, setIsAddingCharge] = useState(false);
 
+  // Student Charges Tab
+  const [studentChargeModal, setStudentChargeModal] = useState(null); // student row or null
+  const [isSavingCharge, setIsSavingCharge] = useState(false);
+  const [chargeFormRows, setChargeFormRows] = useState([]); // array of { id?, votehead_id, t1, t2, t3, notes }
+
+  const openStudentCharges = (student) => {
+    const existing = studentCharges.filter(c => c.student_id === student.id);
+    const initialRows = existing.map(e => ({
+      id: e.id,
+      votehead_id: e.votehead_id,
+      t1: e.t1, t2: e.t2, t3: e.t3,
+      notes: e.notes || ''
+    }));
+    setChargeFormRows(initialRows);
+    setStudentChargeModal(student);
+  };
+
+  const handleSaveStudentCharges = async () => {
+    setIsSavingCharge(true);
+    try {
+      const student = studentChargeModal;
+      const user = (await supabase.auth.getUser()).data.user;
+
+      const uniqueVoteheads = new Set();
+      for (const r of chargeFormRows) {
+        if (!r.votehead_id) continue;
+        if (uniqueVoteheads.has(r.votehead_id)) {
+          throw new Error('The same votehead appears on two rows — merge them into one.');
+        }
+        uniqueVoteheads.add(r.votehead_id);
+        if ((Number(r.t1) || 0) < 0 || (Number(r.t2) || 0) < 0 || (Number(r.t3) || 0) < 0) {
+          throw new Error('Amounts cannot be negative.');
+        }
+      }
+
+      // Rows are keyed by (student, votehead, year) — never by id — so a mix
+      // of new and existing rows upserts cleanly, and switching a row's
+      // votehead behaves as delete-old + insert-new.
+      const rows = chargeFormRows.filter(r => r.votehead_id).map(r => ({
+        school_id: schoolConfig.id,
+        student_id: student.id,
+        votehead_id: r.votehead_id,
+        year: year,
+        t1: Number(r.t1) || 0,
+        t2: Number(r.t2) || 0,
+        t3: Number(r.t3) || 0,
+        notes: (r.notes || '').trim() || null,
+        created_by: user?.id || null,
+      }));
+
+      const keepVoteheads = new Set(rows.map(r => r.votehead_id));
+      const toDelete = studentCharges
+        .filter(c => c.student_id === student.id && !keepVoteheads.has(c.votehead_id))
+        .map(c => c.id);
+
+      if (toDelete.length > 0) {
+        const { error: delErr } = await supabase
+          .from('student_votehead_charges').delete().in('id', toDelete);
+        if (delErr) throw delErr;
+      }
+      if (rows.length > 0) {
+        const { error } = await supabase
+          .from('student_votehead_charges')
+          .upsert(rows, { onConflict: 'school_id,student_id,votehead_id,year' });
+        if (error) throw error;
+      }
+
+      await loadAll();
+      setStudentChargeModal(null);
+    } catch (err) {
+      alert((err.message || '').includes('row-level security')
+        ? 'Your sign-in session appears to have expired. Refresh the page (or sign out and back in) and try again.'
+        : 'Failed to save charges: ' + err.message);
+    } finally {
+      setIsSavingCharge(false);
+    }
+  };
+
+
   useEffect(() => {
     if (schoolConfig?.id) loadAll();
   }, [schoolConfig?.id, year]);
@@ -139,10 +215,10 @@ const Fees = ({ schoolConfig }) => {
   const loadAll = async () => {
     setIsLoading(true);
     try {
-      const [students, structures, vhs, pays, invs, strms, spons, adjs, burs, allocs, settings] = await Promise.all([
-        supabase.from('students').select('id, adm_no, first_name, last_name, level_id, stream_id, dorm_id, boarding_status')
+      const [students, structures, vhs, pays, invs, strms, spons, adjs, burs, allocs, settings, cats, scharges] = await Promise.all([
+        supabase.from('students').select('id, adm_no, first_name, last_name, level_id, stream_id, dorm_id, boarding_status, fee_category_id')
           .eq('school_id', schoolConfig.id),
-        supabase.from('fee_structures').select('fee_level, votehead_id, t1, t2, t3, status')
+        supabase.from('fee_structures').select('fee_level, votehead_id, category_id, t1, t2, t3, status')
           .eq('school_id', schoolConfig.id).eq('year', year),
         supabase.from('voteheads').select('id, applies_to, is_active, priority, display_order, code, description')
           .eq('school_id', schoolConfig.id),
@@ -166,8 +242,12 @@ const Fees = ({ schoolConfig }) => {
         supabase.from('fee_payment_allocations')
           .select('amount, invoice_id, invoice_item_id, payment_id, adjustment_id, bursary_id, fee_invoices!inner(student_id, term, year), fee_invoice_items(votehead_id), fee_payments(status), fee_adjustments(status), fee_bursary_awards(status)')
           .eq('school_id', schoolConfig.id).eq('fee_invoices.year', year),
-        supabase.from('fee_settings').select('allocation_mode')
+        supabase.from('fee_settings').select('allocation_mode, working_year, current_term')
           .eq('school_id', schoolConfig.id).maybeSingle(),
+        supabase.from('fee_categories').select('id, name, kind')
+          .eq('school_id', schoolConfig.id),
+        supabase.from('student_votehead_charges').select('*')
+          .eq('school_id', schoolConfig.id).eq('year', year),
       ]);
 
       if (students.error) throw students.error;
@@ -175,6 +255,7 @@ const Fees = ({ schoolConfig }) => {
       if (vhs.error) throw vhs.error;
       if (pays.error) throw pays.error;
       if (invs.error) throw invs.error;
+      if (scharges.error) throw scharges.error;
       setInvoices(invs.data || []);
       setStreamsList(strms.data || []);
       setSponsors(spons.data || []);
@@ -186,6 +267,17 @@ const Fees = ({ schoolConfig }) => {
         || a.fee_adjustments?.status === 'active'
         || a.fee_bursary_awards?.status === 'active'));
       setAllocModeDefault(settings.data?.allocation_mode || 'priority');
+      setTermDefaultSetting(settings.data?.current_term ? String(settings.data.current_term) : "");
+      // Honour the school's working year (Finance Settings) on first load;
+      // after that the on-screen year selector is in charge.
+      if (!appliedWorkingYear.current) {
+        appliedWorkingYear.current = true;
+        if (settings.data?.working_year && settings.data.working_year !== year) {
+          setYear(settings.data.working_year);
+        }
+      }
+      setFeeCats(cats.data || []);
+      setStudentCharges(scharges.data || []);
 
       // Receipts (separate query: table may hold many years; key by payment)
       const paymentIds = (pays.data || []).map(p => p.id);
@@ -219,22 +311,72 @@ const Fees = ({ schoolConfig }) => {
   // Boarder = the explicit boarding_status (falls back to dorm for old rows).
   const isBoarder = (s) => (s.boarding_status || (s.dorm_id ? 'boarder' : 'day')) === 'boarder';
 
-  // Billed = published structure rows for the student's fee level whose
-  // votehead is active and applies to them (by boarding status).
-  const billedFor = (s) => {
-    const level = feeLevelForGrade(s.level_id);
-    return structureRows.reduce((sum, r) => {
-      if (r.fee_level !== level) return sum;
-      const vh = voteheadsById[r.votehead_id];
-      if (vh) {
-        if (vh.is_active === false) return sum;
-        const scope = vh.applies_to || 'all';
-        if (scope === 'boarders' && !isBoarder(s)) return sum;
-        if (scope === 'day' && isBoarder(s)) return sum;
-      }
-      return sum + Number(r.t1) + Number(r.t2) + Number(r.t3);
-    }, 0);
+  // A student's fee category. Rule: UNSPECIFIED students stay on the plain
+  // "All students" sheet. Category pricing applies only via explicit
+  // assignment, or the Boarder admission toggle (an explicit specification —
+  // 'day' is merely the default and implies nothing).
+  const categoryFor = (s) => {
+    if (s.fee_category_id) return s.fee_category_id;
+    if (isBoarder(s)) return feeCats.find(c => c.kind === 'boarder')?.id || null;
+    return null;
   };
+
+  // Display identity for the Category column: explicit assignment wins, else
+  // the boarding toggle. Styling per kind.
+  const CATEGORY_BADGE = {
+    boarder: { icon: '🛏', bg: '#EAF2FA', fg: '#1A5F9C' },
+    day:     { icon: '☀', bg: '#FEF6E7', fg: '#8A6A1F' },
+    special: { icon: '⭐', bg: '#F5EEF8', fg: '#6C3483' },
+  };
+  const categoryLabelFor = (s) => {
+    const assigned = s.fee_category_id ? feeCats.find(c => c.id === s.fee_category_id) : null;
+    if (assigned) return { name: assigned.name, ...(CATEGORY_BADGE[assigned.kind] || CATEGORY_BADGE.special) };
+    if (isBoarder(s)) return { name: 'Boarder', ...CATEGORY_BADGE.boarder };
+    return { name: 'Day Scholar', ...CATEGORY_BADGE.day };
+  };
+
+  // Effective price sheet for a student: their grade's published rows where
+  // the votehead is active and in scope, with a category-specific row
+  // REPLACING the "All students" row for the same votehead.
+  const effectiveRowsFor = (s) => {
+    const cat = categoryFor(s);
+    const merged = new Map();
+    // shared first, then category rows override
+    [false, true].forEach(specificPass => {
+      structureRows.forEach(r => {
+        if (r.fee_level !== s.level_id) return;
+        const isSpecific = !!r.category_id;
+        if (isSpecific !== specificPass) return;
+        if (isSpecific && r.category_id !== cat) return;
+        const vh = voteheadsById[r.votehead_id];
+        if (vh) {
+          if (vh.is_active === false) return;
+          const scope = vh.applies_to || 'all';
+          if (scope === 'boarders' && !isBoarder(s)) return;
+          if (scope === 'day' && isBoarder(s)) return;
+        }
+        merged.set(r.votehead_id, r);
+      });
+    });
+
+    // student-specific overrides
+    studentCharges.forEach(r => {
+      if (r.student_id !== s.id) return;
+      const vh = voteheadsById[r.votehead_id];
+      if (vh && vh.is_active !== false) {
+        merged.set(r.votehead_id, {
+          ...r,
+          fee_level: s.level_id,
+          category_id: cat,
+        });
+      }
+    });
+
+    return [...merged.values()];
+  };
+
+  const billedFor = (s) => effectiveRowsFor(s)
+    .reduce((sum, r) => sum + Number(r.t1) + Number(r.t2) + Number(r.t3), 0);
   const paidFor = (s) => paidByStudent[s.id] || 0;
 
   // Active discounts/waivers + bursaries reduce the balance alongside cash.
@@ -278,17 +420,9 @@ const Fees = ({ schoolConfig }) => {
   // Real allocations are used where invoices exist; the rest of the student's
   // cash is distributed virtually by the school's allocation mode.
   const breakdownFor = (s) => {
-    const level = feeLevelForGrade(s.level_id);
-    const applicable = structureRows
-      .filter(r => r.fee_level === level)
+    const applicable = effectiveRowsFor(s)
       .map(r => ({ ...r, vh: voteheadsById[r.votehead_id] }))
-      .filter(({ vh }) => {
-        if (!vh || vh.is_active === false) return false;
-        const scope = vh.applies_to || 'all';
-        if (scope === 'boarders' && !isBoarder(s)) return false;
-        if (scope === 'day' && isBoarder(s)) return false;
-        return true;
-      })
+      .filter(({ vh }) => !!vh)
       .sort((a, b) => (a.vh?.priority ?? 999) - (b.vh?.priority ?? 999)
         || (a.vh?.display_order ?? 0) - (b.vh?.display_order ?? 0));
 
@@ -394,7 +528,7 @@ const Fees = ({ schoolConfig }) => {
       })
       .map(s => ({ ...s, concession: concessionFor(s), ...listMetricsFor(s) }))
       .sort((a, b) => b.balance - a.balance);
-  }, [studentsList, structureRows, voteheadsById, paidByStudent, concessionByStudent, realByStudent, allocModeDefault, termFilter, searchTerm, selectedLevel, selectedGrade]);
+  }, [studentsList, structureRows, studentCharges, voteheadsById, feeCats, paidByStudent, concessionByStudent, realByStudent, allocModeDefault, termFilter, searchTerm, selectedLevel, selectedGrade]);
 
   const studentById = useMemo(() => {
     const m = {};
@@ -413,9 +547,73 @@ const Fees = ({ schoolConfig }) => {
     });
   }, [payments, studentById, searchTerm]);
 
+  // Default term: the school's Finance Settings choice wins; otherwise the
+  // Kenyan calendar heuristic (Jan–Apr = T1, May–Aug = T2, Sep–Dec = T3).
+  const currentCalendarTerm = () => {
+    const m = new Date().getMonth() + 1;
+    return m <= 4 ? "1" : m <= 8 ? "2" : "3";
+  };
+  const defaultTerm = () => termDefaultSetting || currentCalendarTerm();
+
   const openPayModal = (student) => {
-    setPayForm({ amount: "", term: "", method: "mpesa", reference: "", payer_name: "", allocMode: "" });
+    setPayForm({ amount: "", term: defaultTerm(), method: "mpesa", reference: "", payer_name: "", allocMode: "" });
     setPayModalFor(student);
+  };
+
+  // Distribution preview over the YEAR'S FULL BILL (same engine as the
+  // drill-down): every votehead of every term still carrying a balance —
+  // invoiced or not — filled term 1 → 2 → 3 (then votehead priority), or
+  // pro-rata in percentage mode. Only when the whole year is covered does
+  // the remainder become prepayment for next year. This keeps the preview
+  // consistent with the Billed/Paid/Balance chips: it never claims "nothing
+  // outstanding" while the year still owes.
+  const buildPayPreview = () => {
+    const amount = parseFloat(payForm.amount) || 0;
+    const mode = payForm.allocMode || allocModeDefault;
+    const bd = breakdownFor(payModalFor);
+
+    const rows = [];
+    [1, 2, 3].forEach(t => {
+      bd.terms[t].rows.forEach(r => {
+        if (r.balance > 0.005) {
+          rows.push({
+            id: `${t}-${r.vhId}`,
+            label: `${r.code} ${r.description}`,
+            term: t,
+            isReal: bd.terms[t].isReal,
+            outstanding: r.balance,
+            priority: voteheadsById[r.vhId]?.priority ?? 999,
+            give: 0,
+          });
+        }
+      });
+    });
+    rows.sort((a, b) => a.term - b.term || a.priority - b.priority);
+
+    let remaining = amount;
+    if (mode === 'percentage') {
+      const totalOut = rows.reduce((s, r) => s + r.outstanding, 0);
+      if (totalOut > 0) {
+        rows.forEach(r => {
+          r.give = Math.min(r.outstanding, Math.floor((amount * r.outstanding / totalOut) * 100) / 100);
+        });
+        remaining = amount - rows.reduce((s, r) => s + r.give, 0);
+        rows.forEach(r => { // mop up rounding/overflow in term/priority order
+          if (remaining <= 0.005) return;
+          const extra = Math.min(r.outstanding - r.give, remaining);
+          r.give += extra; remaining -= extra;
+        });
+      }
+    } else {
+      rows.forEach(r => {
+        if (remaining <= 0.005) return;
+        r.give = Math.min(r.outstanding, remaining);
+        remaining -= r.give;
+      });
+    }
+    const allocated = rows.reduce((s, r) => s + r.give, 0);
+    const hasEstimated = rows.some(r => !r.isReal);
+    return { rows, allocated, credit: Math.max(0, amount - allocated), amount, hasEstimated };
   };
 
   // Records via the record_fee_payment RPC: one transaction that inserts the
@@ -427,6 +625,10 @@ const Fees = ({ schoolConfig }) => {
     setIsSavingPayment(true);
     try {
       const student = payModalFor;
+      // Snapshot the preview BEFORE saving: it tells us which not-yet-invoiced
+      // voteheads this payment is committed to, so the receipt can itemize
+      // them (the engine itself only allocates against real invoices).
+      const pv = buildPayPreview();
       const { data, error } = await supabase.rpc('record_fee_payment', {
         p_school_id: schoolConfig.id,
         p_student_id: student.id,
@@ -440,6 +642,22 @@ const Fees = ({ schoolConfig }) => {
       });
       if (error) throw error;
 
+      // The engine allocates only against real invoices; whatever it reports
+      // as credit gets itemized on the receipt across the not-yet-invoiced
+      // voteheads the preview committed it to (same order/mode, capped).
+      // Only what remains beyond the whole year is next-year prepayment.
+      let rem = Number(data.credit || 0);
+      const virtualAllocations = [];
+      pv.rows.filter(r => !r.isReal && r.give > 0.005).forEach(r => {
+        if (rem <= 0.005) return;
+        const give = Math.min(r.give, r.outstanding, rem);
+        if (give > 0.005) {
+          virtualAllocations.push({ description: r.label, term: r.term, amount: give });
+          rem -= give;
+        }
+      });
+      const prepayNext = Math.max(0, rem);
+
       await loadAll();
       setPayModalFor(null);
       setReceiptView({
@@ -447,6 +665,8 @@ const Fees = ({ schoolConfig }) => {
         student,
         amount: Number(data.amount),
         allocations: data.allocations || [],
+        virtualAllocations,
+        prepayNext,
         credit: Number(data.credit || 0),
         method: payForm.method,
         reference: payForm.reference.trim(),
@@ -511,9 +731,16 @@ const Fees = ({ schoolConfig }) => {
     if (!rv) return;
     const s = rv.student;
     const balance = s ? balanceFor(s) : null;
-    const rows = (rv.allocations || []).map(a =>
-      `<tr><td>${a.description}${a.invoice_no ? ` <span class="mut">(${a.invoice_no})</span>` : ""}</td><td class="amt">${Number(a.amount).toLocaleString()}</td></tr>`
-    ).join("");
+    // Real invoice settlements, then committed not-yet-invoiced voteheads.
+    const rows = [
+      ...(rv.allocations || []).map(a =>
+        `<tr><td>${a.description}${a.invoice_no ? ` <span class="mut">(${a.invoice_no})</span>` : ""}</td><td class="amt">${Number(a.amount).toLocaleString()}</td></tr>`),
+      ...(rv.virtualAllocations || []).map(a =>
+        `<tr><td>${a.description} <span class="mut">(Term ${a.term} — to be invoiced)</span></td><td class="amt">${Math.round(Number(a.amount)).toLocaleString()}</td></tr>`),
+    ].join("");
+    const creditLine = rv.virtualAllocations !== undefined
+      ? (rv.prepayNext > 0.005 ? `<tr><td>Prepayment for ${year + 1}</td><td class="amt">${Math.round(rv.prepayNext).toLocaleString()}</td></tr>` : '')
+      : (rv.credit > 0 ? `<tr><td>Credit carried forward</td><td class="amt">${rv.credit.toLocaleString()}</td></tr>` : '');
     const w = window.open('', '_blank', 'width=440,height=640');
     if (!w) { alert('Allow pop-ups to print receipts.'); return; }
     w.document.write(`<!doctype html><html><head><title>${rv.receiptNo}</title><style>
@@ -547,8 +774,8 @@ const Fees = ({ schoolConfig }) => {
       <div class="line"></div>
       <table>
         <tr><td><strong>SETTLED</strong></td><td class="amt"><strong>KES</strong></td></tr>
-        ${rows || '<tr><td class="mut" colspan="2">Held as credit — no outstanding invoice at time of payment.</td></tr>'}
-        ${rv.credit > 0 ? `<tr><td>Credit carried forward</td><td class="amt">${rv.credit.toLocaleString()}</td></tr>` : ''}
+        ${rows || '<tr><td class="mut" colspan="2">Held as credit — nothing outstanding at time of payment.</td></tr>'}
+        ${creditLine}
         <tr class="tot"><td>TOTAL PAID</td><td class="amt">${rv.amount.toLocaleString()}</td></tr>
       </table>
       <p class="words">Amount in words: ${amountInWords(rv.amount)}</p>
@@ -556,6 +783,179 @@ const Fees = ({ schoolConfig }) => {
       <p class="foot">Generated by EduConnect KE · ${new Date().toLocaleString()}</p>
       <div class="noprint" style="text-align:center;margin-top:14px;">
         <button onclick="window.print()" style="padding:8px 22px;">Print</button>
+      </div>
+    </body></html>`);
+    w.document.close();
+    w.focus();
+  };
+
+  // --- Student statement (PRD FR-8.1..8.3): chronological, running balance,
+  //     letterheaded, with a per-term votehead annexure. ---
+  const printStudentStatement = async (s) => {
+    // Letterhead extras (logo/motto/principal) live in school_information.
+    let info = {};
+    try {
+      const { data } = await supabase
+        .from('school_information')
+        .select('logo_url, motto, principal_name, website')
+        .eq('school_id', schoolConfig.id)
+        .maybeSingle();
+      info = data || {};
+    } catch { /* letterhead extras are optional */ }
+
+    const bd = breakdownFor(s);
+    const fmt = (n) => Math.round(Number(n) || 0).toLocaleString();
+    const catBadge = categoryLabelFor(s);
+    const streamName = streamsList.find(st => st.id === s.stream_id)?.name || '';
+
+    // Chronological entries. Debits per term use the effective owed (so the
+    // statement always reconciles with the balance shown everywhere), dated
+    // by the term's first invoice or, when not yet invoiced, the term start.
+    const TERM_START = { 1: `${year}-01-01`, 2: `${year}-05-01`, 3: `${year}-09-01` };
+    const entries = [];
+    [1, 2, 3].forEach(t => {
+      const term = bd.terms[t];
+      if (term.owed <= 0.005) return;
+      const invs = invoices.filter(i => i.student_id === s.id && Number(i.term) === t && i.status !== 'cancelled');
+      entries.push({
+        date: invs.length ? invs[0].issue_date : TERM_START[t],
+        desc: `Term ${t} fees${invs.length
+          ? ` — Invoice ${invs.map(i => i.invoice_no).join(', ')}`
+          : ' — per fee structure (not yet invoiced)'}`,
+        debit: term.owed, credit: 0,
+      });
+    });
+    payments.filter(p => p.student_id === s.id && p.status === 'active').forEach(p => {
+      const rct = receiptByPayment[p.id];
+      entries.push({
+        date: p.paid_at,
+        desc: `Payment — ${(p.method || 'cash').toUpperCase()}${p.reference ? ' ' + p.reference : ''}${rct ? ` · Receipt ${rct.receipt_no}` : ''}${p.payer_name ? ` · by ${p.payer_name}` : ''}`,
+        debit: 0, credit: Number(p.amount),
+      });
+    });
+    adjustments.filter(a => a.student_id === s.id && a.status === 'active').forEach(a => {
+      entries.push({
+        date: a.created_at,
+        desc: `${a.kind.charAt(0).toUpperCase() + a.kind.slice(1).replace('_', ' ')} — ${a.reason}`,
+        debit: 0, credit: Number(a.amount),
+      });
+    });
+    bursaries.filter(b => b.student_id === s.id && b.status === 'active').forEach(b => {
+      entries.push({
+        date: b.created_at,
+        desc: `Bursary — ${b.fee_sponsors?.name || 'Sponsor'}${b.reference ? ` (${b.reference})` : ''}`,
+        debit: 0, credit: Number(b.amount),
+      });
+    });
+    entries.sort((a, b) => new Date(a.date) - new Date(b.date));
+    let running = 0;
+    entries.forEach(e => { running += e.debit - e.credit; e.balance = running; });
+
+    const txnRows = entries.map(e => `
+      <tr>
+        <td>${new Date(e.date).toLocaleDateString()}</td>
+        <td>${e.desc}</td>
+        <td class="num">${e.debit > 0.005 ? fmt(e.debit) : ''}</td>
+        <td class="num">${e.credit > 0.005 ? fmt(e.credit) : ''}</td>
+        <td class="num${e.balance < -0.005 ? ' cr' : ''}">${fmt(Math.abs(e.balance))}${e.balance < -0.005 ? ' CR' : ''}</td>
+      </tr>`).join('');
+
+    const annexure = [1, 2, 3].map(t => {
+      const term = bd.terms[t];
+      if (term.rows.length === 0) return '';
+      return `
+        <h4>Term ${t}${term.isReal ? '' : ' <span class="note">(per fee structure — not yet invoiced)</span>'}</h4>
+        <table>
+          <thead><tr><th>Votehead</th><th class="num">Owed</th><th class="num">Paid</th>${term.concession > 0.005 ? '<th class="num">Concession</th>' : ''}<th class="num">Balance</th></tr></thead>
+          <tbody>
+            ${term.rows.map(r => `<tr><td>${r.code} ${r.description}</td><td class="num">${fmt(r.owed)}</td><td class="num">${fmt(r.paid)}</td>${term.concession > 0.005 ? `<td class="num">${fmt(r.concession)}</td>` : ''}<td class="num">${fmt(r.balance)}</td></tr>`).join('')}
+            <tr class="total"><td>Term ${t} total</td><td class="num">${fmt(term.owed)}</td><td class="num">${fmt(term.paid)}</td>${term.concession > 0.005 ? `<td class="num">${fmt(term.concession)}</td>` : ''}<td class="num">${fmt(term.balance)}</td></tr>
+          </tbody>
+        </table>`;
+    }).join('');
+
+    const bal = bd.year.balance;
+    const contact1 = [schoolConfig?.address, [schoolConfig?.subCounty, schoolConfig?.county].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+    const contact2 = [schoolConfig?.phone ? `Tel: ${schoolConfig.phone}` : '', schoolConfig?.email ? `Email: ${schoolConfig.email}` : '', info.website || ''].filter(Boolean).join(' · ');
+
+    const w = window.open('', '_blank');
+    if (!w) { alert('Allow pop-ups to print the statement.'); return; }
+    w.document.write(`<!doctype html><html><head><title>Fee Statement — ${studentName(s)} — ${year}</title><style>
+      body { font-family: Arial, sans-serif; font-size: 12px; color: #111; margin: 26px; }
+      .letterhead { display: flex; align-items: center; gap: 18px; justify-content: center; }
+      .letterhead img { width: 70px; height: 70px; object-fit: contain; }
+      .lh-text { text-align: center; }
+      .lh-text h2 { margin: 0; font-size: 19px; letter-spacing: 0.5px; text-transform: uppercase; }
+      .lh-line { color: #333; font-size: 11px; margin-top: 2px; }
+      .motto { font-style: italic; color: #555; font-size: 11px; margin-top: 3px; }
+      .lh-rule { border: none; border-top: 3px double #333; margin: 10px 0 8px; }
+      .doc-title { text-align: center; font-weight: bold; letter-spacing: 1.5px; margin: 0 0 14px; font-size: 13px; }
+      .who { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; padding: 8px 10px; background: #f7f7f7; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 12px; font-size: 12px; }
+      .sumrow { display: flex; gap: 8px; margin-bottom: 14px; }
+      .sumcell { flex: 1; border: 1px solid #ccc; border-radius: 6px; padding: 7px 9px; text-align: center; }
+      .sumcell .l { font-size: 9.5px; text-transform: uppercase; color: #666; letter-spacing: 0.5px; }
+      .sumcell .v { font-family: 'Courier New', monospace; font-weight: bold; font-size: 14px; margin-top: 2px; }
+      h3 { margin: 16px 0 5px; font-size: 13px; border-bottom: 2px solid #333; padding-bottom: 3px; }
+      h4 { margin: 12px 0 4px; font-size: 12px; color: #1A5F9C; }
+      .note { font-weight: normal; color: #777; font-size: 10px; }
+      table { width: 100%; border-collapse: collapse; page-break-inside: avoid; }
+      th, td { border: 1px solid #bbb; padding: 4px 7px; text-align: left; }
+      th { background: #f0f0f0; font-size: 9.5px; text-transform: uppercase; }
+      .num { text-align: right; font-family: 'Courier New', monospace; white-space: nowrap; }
+      .cr { color: #1B6B3A; }
+      .total td { font-weight: bold; background: #fafafa; }
+      .closing { margin-top: 10px; padding: 9px 12px; border: 1.5px solid #333; border-radius: 6px; display: flex; justify-content: space-between; font-weight: bold; font-size: 13px; }
+      .sig { margin-top: 26px; display: flex; justify-content: space-between; font-size: 11px; gap: 30px; }
+      .sig div { flex: 1; border-top: 1px solid #333; padding-top: 4px; }
+      .foot { margin-top: 14px; font-size: 9.5px; color: #777; text-align: center; }
+      @media print { .noprint { display: none; } }
+    </style></head><body>
+      <div class="letterhead">
+        ${info.logo_url ? `<img src="${info.logo_url}" alt="logo" />` : ''}
+        <div class="lh-text">
+          <h2>${schoolConfig?.schoolName || 'School'}</h2>
+          ${contact1 ? `<div class="lh-line">${contact1}</div>` : ''}
+          ${contact2 ? `<div class="lh-line">${contact2}</div>` : ''}
+          ${info.motto ? `<div class="motto">“${info.motto}”</div>` : ''}
+        </div>
+      </div>
+      <hr class="lh-rule" />
+      <p class="doc-title">STUDENT FEE STATEMENT — ${year}</p>
+
+      <div class="who">
+        <span><strong>${studentName(s)}</strong> · ADM ${s.adm_no}</span>
+        <span>${GRADE_CODE_TO_NAME[s.level_id] || s.level_id}${streamName ? ` · ${streamName}` : ''} · ${catBadge.name}</span>
+        <span>Statement date: ${new Date().toLocaleDateString()}</span>
+      </div>
+
+      <div class="sumrow">
+        <div class="sumcell"><div class="l">Billed</div><div class="v">${fmt(bd.year.owed)}</div></div>
+        <div class="sumcell"><div class="l">Paid</div><div class="v">${fmt(bd.year.paid)}</div></div>
+        ${bd.year.concession > 0.005 ? `<div class="sumcell"><div class="l">Bursaries & Discounts</div><div class="v">${fmt(bd.year.concession)}</div></div>` : ''}
+        <div class="sumcell"><div class="l">${bal < -0.005 ? 'Overpaid' : 'Balance'}</div><div class="v">${fmt(Math.abs(bal))}</div></div>
+      </div>
+
+      <h3>Transactions</h3>
+      <table>
+        <thead><tr><th>Date</th><th>Particulars</th><th class="num">Charges (KES)</th><th class="num">Payments / Credits</th><th class="num">Balance</th></tr></thead>
+        <tbody>${txnRows || '<tr><td colspan="5">No transactions recorded for this year.</td></tr>'}</tbody>
+      </table>
+      <div class="closing">
+        <span>CLOSING BALANCE ${bal < -0.005 ? '(IN CREDIT)' : ''}</span>
+        <span>KES ${fmt(Math.abs(bal))}${bal < -0.005 ? ' CR' : ''}</span>
+      </div>
+
+      <h3>Annexure — Votehead Breakdown</h3>
+      ${annexure || '<p class="note">No charges for this year.</p>'}
+
+      <div class="sig">
+        <div>Prepared by (Finance Office)</div>
+        ${info.principal_name ? `<div>${info.principal_name}, Principal</div>` : '<div>Principal</div>'}
+        <div>Official Stamp</div>
+      </div>
+      <p class="foot">System-generated from ${schoolConfig?.schoolName || 'the school'}'s fee records via EduConnect KE · ${new Date().toLocaleString()} · Terms marked "not yet invoiced" are billed per the published fee structure.</p>
+      <div class="noprint" style="text-align:center;margin-top:16px;">
+        <button onclick="window.print()" style="padding:8px 24px;">Print / Save as PDF</button>
       </div>
     </body></html>`);
     w.document.close();
@@ -775,6 +1175,7 @@ const Fees = ({ schoolConfig }) => {
         <div onClick={() => setActiveTab("invoices")} style={tabStyle(activeTab === "invoices")}>Invoices</div>
         <div onClick={() => setActiveTab("transactions")} style={tabStyle(activeTab === "transactions")}>Payments</div>
         <div onClick={() => setActiveTab("concessions")} style={tabStyle(activeTab === "concessions")}>Discounts &amp; Bursaries</div>
+        <div onClick={() => setActiveTab("student_charges")} style={tabStyle(activeTab === "student_charges")}>Student Charges</div>
       </div>
 
       <div className="grid-1" style={{ marginBottom: 16, display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center" }}>
@@ -783,7 +1184,7 @@ const Fees = ({ schoolConfig }) => {
             <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13 }}>🔍</span>
             <input
               type="text"
-              placeholder={activeTab === "balances" ? "Search student..." : activeTab === "invoices" ? "Search invoice or student..." : "Search payment..."}
+              placeholder={activeTab === "balances" || activeTab === "student_charges" ? "Search student..." : activeTab === "invoices" ? "Search invoice or student..." : "Search payment..."}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{ width: "100%", padding: "10px 12px 10px 32px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, outline: "none", boxSizing: "border-box" }}
@@ -806,13 +1207,13 @@ const Fees = ({ schoolConfig }) => {
                 </select>
               </div>
               <button
-                onClick={() => { setGenResult(null); setShowGenModal(true); }}
+                onClick={() => { setGenResult(null); setGenForm(f => ({ ...f, term: defaultTerm() })); setShowGenModal(true); }}
                 style={{ padding: "9px 16px", background: "#1A5F9C", border: "none", borderRadius: 8, fontSize: 12.5, color: "#fff", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
               >⚡ Generate Invoices</button>
             </div>
           )}
 
-          {activeTab === "balances" && (
+          {(activeTab === "balances" || activeTab === "student_charges") && (
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>LEVEL:</span>
@@ -872,6 +1273,7 @@ const Fees = ({ schoolConfig }) => {
               <tr>
                 <th style={thStyle}>ADM No.</th>
                 <th style={thStyle}>Student Name</th>
+                <th className="hide-mobile" style={thStyle}>Category</th>
                 <th className="hide-mobile" style={thStyle}>{termFilter === "all" ? "Billed" : `Term ${termFilter} Billed`}</th>
                 <th className="hide-mobile" style={thStyle}>Paid</th>
                 <th style={thStyle}>{termFilter === "all" ? "Balance" : `Term ${termFilter} Balance`}</th>
@@ -880,9 +1282,10 @@ const Fees = ({ schoolConfig }) => {
             </thead>
             <tbody>
               {filteredStudents.length === 0 ? (
-                <tr><td colSpan="6" style={{ textAlign: "center", padding: 30, color: "#8A8FA8" }}>No students match this filter.</td></tr>
+                <tr><td colSpan="7" style={{ textAlign: "center", padding: 30, color: "#8A8FA8" }}>No students match this filter.</td></tr>
               ) : filteredStudents.slice(0, 100).map((s, idx) => {
                 const over = s.balance < 0;
+                const catBadge = categoryLabelFor(s);
                 return (
                 <tr key={s.id} onClick={() => setStudentModal(s)}
                     style={{ borderBottom: "1px solid #F7F8FA", background: idx % 2 === 0 ? "#fff" : "#FAFBFC", cursor: "pointer" }}>
@@ -893,8 +1296,13 @@ const Fees = ({ schoolConfig }) => {
                       <div style={{ fontSize: 10.5, color: "#6C3483", fontWeight: 600 }}>🎁 KES {s.concession.toLocaleString()} in bursaries/discounts</div>
                     )}
                     <div className="show-mobile" style={{ fontSize: 11, color: "#8A8FA8" }}>
-                      Paid: {s.paid.toLocaleString()} / {s.billed.toLocaleString()}
+                      {catBadge.icon} {catBadge.name} · Paid: {s.paid.toLocaleString()} / {s.billed.toLocaleString()}
                     </div>
+                  </td>
+                  <td className="hide-mobile" style={{ padding: "12px 18px" }}>
+                    <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 10.5, fontWeight: 700, background: catBadge.bg, color: catBadge.fg, whiteSpace: "nowrap" }}>
+                      {catBadge.icon} {catBadge.name}
+                    </span>
                   </td>
                   <td className="hide-mobile" style={{ padding: "12px 18px" }}>KES {s.billed.toLocaleString()}</td>
                   <td className="hide-mobile" style={{ padding: "12px 18px", color: "#1B6B3A", fontWeight: 600 }}>KES {s.paid.toLocaleString()}</td>
@@ -948,6 +1356,46 @@ const Fees = ({ schoolConfig }) => {
                     <td style={{ padding: "12px 18px", fontWeight: 700, color: "#1A1A2E" }}>KES {Number(inv.total).toLocaleString()}</td>
                     <td style={{ padding: "12px 18px" }}>
                       <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, background: st.background, color: st.color }}>{st.label}</span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : activeTab === "student_charges" ? (
+          <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
+            <thead style={{ background: "#FAFBFC", borderBottom: "1px solid #E8EAF0" }}>
+              <tr>
+                <th style={thStyle}>ADM No.</th>
+                <th style={thStyle}>Student Name</th>
+                <th style={thStyle}>Category</th>
+                <th style={thStyle}>Custom Charges</th>
+                <th style={thStyle}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredStudents.length === 0 ? (
+                <tr><td colSpan="5" style={{ textAlign: "center", padding: 30, color: "#8A8FA8" }}>No students match this filter.</td></tr>
+              ) : filteredStudents.slice(0, 100).map((s, idx) => {
+                const catBadge = categoryLabelFor(s);
+                const charges = studentCharges.filter(c => c.student_id === s.id);
+                return (
+                  <tr key={s.id} onClick={() => openStudentCharges(s)}
+                      style={{ borderBottom: "1px solid #F7F8FA", background: idx % 2 === 0 ? "#fff" : "#FAFBFC", cursor: "pointer" }}>
+                    <td style={{ padding: "12px 18px", fontWeight: 600, color: "#1A5F9C" }}>{s.adm_no}</td>
+                    <td style={{ padding: "12px 18px", fontWeight: 700, color: "#1A1A2E" }}>{studentName(s)}</td>
+                    <td style={{ padding: "12px 18px" }}>
+                      <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 10.5, fontWeight: 700, background: catBadge.bg, color: catBadge.fg, whiteSpace: "nowrap" }}>
+                        {catBadge.icon} {catBadge.name}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 18px", color: "#4A4A6A", fontWeight: charges.length ? 700 : 400 }}>
+                      {charges.length} active
+                    </td>
+                    <td style={{ padding: "12px 18px" }}>
+                      <button style={{ background: "transparent", border: "1px solid #E8EAF0", borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 600, color: "#1A1A2E", cursor: "pointer" }}>
+                        Edit Charges
+                      </button>
                     </td>
                   </tr>
                 );
@@ -1346,11 +1794,50 @@ const Fees = ({ schoolConfig }) => {
           onClick={() => setPayModalFor(null)}
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 24, width: "100%", maxWidth: 420, boxShadow: "0 12px 40px rgba(0,0,0,0.2)" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 24, width: "100%", maxWidth: 420, maxHeight: "92vh", overflowY: "auto", boxShadow: "0 12px 40px rgba(0,0,0,0.2)" }}>
             <h3 style={{ margin: "0 0 4px", fontSize: 18, fontWeight: 800, color: "#2a2421" }}>Record Payment</h3>
-            <p style={{ margin: "0 0 18px", fontSize: 13, color: "#8A8FA8" }}>
-              {studentName(payModalFor)} · {payModalFor.adm_no} · {year}
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: "#8A8FA8" }}>
+              {studentName(payModalFor)} · {payModalFor.adm_no} · {year} · {categoryLabelFor(payModalFor).icon} {categoryLabelFor(payModalFor).name}
             </p>
+
+            {/* Term-aware position: cumulative through the selected term
+                (arrears roll forward), or the full year when no term is set. */}
+            {(() => {
+              const bd = breakdownFor(payModalFor);
+              const t = payForm.term ? parseInt(payForm.term) : null;
+              let owed = 0, paid = 0, conc = 0;
+              if (t) {
+                [1, 2, 3].forEach(x => {
+                  if (x <= t) { owed += bd.terms[x].owed; paid += bd.terms[x].paid; conc += bd.terms[x].concession; }
+                });
+              } else {
+                owed = bd.year.owed; paid = bd.year.paid; conc = bd.year.concession;
+              }
+              const bal = owed - paid - conc;
+              const chips = [
+                ["Billed", owed, "#4A4A6A"],
+                ["Paid", paid, "#1B6B3A"],
+                [bal < -0.005 ? "Overpaid" : "Balance", Math.abs(bal), bal > 0.005 ? "#C0392B" : "#1B6B3A"],
+              ];
+              return (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {chips.map(([lbl, val, col]) => (
+                      <div key={lbl} style={{ flex: 1, padding: "8px 10px", background: "#F8FAFC", border: "1px solid #E8EAF0", borderRadius: 8, textAlign: "center" }}>
+                        <div style={{ fontSize: 9.5, fontWeight: 800, color: "#8A8FA8", textTransform: "uppercase", letterSpacing: "0.04em" }}>{lbl}</div>
+                        <div style={{ fontSize: 14, fontWeight: 800, fontFamily: "monospace", color: col, marginTop: 2 }}>
+                          {Math.round(val).toLocaleString()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: "#8A8FA8", marginTop: 4, textAlign: "right" }}>
+                    {t ? `Position up to Term ${t}` : "Full-year position"}
+                    {conc > 0.005 ? ` · incl. KES ${Math.round(conc).toLocaleString()} bursaries/discounts` : ""}
+                  </div>
+                </div>
+              );
+            })()}
 
             <label style={modalLabel}>Amount (KES)</label>
             <input type="number" value={payForm.amount} autoFocus placeholder="0"
@@ -1396,6 +1883,74 @@ const Fees = ({ schoolConfig }) => {
               <option value="priority">Priority (votehead order)</option>
               <option value="percentage">Percentage (pro-rata)</option>
             </select>
+
+            {/* Live distribution preview — every outstanding votehead, incl.
+                the ones this amount does not reach (greyed). */}
+            <div style={{ marginTop: 14, padding: 12, background: "#F8FAFC", border: "1px solid #E8EAF0", borderRadius: 10 }}>
+              <div style={{ fontSize: 10.5, fontWeight: 800, color: "#4A4A6A", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
+                Distribution preview
+              </div>
+              {(() => {
+                const pv = buildPayPreview();
+                if (pv.rows.length === 0) {
+                  return (
+                    <div style={{ fontSize: 12, color: "#8A8FA8", lineHeight: 1.5 }}>
+                      🎉 All {year} charges (Terms 1–3) are fully covered — this payment will be held as
+                      <strong> prepayment for next year</strong> and auto-apply when {year + 1} is billed.
+                    </div>
+                  );
+                }
+                return (
+                  <>
+                    {/* Constant-height list: scrolls internally so the modal's
+                        buttons stay reachable however many voteheads exist. */}
+                    <div style={{ maxHeight: 168, overflowY: "auto", border: "1px solid #F0F2F5", borderRadius: 6, background: "#fff" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead>
+                        <tr>
+                          <th style={{ padding: "4px 6px", textAlign: "left", fontSize: 9.5, color: "#8A8FA8", fontWeight: 800, position: "sticky", top: 0, background: "#F8FAFC", borderBottom: "1.5px solid #E8EAF0" }}>VOTEHEAD</th>
+                          <th style={{ padding: "4px 6px", textAlign: "right", fontSize: 9.5, color: "#8A8FA8", fontWeight: 800, position: "sticky", top: 0, background: "#F8FAFC", borderBottom: "1.5px solid #E8EAF0" }}>OWED</th>
+                          <th style={{ padding: "4px 6px", textAlign: "right", fontSize: 9.5, color: "#8A8FA8", fontWeight: 800, position: "sticky", top: 0, background: "#F8FAFC", borderBottom: "1.5px solid #E8EAF0" }}>THIS PAYMENT</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pv.rows.map(r => {
+                          const untouched = r.give <= 0.005;
+                          return (
+                            <tr key={r.id} style={{ borderBottom: "1px solid #F0F2F5", opacity: untouched ? 0.55 : 1 }}>
+                              <td style={{ padding: "4px 6px", color: "#2a2421" }}>
+                                {r.label} <span style={{ color: "#b8b2a6", fontSize: 10 }}>T{r.term}{r.isReal ? "" : " · est."}</span>
+                              </td>
+                              <td style={{ padding: "4px 6px", textAlign: "right", fontFamily: "monospace" }}>{Math.round(r.outstanding).toLocaleString()}</td>
+                              <td style={{ padding: "4px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 700, color: untouched ? "#8A8FA8" : "#1B6B3A" }}>
+                                {untouched ? "—" : Math.round(r.give).toLocaleString()}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 11.5, flexWrap: "wrap", gap: 4 }}>
+                      <span style={{ color: "#4A4A6A" }}>
+                        Goes to charges: <strong style={{ fontFamily: "monospace", color: "#1B6B3A" }}>{Math.round(pv.allocated).toLocaleString()}</strong>
+                      </span>
+                      {pv.credit > 0.005 && (
+                        <span style={{ color: "#8A6A1F", fontWeight: 700 }}>
+                          Prepayment for {year + 1}: <span style={{ fontFamily: "monospace" }}>{Math.round(pv.credit).toLocaleString()}</span>
+                        </span>
+                      )}
+                    </div>
+                    {pv.hasEstimated && (
+                      <div style={{ fontSize: 10, color: "#8A8FA8", marginTop: 6, lineHeight: 1.5 }}>
+                        “est.” terms are billed from the fee structure but not yet invoiced — the money is held
+                        against them and settles automatically the moment that term's invoices are generated.
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
 
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
               <button onClick={() => setPayModalFor(null)} style={{ flex: 1, padding: 12, background: "#fff", border: "1px solid #e6dfd8", borderRadius: 10, fontWeight: 600, color: "#8a8fa8", cursor: "pointer" }}>Cancel</button>
@@ -1482,7 +2037,7 @@ const Fees = ({ schoolConfig }) => {
                 <div>
                   <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "#2a2421" }}>{studentName(studentModal)}</h3>
                   <div style={{ fontSize: 12, color: "#8A8FA8", marginTop: 2 }}>
-                    {studentModal.adm_no} · {year} · {isBoarder(studentModal) ? 'Boarder' : 'Day scholar'}
+                    {studentModal.adm_no} · {year} · {categoryLabelFor(studentModal).icon} {categoryLabelFor(studentModal).name}
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
@@ -1561,15 +2116,215 @@ const Fees = ({ schoolConfig }) => {
                 </div>
               </div>
 
-              <div style={{ padding: "14px 24px", background: "#f5f2eb", borderTop: "1px solid #E8EAF0", display: "flex", justifyContent: "flex-end", gap: 10, position: "sticky", bottom: 0 }}>
-                <button onClick={() => { const s = studentModal; setStudentModal(null); openPayModal(s); }}
-                  style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: "#1B6B3A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                  + Record Payment
+              <div style={{ padding: "14px 24px", background: "#f5f2eb", borderTop: "1px solid #E8EAF0", display: "flex", justifyContent: "space-between", gap: 10, position: "sticky", bottom: 0 }}>
+                <button onClick={() => printStudentStatement(studentModal)}
+                  title="Print the full yearly statement — transactions, running balance, votehead annexure"
+                  style={{ padding: "10px 18px", borderRadius: 8, border: "1px solid #1A5F9C", background: "#fff", color: "#1A5F9C", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                  🧾 Statement (PDF)
                 </button>
-                <button onClick={() => setStudentModal(null)}
-                  style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #e6dfd8", background: "#fff", color: "#8a8fa8", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                  Close
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={() => { const s = studentModal; setStudentModal(null); openPayModal(s); }}
+                    style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: "#1B6B3A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                    + Record Payment
+                  </button>
+                  <button onClick={() => setStudentModal(null)}
+                    style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #e6dfd8", background: "#fff", color: "#8a8fa8", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Student Charges Modal — personal votehead pricing with live bill impact */}
+      {studentChargeModal && (() => {
+        const student = studentChargeModal;
+        const catBadge = categoryLabelFor(student);
+        const availableVoteheads = Object.values(voteheadsById)
+          .filter(v => v.is_active !== false)
+          .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999) || (a.display_order ?? 0) - (b.display_order ?? 0));
+
+        // The student's CLASS sheet (shared + category, scope-filtered) WITHOUT
+        // personal charges — the baseline these rows override or add to.
+        const cat = categoryFor(student);
+        const baseByVh = new Map();
+        [false, true].forEach(specificPass => {
+          structureRows.forEach(r => {
+            if (r.fee_level !== student.level_id) return;
+            const isSpecific = !!r.category_id;
+            if (isSpecific !== specificPass) return;
+            if (isSpecific && r.category_id !== cat) return;
+            const vh = voteheadsById[r.votehead_id];
+            if (vh) {
+              if (vh.is_active === false) return;
+              const scope = vh.applies_to || 'all';
+              if (scope === 'boarders' && !isBoarder(student)) return;
+              if (scope === 'day' && isBoarder(student)) return;
+            }
+            baseByVh.set(r.votehead_id, { t1: Number(r.t1), t2: Number(r.t2), t3: Number(r.t3) });
+          });
+        });
+        const baseTotal = [...baseByVh.values()].reduce((s, b) => s + b.t1 + b.t2 + b.t3, 0);
+
+        // Live final bill: baseline, minus overridden base rows, plus form rows.
+        const num = (v) => Number(v) || 0;
+        const rowTotal = (r) => num(r.t1) + num(r.t2) + num(r.t3);
+        let finalTotal = baseTotal;
+        chargeFormRows.forEach(r => {
+          if (!r.votehead_id) return;
+          const base = baseByVh.get(r.votehead_id);
+          finalTotal += rowTotal(r) - (base ? base.t1 + base.t2 + base.t3 : 0);
+        });
+        const chosen = new Set(chargeFormRows.map(r => r.votehead_id).filter(Boolean));
+        const termSum = (k) => chargeFormRows.reduce((s, r) => s + num(r[k]), 0);
+        const cellTh = { padding: "8px 6px", textAlign: "left", fontSize: 10, color: "#8A8FA8", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "2px solid #E8EAF0" };
+        const amtInput = { ...modalInput, textAlign: "right", fontFamily: "monospace", padding: "9px 10px" };
+
+        return (
+          <div
+            onClick={() => !isSavingCharge && setStudentChargeModal(null)}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}
+          >
+            <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", width: 820, maxWidth: "100%", borderRadius: 16, overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: "90vh", boxShadow: "0 20px 25px -5px rgba(0,0,0,0.2)" }}>
+              {/* Header */}
+              <div style={{ padding: "18px 24px", borderBottom: "1px solid #E8EAF0", background: "#FAFBFC", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, color: "#1A5F9C", textTransform: "uppercase", letterSpacing: "0.08em" }}>Personal Charges · {year}</div>
+                  <h3 style={{ margin: "3px 0 2px", fontSize: 18, fontWeight: 800, color: "#1A1A2E" }}>{studentName(student)}</h3>
+                  <div style={{ fontSize: 12, color: "#8A8FA8", display: "flex", alignItems: "center", gap: 8 }}>
+                    ADM {student.adm_no}
+                    <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10, fontWeight: 700, background: catBadge.bg, color: catBadge.fg }}>{catBadge.icon} {catBadge.name}</span>
+                  </div>
+                </div>
+                <button onClick={() => setStudentChargeModal(null)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#8A8FA8", lineHeight: 1 }}>×</button>
+              </div>
+
+              {/* Live bill impact */}
+              <div style={{ display: "flex", gap: 10, padding: "14px 24px 0" }}>
+                {[["Class bill", baseTotal, "#4A4A6A"],
+                  ["Personal adjustment", finalTotal - baseTotal, finalTotal - baseTotal >= 0 ? "#8A6A1F" : "#1B6B3A"],
+                  ["Final bill", finalTotal, "#1A5F9C"]].map(([lbl, val, col], i) => (
+                  <div key={lbl} style={{ flex: 1, padding: "9px 12px", background: i === 2 ? "#F4F9FE" : "#F8FAFC", border: i === 2 ? "1.5px solid #1A5F9C" : "1px solid #E8EAF0", borderRadius: 10, textAlign: "center" }}>
+                    <div style={{ fontSize: 9.5, fontWeight: 800, color: "#8A8FA8", textTransform: "uppercase", letterSpacing: "0.04em" }}>{lbl}</div>
+                    <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "monospace", color: col, marginTop: 2 }}>
+                      {lbl === "Personal adjustment" && val > 0 ? "+" : ""}{Math.round(val).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Charge rows */}
+              <div style={{ padding: "16px 24px", overflowY: "auto", flex: 1 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ ...cellTh, width: "34%" }}>Votehead</th>
+                      <th style={{ ...cellTh, textAlign: "right" }}>Term 1</th>
+                      <th style={{ ...cellTh, textAlign: "right" }}>Term 2</th>
+                      <th style={{ ...cellTh, textAlign: "right" }}>Term 3</th>
+                      <th style={{ ...cellTh, textAlign: "right", width: 90 }}>Total</th>
+                      <th style={{ ...cellTh, width: 36 }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {chargeFormRows.length === 0 && (
+                      <tr><td colSpan="6" style={{ padding: "26px 10px", textAlign: "center", color: "#8A8FA8", fontSize: 12.5, lineHeight: 1.6 }}>
+                        <div style={{ fontSize: 22, marginBottom: 4 }}>🎯</div>
+                        No personal charges yet — e.g. add <strong>Transport</strong> with this student's route amount per term.<br />
+                        A charge <strong>overrides</strong> the class price for that votehead, or <strong>adds on top</strong> if the class doesn't bill it.
+                      </td></tr>
+                    )}
+                    {chargeFormRows.map((r, i) => {
+                      const base = r.votehead_id ? baseByVh.get(r.votehead_id) : null;
+                      return (
+                        <React.Fragment key={i}>
+                          <tr>
+                            <td style={{ padding: "10px 6px 2px 0" }}>
+                              <select value={r.votehead_id} onChange={e => {
+                                const newRows = [...chargeFormRows];
+                                newRows[i].votehead_id = e.target.value;
+                                setChargeFormRows(newRows);
+                              }} style={{ ...modalInput, fontWeight: 600 }}>
+                                <option value="">— Select votehead —</option>
+                                {availableVoteheads
+                                  .filter(v => v.id === r.votehead_id || !chosen.has(v.id))
+                                  .map(v => <option key={v.id} value={v.id}>{v.code} — {v.description}</option>)}
+                              </select>
+                              {r.votehead_id && (
+                                <div style={{ marginTop: 4 }}>
+                                  {base ? (
+                                    <span style={{ padding: "1px 8px", borderRadius: 999, fontSize: 9.5, fontWeight: 700, background: "#FDF9F0", color: "#8A6A1F", border: "1px solid #EAD9A8" }}>
+                                      ⤴ overrides class price ({(base.t1 + base.t2 + base.t3).toLocaleString()}/yr)
+                                    </span>
+                                  ) : (
+                                    <span style={{ padding: "1px 8px", borderRadius: 999, fontSize: 9.5, fontWeight: 700, background: "#E8F5EE", color: "#1B6B3A" }}>
+                                      ＋ adds on top of class bill
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                            {["t1", "t2", "t3"].map(k => (
+                              <td key={k} style={{ padding: "10px 4px 2px", verticalAlign: "top" }}>
+                                <input type="number" min="0" placeholder="0" value={r[k]}
+                                  onChange={e => { const newRows = [...chargeFormRows]; newRows[i][k] = e.target.value; setChargeFormRows(newRows); }}
+                                  style={amtInput} />
+                              </td>
+                            ))}
+                            <td style={{ padding: "10px 6px 2px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: "#D4AF37", verticalAlign: "top", fontSize: 13.5 }}>
+                              <div style={{ paddingTop: 9 }}>{Math.round(rowTotal(r)).toLocaleString()}</div>
+                            </td>
+                            <td style={{ padding: "10px 0 2px", textAlign: "center", verticalAlign: "top" }}>
+                              <button title="Remove this charge" onClick={() => setChargeFormRows(chargeFormRows.filter((_, idx) => idx !== i))}
+                                style={{ background: "none", border: "none", color: "#C0392B", cursor: "pointer", fontSize: 15, paddingTop: 9, opacity: 0.7 }}>🗑️</button>
+                            </td>
+                          </tr>
+                          <tr style={{ borderBottom: "1px solid #F0F2F5" }}>
+                            <td colSpan="6" style={{ padding: "0 0 10px" }}>
+                              <input type="text" value={r.notes} placeholder='Note (optional) — e.g. "Kapsabet route"'
+                                onChange={e => { const newRows = [...chargeFormRows]; newRows[i].notes = e.target.value; setChargeFormRows(newRows); }}
+                                style={{ ...modalInput, fontSize: 12, padding: "6px 10px", background: "#FCFBF9" }} />
+                            </td>
+                          </tr>
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                  {chargeFormRows.length > 0 && (
+                    <tfoot>
+                      <tr style={{ borderTop: "2px solid #2a2421" }}>
+                        <td style={{ padding: "9px 6px", fontWeight: 800, fontSize: 12 }}>PERSONAL CHARGES TOTAL</td>
+                        {["t1", "t2", "t3"].map(k => (
+                          <td key={k} style={{ padding: "9px 4px", textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>{Math.round(termSum(k)).toLocaleString()}</td>
+                        ))}
+                        <td style={{ padding: "9px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: "#1A5F9C", fontSize: 13.5 }}>
+                          {Math.round(termSum("t1") + termSum("t2") + termSum("t3")).toLocaleString()}
+                        </td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+
+                <button onClick={() => setChargeFormRows([...chargeFormRows, { votehead_id: '', t1: '', t2: '', t3: '', notes: '' }])}
+                  style={{ background: "#FAFBFC", border: "1.5px dashed #c9c2b8", borderRadius: 10, padding: "11px", width: "100%", cursor: "pointer", color: "#4A4A6A", fontSize: 13, fontWeight: 700, marginTop: 12 }}>
+                  ＋ Add Votehead Charge
                 </button>
+              </div>
+
+              {/* Footer */}
+              <div style={{ padding: "14px 24px", borderTop: "1px solid #E8EAF0", background: "#FAFBFC", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <div style={{ fontSize: 12, color: "#8A8FA8" }}>
+                  Changes apply to balances immediately{finalTotal !== baseTotal ? <> — final bill <strong style={{ color: "#1A5F9C", fontFamily: "monospace" }}>KES {Math.round(finalTotal).toLocaleString()}</strong></> : ""}.
+                </div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={() => setStudentChargeModal(null)} style={{ padding: "10px 18px", border: "1px solid #D0D5DD", borderRadius: 8, background: "#fff", color: "#4A4A6A", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Cancel</button>
+                  <button onClick={handleSaveStudentCharges} disabled={isSavingCharge} style={{ padding: "10px 22px", border: "none", borderRadius: 8, background: isSavingCharge ? "#8a8fa8" : "#1B6B3A", color: "#fff", fontWeight: 700, fontSize: 13, cursor: isSavingCharge ? "wait" : "pointer" }}>
+                    {isSavingCharge ? 'Saving…' : 'Save Charges'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1606,18 +2361,34 @@ const Fees = ({ schoolConfig }) => {
               <div style={{ fontSize: 10.5, fontWeight: 800, color: "#8A8FA8", marginBottom: 6 }}>SETTLED AGAINST</div>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                 <tbody>
-                  {(receiptView.allocations || []).length === 0 ? (
-                    <tr><td style={{ padding: "4px 0", color: "#8A8FA8", fontStyle: "italic" }}>Held as credit — no outstanding invoice at time of payment.</td></tr>
-                  ) : receiptView.allocations.map((a, i) => (
-                    <tr key={i}>
-                      <td style={{ padding: "3px 0", color: "#2a2421" }}>{a.description} {a.invoice_no && <span style={{ color: "#8A8FA8", fontSize: 10.5 }}>({a.invoice_no})</span>}</td>
-                      <td style={{ padding: "3px 0", textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{Number(a.amount).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                  {receiptView.credit > 0 && (
+                  {(receiptView.allocations || []).length === 0 && (receiptView.virtualAllocations || []).length === 0 ? (
+                    <tr><td style={{ padding: "4px 0", color: "#8A8FA8", fontStyle: "italic" }}>Held as credit — nothing outstanding at time of payment.</td></tr>
+                  ) : (
+                    <>
+                      {(receiptView.allocations || []).map((a, i) => (
+                        <tr key={`real-${i}`}>
+                          <td style={{ padding: "3px 0", color: "#2a2421" }}>{a.description} {a.invoice_no && <span style={{ color: "#8A8FA8", fontSize: 10.5 }}>({a.invoice_no})</span>}</td>
+                          <td style={{ padding: "3px 0", textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{Number(a.amount).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                      {(receiptView.virtualAllocations || []).map((a, i) => (
+                        <tr key={`virt-${i}`}>
+                          <td style={{ padding: "3px 0", color: "#2a2421" }}>{a.description} <span style={{ color: "#8A6A1F", fontSize: 10.5 }}>(Term {a.term} — to be invoiced)</span></td>
+                          <td style={{ padding: "3px 0", textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{Math.round(Number(a.amount)).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </>
+                  )}
+                  {(receiptView.virtualAllocations !== undefined
+                    ? receiptView.prepayNext > 0.005
+                    : receiptView.credit > 0) && (
                     <tr>
-                      <td style={{ padding: "3px 0", color: "#1A5F9C", fontWeight: 600 }}>Credit carried forward</td>
-                      <td style={{ padding: "3px 0", textAlign: "right", fontFamily: "monospace", fontWeight: 600, color: "#1A5F9C" }}>{receiptView.credit.toLocaleString()}</td>
+                      <td style={{ padding: "3px 0", color: "#1A5F9C", fontWeight: 600 }}>
+                        {receiptView.virtualAllocations !== undefined ? `Prepayment for ${year + 1}` : 'Credit carried forward'}
+                      </td>
+                      <td style={{ padding: "3px 0", textAlign: "right", fontFamily: "monospace", fontWeight: 600, color: "#1A5F9C" }}>
+                        {Math.round(receiptView.virtualAllocations !== undefined ? receiptView.prepayNext : receiptView.credit).toLocaleString()}
+                      </td>
                     </tr>
                   )}
                   <tr>

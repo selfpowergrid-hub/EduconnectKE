@@ -44,6 +44,53 @@ fees policies require auth) — surfaced by Phase 8 hardening.
 | staff | full | own + colleagues (read) | none | none | none |
 | marks / exams | full | own subjects | none | none | none |
 
+### Final Accounts module (Phases A–E, 2026-07-06/07)
+
+| Table group | Admin | Teacher | Bursar | Accountant | Auditor | Anon |
+|---|---|---|---|---|---|---|
+| gl_accounts, bank_accounts, suppliers (+bills/items), supplier_payments (+allocations), purchase_orders (+items), expense_vouchers | full | none | full | full | read | none |
+| gl_journals, gl_journal_lines | read | none | read | read | read | none |
+| fiscal_locks | read (set via admin RPC) | none | read | read | read | none |
+| payroll_rates (global reference) | read | read* | read | read | read | none |
+| **staff_payroll_profiles, payroll_runs, payslips, payslip_lines, statutory_payments** | full | **none** | full | **none** | **none** | none |
+
+\* payroll_rates carries no school data (national statutory bands only).
+
+Payroll is deliberately the tightest group: only `is_payroll_staff()` (admin +
+bursar) — accountants keep AP/fees but cannot read colleagues' salaries; the
+auditor sees payroll's *ledger effect* (gl_journal_lines) but not individual pay.
+GL writes have **no INSERT/UPDATE/DELETE policies at all** — postings happen
+only inside SECURITY DEFINER triggers/RPCs; gl_journals/lines are append-only
+(UPDATE blocked by trigger) and every money mutation posts through them, which
+is also where the single fiscal-lock guard lives.
+
+## Automated probes (Final Accounts) — PASSING 2026-07-07
+
+**Anonymous probe — 42 checks, all pass:** SELECT returns 0 rows / denied on all
+15 new tables (gl_accounts, gl_journals, gl_journal_lines, bank_accounts,
+suppliers, supplier_invoices, supplier_invoice_items, supplier_payments,
+supplier_payment_allocations, purchase_orders, purchase_order_items,
+expense_vouchers, staff_payroll_profiles, payroll_runs, payslips, payslip_lines,
+payroll_rates, statutory_payments, fiscal_locks); INSERT denied; all 17 new
+RPCs reject anon with 42501.
+
+**Authenticated probe (real admin login) — 20 checks, all pass:**
+- Positive access: admin reads all finance/GL/payroll tables (28 GL accounts,
+  3 bank accounts, seeded rates row).
+- **GL balanced: Dr 39,000.00 = Cr 39,000.00** — the fee-ledger→GL bridge and
+  backfill reconcile exactly (26 journals at probe time).
+- get_cashbook / get_ap_summary / get_ap_aging / get_statutory_summary all work.
+- **Cross-tenant guards:** every read and write RPC rejects a foreign
+  school_id ("Not authorized …"); table reads filtered to a foreign school
+  return 0 rows.
+- post_gl_journal rejects an unbalanced journal (Dr 100 vs Cr 55).
+
+Still manual (needs bursar/accountant/auditor/teacher logins): the per-role
+checklist below, plus one new line —
+
+- [ ] Accountant login: Suppliers/Banking/Final Accounts visible; **Payroll nav
+      absent and `staff_payroll_profiles` returns 0 rows**.
+
 ## Manual test checklist (needs real logins — not runnable from CLI)
 
 Smoke-test in the running app after this security change (it touches the

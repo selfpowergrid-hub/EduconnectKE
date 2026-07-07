@@ -148,13 +148,50 @@ directly, audited (no approval workflow).
   column. `get_student_fee_summary` + `generate_invoices` + client `billedFor`/
   `breakdownFor` now key boarder scope off boarding_status, not dorm presence.
   Migration: `20260704110000_fees_phase10a_boarding_status.sql`.
-- **10b — Overrides engine** (next): `student_fee_overrides` (student, year, optional
-  term, optional votehead, kind exempt|percentage|fixed, value, reason). Resolver
-  applied in owed computation (generate_invoices, get_student_fee_summary, client
-  breakdown). More-specific rule wins. Audited via the generic fee audit trigger.
-- **10c — Management UI** (next): "Special billing" panel in the student drill-down
-  modal (Exempt / Set % for a term / Custom amount) + a "Special billing" oversight
-  filter in Fee Balances; "adjusted" tag wherever a bill differs from standard.
+- **10b — Per-grade pricing + fee categories** ✅ (built; direction revised by user):
+  pricing key is now (GRADE × CATEGORY × votehead × year). `fee_categories`
+  (system Day Scholar/Boarder seeded per school + named specials via "+ New
+  structure"); `fee_structures.fee_level` now stores grade codes (band sheets
+  expanded per grade, bills unchanged); `fee_structures.category_id` (NULL = "All
+  students" shared sheet). Combination rule: category row OVERRIDES the shared row
+  for the same votehead, else adds on. `students.fee_category_id` +
+  `student_fee_category()` (explicit assignment, else boarding_status → Day/Boarder).
+  `get_student_fee_summary` / `generate_invoices` / client billing all use the
+  effective merged sheet (DISTINCT ON specific-first). Level Pricing UI: Year →
+  Level → Grade selects, category pills with counts, override badges, "X PAYS
+  (incl. inherited)" effective totals footer, per-grade publish toggle.
+  Migration: `20260704120000_fees_phase10b_categories_grades.sql`.
+- **10c — Student category assignment** ✅ (built): category picker on the student
+  (admission form + student fee drill-down), category badge/filter in Fee Balances,
+  bulk assignment. `students.fee_category_id` surfaced in Settings + Fees.
+  Migration: `20260704140000_default_category_all_students.sql` (defaults every
+  existing student to the shared "All students" sheet).
+
+## Phase 11 — Student-specific charges ✅ (built)
+
+Per-student, per-votehead overrides for one-off situations the category/grade sheets
+can't express (a single student's extra transport leg, a private-tuition top-up).
+- `student_votehead_charges` (student × votehead × year, t1/t2/t3, notes; school-scoped
+  RLS + audit trigger). `get_student_fee_summary()` and `generate_invoices()` re-issued
+  to fold these amounts into the effective bill on top of the merged category sheet.
+  Migration: `20260706000000_student_specific_charges.sql`.
+
+## Finance defaults ✅ (built)
+
+Small quality-of-life layer on `fee_settings`:
+- `working_year` + `current_term` — what finance screens/forms open on (NULL = by
+  calendar); surfaced in Finance Settings → Defaults.
+- `get_next_receipt_no()` / `set_receipt_counter()` — show and seed the next receipt
+  number (forward-only, so numbering can continue from a paper book without minting
+  duplicates). Migration: `20260706110000_finance_defaults.sql`.
+
+## Pocket Money ✅ (built) — custodial, deliberately outside the fee ledger
+
+Student personal-money accounts (parent deposits, student withdrawals, running
+balance). **Nothing here touches the fee tables, the double-entry ledger, or finance
+reports** — it shares only the admin/finance RLS model and the audit trail. New
+`PocketMoney` page under Accounting → Fees; nav id `pocket-money` in `modules.js` +
+all plans. Migration: `20260706100000_pocket_money.sql`.
 
 ## Open questions
 

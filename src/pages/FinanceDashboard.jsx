@@ -24,12 +24,24 @@ const allocActive = (a) =>
   || a.fee_bursary_awards?.status === 'active';
 
 const FinanceDashboard = ({ schoolConfig }) => {
-  const [year] = useState(new Date().getFullYear());
+  const [year, setYear] = useState(new Date().getFullYear());
+
+  // Honour the school's working year from Finance Settings (once).
+  useEffect(() => {
+    if (!schoolConfig?.id) return;
+    (async () => {
+      const { data } = await supabase
+        .from('fee_settings').select('working_year')
+        .eq('school_id', schoolConfig.id).maybeSingle();
+      if (data?.working_year) setYear(data.working_year);
+    })();
+  }, [schoolConfig?.id]);
   const [invoices, setInvoices] = useState([]);
   const [allocations, setAllocations] = useState([]);
   const [payments, setPayments] = useState([]);
   const [students, setStudents] = useState([]);
   const [ledgerTotals, setLedgerTotals] = useState([]);
+  const [glTotals, setGlTotals] = useState([]);   // GL trial balance for the year (income/expense strip)
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -37,7 +49,7 @@ const FinanceDashboard = ({ schoolConfig }) => {
     const load = async () => {
       setIsLoading(true);
       try {
-        const [inv, alloc, pays, studs, ledger] = await Promise.all([
+        const [inv, alloc, pays, studs, ledger, gl] = await Promise.all([
           supabase.from('fee_invoices').select('id, student_id, term, total, status')
             .eq('school_id', schoolConfig.id).eq('year', year),
           supabase.from('fee_payment_allocations')
@@ -54,12 +66,18 @@ const FinanceDashboard = ({ schoolConfig }) => {
             p_from: `${year}-01-01`,
             p_to: `${year}-12-31`,
           }),
+          supabase.rpc('get_gl_trial_balance', {
+            p_school_id: schoolConfig.id,
+            p_from: `${year}-01-01`,
+            p_to: `${year}-12-31`,
+          }),
         ]);
         setInvoices((inv.data || []).filter(i => i.status !== 'cancelled'));
         setAllocations(alloc.data || []);
         setPayments(pays.data || []);
         setStudents(studs.data || []);
         setLedgerTotals(ledger.data || []);
+        setGlTotals(Array.isArray(gl.data) ? gl.data : []);
       } catch (err) {
         console.error('Finance dashboard load failed:', err);
       } finally {
@@ -114,6 +132,17 @@ const FinanceDashboard = ({ schoolConfig }) => {
     return { debits: d, credits: c, ok: Math.abs(d - c) < 0.01 };
   }, [ledgerTotals]);
 
+  // Income vs expenses per the general ledger (Final Accounts Phase E strip).
+  const glSummary = useMemo(() => {
+    let income = 0, expense = 0;
+    glTotals.forEach(r => {
+      const net = Number(r.debits) - Number(r.credits);
+      if (r.type === 'income') income -= net;       // income = net credit
+      else if (r.type === 'expense') expense += net;
+    });
+    return { income, expense, surplus: income - expense };
+  }, [glTotals]);
+
   if (isLoading) {
     return <div style={{ padding: 60, textAlign: 'center', color: '#8A8FA8' }}>Loading finance dashboard…</div>;
   }
@@ -138,6 +167,17 @@ const FinanceDashboard = ({ schoolConfig }) => {
             <div style={{ width: `${stats.rate}%`, height: '100%', background: '#1B6B3A', borderRadius: 3 }} />
           </div>} />
       </div>
+
+      {/* Income vs expenses (general ledger) */}
+      {(glSummary.income !== 0 || glSummary.expense !== 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14, marginBottom: 20 }}>
+          <Tile label={`Income ${year} (ledger)`} value={kes(glSummary.income)} color="#1B6B3A" icon="📥" />
+          <Tile label={`Expenses ${year} (ledger)`} value={kes(glSummary.expense)} color="#C0392B" icon="📤" />
+          <Tile label={glSummary.surplus >= 0 ? 'Surplus to date' : 'Deficit to date'}
+            value={kes(Math.abs(glSummary.surplus))}
+            color={glSummary.surplus >= 0 ? '#1B6B3A' : '#C0392B'} icon={glSummary.surplus >= 0 ? '✅' : '⚠️'} />
+        </div>
+      )}
 
       <div className="grid-1" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
         {/* Arrears by grade */}

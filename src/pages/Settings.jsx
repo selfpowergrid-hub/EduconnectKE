@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import * as XLSXLib from 'xlsx';
 import { CLASSES, FEE_STRUCTURE, ACADEMIC_GRADES } from '../data/mockData';
 import { supabase } from '../lib/supabase';
 
@@ -524,11 +525,30 @@ const Settings = ({ schoolConfig, initialTab }) => {
     day: { bg: "#FEF6E7", fg: "#8A6A1F", icon: "☀", text: "Day scholars" },
   };
 
-  // Mapping of fees by level: "pp", "lower_pri", "upper_pri", "jss", "sss"
-  // Each item: { id (fee_structure id), voteheadId, t1, t2, t3 }
+  // Pricing is keyed per GRADE × CATEGORY: "g10|all", "g10|<categoryId>", ...
+  // Each item: { id (fee_structure id), voteheadId, t1, t2, t3, status }
   const [feeStructures, setFeeStructures] = useState({});
-  const [activeFeeLevel, setActiveFeeLevel] = useState("jss");
+  const [pricingBand, setPricingBand] = useState("sss");   // display grouping
+  const [activeGrade, setActiveGrade] = useState("g10");   // the priced grade
+  const [activeCategory, setActiveCategory] = useState("all"); // 'all' | category id
+  const [feeCategories, setFeeCategories] = useState([]);  // Day/Boarder + specials
   const [feeYear, setFeeYear] = useState(new Date().getFullYear());
+
+  // CBC bands drive the Level -> Grade selection.
+  const PRICING_BANDS = {
+    pp:        { label: "Pre-Primary",       grades: ["pp1", "pp2"] },
+    lower_pri: { label: "Lower Primary",     grades: ["g1", "g2", "g3"] },
+    upper_pri: { label: "Upper Primary",     grades: ["g4", "g5", "g6"] },
+    jss:       { label: "Junior Secondary",  grades: ["g7", "g8", "g9"] },
+    sss:       { label: "Senior Secondary",  grades: ["g10", "g11", "g12"] },
+  };
+  const GRADE_LABELS = {
+    pp1: "PP1", pp2: "PP2",
+    g1: "Grade 1", g2: "Grade 2", g3: "Grade 3", g4: "Grade 4", g5: "Grade 5", g6: "Grade 6",
+    g7: "Grade 7", g8: "Grade 8", g9: "Grade 9", g10: "Grade 10", g11: "Grade 11", g12: "Grade 12",
+  };
+  const CATEGORY_ICON = { day: "☀", boarder: "🛏", special: "⭐" };
+  const sheetKey = (grade, cat) => `${grade}|${cat || 'all'}`;
 
   const fetchVoteheads = async () => {
     try {
@@ -545,6 +565,26 @@ const Settings = ({ schoolConfig, initialTab }) => {
     }
   };
 
+  const fetchFeeCategories = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('fee_categories')
+        .select('*')
+        .eq('school_id', schoolConfig.id)
+        .order('is_system', { ascending: false })
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      setFeeCategories(data || []);
+    } catch (err) {
+      console.error('Error fetching fee categories:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (schoolConfig?.id) fetchFeeCategories();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schoolConfig?.id]);
+
   // Re-load fee structures whenever the school or selected year changes.
   useEffect(() => {
     if (!schoolConfig?.id) return;
@@ -556,23 +596,26 @@ const Settings = ({ schoolConfig, initialTab }) => {
           .eq('school_id', schoolConfig.id)
           .eq('year', feeYear);
         if (error) throw error;
-        const byLevel = {};
+        const bySheet = {};
         (data || []).forEach(row => {
-          (byLevel[row.fee_level] = byLevel[row.fee_level] || []).push({
+          const k = sheetKey(row.fee_level, row.category_id);
+          (bySheet[k] = bySheet[k] || []).push({
             id: row.id,
             voteheadId: row.votehead_id,
+            categoryId: row.category_id || null,
             t1: Number(row.t1),
             t2: Number(row.t2),
             t3: Number(row.t3),
             status: row.status || 'published',
           });
         });
-        setFeeStructures(byLevel);
+        setFeeStructures(bySheet);
       } catch (err) {
         console.error('Error fetching fee structures:', err);
       }
     };
     fetchFeeStructures();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolConfig?.id, feeYear]);
   const [newFeeItem, setNewFeeItem] = useState({ voteheadId: "", t1: "", t2: "", t3: "" });
 
@@ -694,9 +737,16 @@ const Settings = ({ schoolConfig, initialTab }) => {
     })();
   }, [schoolConfig?.id, feeStructures]);
 
-  // A level's structure is "draft" if any of its rows are draft. New rows
-  // inherit the level's current state so a draft stays fully draft.
-  const levelIsDraft = (feeStructures[activeFeeLevel] || []).some(i => i.status === 'draft');
+  // The sheet being edited: current grade × current category.
+  const activeSheetKey = sheetKey(activeGrade, activeCategory === 'all' ? null : activeCategory);
+  const activeSheet = feeStructures[activeSheetKey] || [];
+  const sharedSheet = feeStructures[sheetKey(activeGrade, null)] || [];
+
+  // Publish state is per GRADE + YEAR (all its categories together): a grade's
+  // structure is "draft" if any of its rows are draft. New rows inherit it.
+  const levelIsDraft = Object.entries(feeStructures)
+    .filter(([k]) => k.startsWith(`${activeGrade}|`))
+    .some(([, items]) => items.some(i => i.status === 'draft'));
 
   const setLevelStatus = async (newStatus) => {
     try {
@@ -704,13 +754,16 @@ const Settings = ({ schoolConfig, initialTab }) => {
         .from('fee_structures')
         .update({ status: newStatus })
         .eq('school_id', schoolConfig.id)
-        .eq('fee_level', activeFeeLevel)
+        .eq('fee_level', activeGrade)
         .eq('year', feeYear);
       if (error) throw error;
-      setFeeStructures(prev => ({
-        ...prev,
-        [activeFeeLevel]: (prev[activeFeeLevel] || []).map(i => ({ ...i, status: newStatus })),
-      }));
+      setFeeStructures(prev => {
+        const next = { ...prev };
+        Object.keys(next).forEach(k => {
+          if (k.startsWith(`${activeGrade}|`)) next[k] = next[k].map(i => ({ ...i, status: newStatus }));
+        });
+        return next;
+      });
     } catch (err) {
       alert('Failed to change publish state: ' + err.message);
     }
@@ -719,11 +772,13 @@ const Settings = ({ schoolConfig, initialTab }) => {
   const handleAddFeeItem = async () => {
     if (!newFeeItem.voteheadId) return;
     try {
+      const catId = activeCategory === 'all' ? null : activeCategory;
       const { data, error } = await supabase
         .from('fee_structures')
         .insert([{
           school_id: schoolConfig.id,
-          fee_level: activeFeeLevel,
+          fee_level: activeGrade,
+          category_id: catId,
           votehead_id: newFeeItem.voteheadId,
           year: feeYear,
           t1: parseFloat(newFeeItem.t1) || 0,
@@ -737,6 +792,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
       const item = {
         id: data.id,
         voteheadId: data.votehead_id,
+        categoryId: data.category_id || null,
         t1: Number(data.t1),
         t2: Number(data.t2),
         t3: Number(data.t3),
@@ -744,13 +800,15 @@ const Settings = ({ schoolConfig, initialTab }) => {
       };
       setFeeStructures(prev => ({
         ...prev,
-        [activeFeeLevel]: [...(prev[activeFeeLevel] || []), item]
+        [activeSheetKey]: [...(prev[activeSheetKey] || []), item]
       }));
       setNewFeeItem({ voteheadId: "", t1: "", t2: "", t3: "" });
     } catch (err) {
       alert(err.code === '23505'
-        ? 'This votehead is already in the fee structure for this level and year. Delete it first to change the amounts.'
-        : 'Failed to add fee item: ' + err.message);
+        ? 'This votehead is already priced on this sheet for this grade and year. Delete it first to change the amounts.'
+        : (err.message || '').includes('row-level security')
+          ? 'Your sign-in session appears to have expired. Refresh the page (or sign out and back in) and try again.'
+          : 'Failed to add fee item: ' + err.message);
     }
   };
 
@@ -760,11 +818,264 @@ const Settings = ({ schoolConfig, initialTab }) => {
       if (error) throw error;
       setFeeStructures(prev => ({
         ...prev,
-        [activeFeeLevel]: prev[activeFeeLevel].filter(item => item.id !== id)
+        [activeSheetKey]: (prev[activeSheetKey] || []).filter(item => item.id !== id)
       }));
     } catch (err) {
       alert('Failed to delete fee item: ' + err.message);
     }
+  };
+
+  // Inline editing of a priced row's term amounts.
+  const [editingFeeItemId, setEditingFeeItemId] = useState(null);
+  const [feeItemEdit, setFeeItemEdit] = useState({ t1: "", t2: "", t3: "" });
+
+  const startEditFeeItem = (item) => {
+    setEditingFeeItemId(item.id);
+    setFeeItemEdit({ t1: String(item.t1), t2: String(item.t2), t3: String(item.t3) });
+  };
+
+  const saveFeeItemEdit = async () => {
+    const t1 = parseFloat(feeItemEdit.t1) || 0;
+    const t2 = parseFloat(feeItemEdit.t2) || 0;
+    const t3 = parseFloat(feeItemEdit.t3) || 0;
+    if (t1 < 0 || t2 < 0 || t3 < 0) { alert('Amounts cannot be negative.'); return; }
+    try {
+      const { error } = await supabase
+        .from('fee_structures')
+        .update({ t1, t2, t3 })
+        .eq('id', editingFeeItemId);
+      if (error) throw error;
+      setFeeStructures(prev => ({
+        ...prev,
+        [activeSheetKey]: (prev[activeSheetKey] || []).map(i =>
+          i.id === editingFeeItemId ? { ...i, t1, t2, t3 } : i),
+      }));
+      setEditingFeeItemId(null);
+    } catch (err) {
+      alert('Failed to save amounts: ' + err.message);
+    }
+  };
+
+  // "+ New structure": a named special-case category (e.g. "Mid-term joiners").
+  const handleAddSpecialCategory = async () => {
+    const name = window.prompt('Name the special fee structure (e.g. "Mid-term joiners", "Staff children"):');
+    if (name === null) return;
+    if (!name.trim() || name.trim().length < 3) { alert('Give it a name of at least 3 characters.'); return; }
+    try {
+      const { data, error } = await supabase
+        .from('fee_categories')
+        .insert([{ school_id: schoolConfig.id, name: name.trim(), kind: 'special' }])
+        .select()
+        .single();
+      if (error) throw error;
+      setFeeCategories(prev => [...prev, data]);
+      setActiveCategory(data.id);
+    } catch (err) {
+      alert(err.code === '23505'
+        ? `A structure named "${name.trim()}" already exists.`
+        : 'Failed to create structure: ' + err.message);
+    }
+  };
+
+  // Effective bill for any (grade, category): shared rows, overridden per
+  // votehead by the category's own rows, plus category-only extras.
+  const effectiveSheetFor = (grade, cat) => {
+    const shared = feeStructures[sheetKey(grade, null)] || [];
+    if (cat === 'all') return shared;
+    const merged = new Map();
+    shared.forEach(i => merged.set(i.voteheadId, { ...i, source: 'shared' }));
+    (feeStructures[sheetKey(grade, cat)] || []).forEach(i => merged.set(i.voteheadId, { ...i, source: 'category' }));
+    return [...merged.values()];
+  };
+  const effectiveSheet = effectiveSheetFor(activeGrade, activeCategory);
+
+  // What the pricing grid displays: for a category, the FULL effective bill —
+  // inherited shared rows (read-only, overridable) alongside the category's
+  // own rows — so the grid always matches the printed report.
+  const vhOrderIdx = new Map(voteheads.map((v, i) => [v.id, i]));
+  const displaySheet = (activeCategory === 'all'
+    ? activeSheet.map(i => ({ ...i, source: 'category' }))
+    : effectiveSheet
+  ).slice().sort((a, b) => (vhOrderIdx.get(a.voteheadId) ?? 999) - (vhOrderIdx.get(b.voteheadId) ?? 999));
+
+  // Turn an inherited shared row into a category override: copy it onto the
+  // category sheet, then open it for editing immediately.
+  const overrideInheritedRow = async (item) => {
+    try {
+      const { data, error } = await supabase
+        .from('fee_structures')
+        .insert([{
+          school_id: schoolConfig.id,
+          fee_level: activeGrade,
+          category_id: activeCategory,
+          votehead_id: item.voteheadId,
+          year: feeYear,
+          t1: item.t1, t2: item.t2, t3: item.t3,
+          status: levelIsDraft ? 'draft' : 'published',
+        }])
+        .select()
+        .single();
+      if (error) throw error;
+      const newItem = {
+        id: data.id, voteheadId: data.votehead_id, categoryId: data.category_id,
+        t1: Number(data.t1), t2: Number(data.t2), t3: Number(data.t3),
+        status: data.status || 'published',
+      };
+      setFeeStructures(prev => ({
+        ...prev,
+        [activeSheetKey]: [...(prev[activeSheetKey] || []), newItem],
+      }));
+      startEditFeeItem(newItem);
+    } catch (err) {
+      alert((err.message || '').includes('row-level security')
+        ? 'Your sign-in session appears to have expired. Refresh the page and try again.'
+        : 'Failed to override: ' + err.message);
+    }
+  };
+
+  // ---- Fee structure exports: ALL price sheets of the chosen level — the
+  //      "All students" sheet plus every category (Boarder / Day Scholar /
+  //      specials) that prices anything, labelled, in grade order. Category
+  //      sections show the EFFECTIVE bill (inherited shared charges merged in).
+
+  const exportRowsForLevel = () => {
+    const vhOrder = new Map(voteheads.map((v, i) => [v.id, i]));
+    const mapRows = (items) => items
+      .slice()
+      .sort((a, b) => (vhOrder.get(a.voteheadId) ?? 999) - (vhOrder.get(b.voteheadId) ?? 999))
+      .map(item => {
+        const vh = voteheads.find(v => v.id === item.voteheadId);
+        return {
+          code: vh?.code || '—',
+          description: vh?.description || 'Unknown votehead',
+          t1: item.t1, t2: item.t2, t3: item.t3,
+          total: item.t1 + item.t2 + item.t3,
+        };
+      });
+    const withTotals = (rows) => {
+      const sum = (k) => rows.reduce((a, r) => a + r[k], 0);
+      return { rows, t1: sum('t1'), t2: sum('t2'), t3: sum('t3'), total: sum('total') };
+    };
+
+    const grades = PRICING_BANDS[pricingBand].grades.map(g => {
+      const sections = [];
+      const shared = feeStructures[sheetKey(g, null)] || [];
+      if (shared.length) {
+        sections.push({ name: 'All Students', inherits: false, ...withTotals(mapRows(shared)) });
+      }
+      feeCategories.forEach(c => {
+        const own = feeStructures[sheetKey(g, c.id)] || [];
+        if (own.length) {
+          // Effective bill for this category: shared + overrides + extras.
+          sections.push({ name: c.name, inherits: shared.length > 0, ...withTotals(mapRows(effectiveSheetFor(g, c.id))) });
+        }
+      });
+      return { grade: g, label: GRADE_LABELS[g], sections };
+    });
+    return { grades, levelLabel: PRICING_BANDS[pricingBand].label };
+  };
+
+  const handleExportFeeStructureExcel = () => {
+    const { grades, levelLabel } = exportRowsForLevel();
+    const wb = XLSXLib.utils.book_new();
+    grades.forEach(g => {
+      const aoa = [
+        [`${schoolConfig?.schoolName || 'School'} — Fee Structure ${feeYear}`],
+        [`${g.label} · ${levelLabel}`],
+        [],
+      ];
+      if (g.sections.length === 0) {
+        aoa.push(['No charges priced for this grade yet.']);
+      } else {
+        g.sections.forEach(sec => {
+          aoa.push([`${sec.name}${sec.inherits ? ' (full bill, incl. shared charges)' : ''}`]);
+          aoa.push(['Code', 'Votehead', 'Term 1 (KES)', 'Term 2 (KES)', 'Term 3 (KES)', 'Total (KES)']);
+          sec.rows.forEach(r => aoa.push([r.code, r.description, r.t1, r.t2, r.t3, r.total]));
+          aoa.push(['', 'TOTAL', sec.t1, sec.t2, sec.t3, sec.total]);
+          aoa.push([]);
+        });
+      }
+      const ws = XLSXLib.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 8 }, { wch: 34 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
+      XLSXLib.utils.book_append_sheet(wb, ws, g.label.slice(0, 31));
+    });
+    const safe = (s) => String(s).replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+    XLSXLib.writeFile(wb, `fee_structure_${feeYear}_${safe(levelLabel)}.xlsx`);
+  };
+
+  const handlePrintFeeStructure = () => {
+    const { grades, levelLabel } = exportRowsForLevel();
+    const w = window.open('', '_blank');
+    if (!w) { alert('Allow pop-ups to print the fee structure.'); return; }
+    const fmt = (n) => Math.round(Number(n) || 0).toLocaleString();
+    const sectionTable = (sec) => `
+      <h4>${sec.name}${sec.inherits ? ' <span class="note">(full bill — includes shared charges)</span>' : ''}</h4>
+      <table>
+        <thead><tr><th>Code</th><th>Votehead</th><th class="num">Term 1</th><th class="num">Term 2</th><th class="num">Term 3</th><th class="num">Total (KES)</th></tr></thead>
+        <tbody>
+          ${sec.rows.map(r => `<tr><td>${r.code}</td><td>${r.description}</td><td class="num">${fmt(r.t1)}</td><td class="num">${fmt(r.t2)}</td><td class="num">${fmt(r.t3)}</td><td class="num">${fmt(r.total)}</td></tr>`).join('')}
+          <tr class="total"><td></td><td>TOTAL</td><td class="num">${fmt(sec.t1)}</td><td class="num">${fmt(sec.t2)}</td><td class="num">${fmt(sec.t3)}</td><td class="num">${fmt(sec.total)}</td></tr>
+        </tbody>
+      </table>`;
+    const gradeBlocks = grades.map(g => `
+      <h3>${g.label}</h3>
+      ${g.sections.length === 0
+        ? '<p class="empty">No charges priced for this grade yet.</p>'
+        : g.sections.map(sectionTable).join('')}
+    `).join('');
+    // School letterhead: logo (base64 from school_information.logo_url),
+    // name, contact lines, motto — the printout is an official document.
+    const logo = logoPreview || schoolInfo?.logo_url || '';
+    const contact1 = [schoolConfig?.address, [schoolConfig?.subCounty, schoolConfig?.county].filter(Boolean).join(', ')]
+      .filter(Boolean).join(' · ');
+    const contact2 = [
+      schoolConfig?.phone ? `Tel: ${schoolConfig.phone}` : '',
+      schoolConfig?.email ? `Email: ${schoolConfig.email}` : '',
+      schoolInfo?.website || '',
+    ].filter(Boolean).join(' · ');
+    w.document.write(`<!doctype html><html><head><title>Fee Structure ${feeYear} — ${levelLabel}</title><style>
+      body { font-family: Arial, sans-serif; font-size: 12px; color: #111; margin: 26px; }
+      .letterhead { display: flex; align-items: center; gap: 18px; justify-content: center; }
+      .letterhead img { width: 74px; height: 74px; object-fit: contain; }
+      .lh-text { text-align: center; }
+      .lh-text h2 { margin: 0; font-size: 20px; letter-spacing: 0.5px; text-transform: uppercase; }
+      .lh-line { color: #333; font-size: 11px; margin-top: 2px; }
+      .motto { font-style: italic; color: #555; font-size: 11px; margin-top: 3px; }
+      .lh-rule { border: none; border-top: 3px double #333; margin: 10px 0 8px; }
+      .sub { text-align: center; color: #333; margin: 0 0 16px; font-size: 12px; font-weight: bold; letter-spacing: 1px; }
+      .gen { text-align: center; color: #777; margin: -12px 0 16px; font-size: 10px; }
+      h3 { margin: 22px 0 4px; font-size: 15px; border-bottom: 2px solid #333; padding-bottom: 3px; }
+      h4 { margin: 12px 0 4px; font-size: 12.5px; color: #1A5F9C; }
+      .note { font-weight: normal; color: #777; font-size: 10.5px; }
+      table { width: 100%; border-collapse: collapse; page-break-inside: avoid; margin-bottom: 4px; }
+      th, td { border: 1px solid #bbb; padding: 5px 8px; text-align: left; }
+      th { background: #f0f0f0; font-size: 10px; text-transform: uppercase; }
+      .num { text-align: right; font-family: 'Courier New', monospace; }
+      .total td { font-weight: bold; background: #fafafa; }
+      .empty { color: #777; font-style: italic; font-size: 11.5px; }
+      .foot { margin-top: 22px; font-size: 11px; color: #333; }
+      @media print { .noprint { display: none; } }
+    </style></head><body>
+      <div class="letterhead">
+        ${logo ? `<img src="${logo}" alt="logo" />` : ''}
+        <div class="lh-text">
+          <h2>${schoolConfig?.schoolName || 'School'}</h2>
+          ${contact1 ? `<div class="lh-line">${contact1}</div>` : ''}
+          ${contact2 ? `<div class="lh-line">${contact2}</div>` : ''}
+          ${schoolInfo?.motto ? `<div class="motto">“${schoolInfo.motto}”</div>` : ''}
+        </div>
+      </div>
+      <hr class="lh-rule" />
+      <p class="sub">OFFICIAL FEE STRUCTURE — ${feeYear} · ${levelLabel.toUpperCase()}</p>
+      <p class="gen">All categories · generated ${new Date().toLocaleString()}</p>
+      ${gradeBlocks}
+      ${schoolInfo?.principal_name ? `<p class="foot">Authorised by: ______________________ &nbsp; ${schoolInfo.principal_name}, Principal</p>` : ''}
+      <div class="noprint" style="text-align:center;margin-top:18px;">
+        <button onclick="window.print()" style="padding:8px 24px;">Print / Save as PDF</button>
+      </div>
+    </body></html>`);
+    w.document.close();
+    w.focus();
   };
   // ---------------------------
 
@@ -2070,52 +2381,119 @@ const Settings = ({ schoolConfig, initialTab }) => {
             {/* ============ TAB 2: LEVEL PRICING ============ */}
             {feeSubTab === "pricing" && (
             <section style={sectionCardStyle}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                   <h4 style={{ ...sectionTitleStyle, margin: 0 }}>🏫 Level-Specific Fee Structure</h4>
-                   {(feeStructures[activeFeeLevel] || []).length > 0 && (
-                     <button
-                       onClick={() => setLevelStatus(levelIsDraft ? 'published' : 'draft')}
-                       title={levelIsDraft
-                         ? 'Draft structures do not bill students. Publish to make them count toward balances.'
-                         : 'Published structures bill students. Switch to draft to edit without affecting balances.'}
-                       style={{
-                         padding: "5px 12px", borderRadius: 999, fontSize: 11.5, fontWeight: 800,
-                         cursor: "pointer", letterSpacing: "0.03em",
-                         border: levelIsDraft ? "1.5px solid #D4AF37" : "1.5px solid #1B6B3A",
-                         background: levelIsDraft ? "#FEF6E7" : "#E8F5EE",
-                         color: levelIsDraft ? "#8A6A1F" : "#1B6B3A",
-                       }}
-                     >
-                       {levelIsDraft ? '✎ DRAFT — click to publish' : '✓ PUBLISHED'}
-                     </button>
+              {/* Title row: what you're editing + publish state, exports right */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+               <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                 <h4 style={{ ...sectionTitleStyle, margin: 0 }}>
+                   🏫 {GRADE_LABELS[activeGrade]} Fee Structure
+                   {activeCategory !== 'all' && (
+                     <span style={{ color: "#1A5F9C" }}> · {feeCategories.find(c => c.id === activeCategory)?.name || ''}</span>
                    )}
-                 </div>
-                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                   <label style={{ fontSize: 13, fontWeight: 600, color: "#8a8fa8" }}>Year:</label>
-                   <select
-                     value={feeYear}
-                     onChange={(e) => setFeeYear(parseInt(e.target.value))}
-                     style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #e6dfd8", fontSize: 13, fontWeight: 600, color: "#2a2421", background: "#f5f2eb", cursor: "pointer" }}
+                 </h4>
+                 {Object.keys(feeStructures).some(k => k.startsWith(`${activeGrade}|`)) && (
+                   <button
+                     onClick={() => setLevelStatus(levelIsDraft ? 'published' : 'draft')}
+                     title={levelIsDraft
+                       ? 'Draft structures do not bill students. Publish to make them count toward balances.'
+                       : 'Published structures bill students. Switch to draft to edit without affecting balances.'}
+                     style={{
+                       padding: "5px 12px", borderRadius: 999, fontSize: 11.5, fontWeight: 800,
+                       cursor: "pointer", letterSpacing: "0.03em",
+                       border: levelIsDraft ? "1.5px solid #D4AF37" : "1.5px solid #1B6B3A",
+                       background: levelIsDraft ? "#FEF6E7" : "#E8F5EE",
+                       color: levelIsDraft ? "#8A6A1F" : "#1B6B3A",
+                     }}
                    >
-                     {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1].map(y => (
-                       <option key={y} value={y}>{y}</option>
-                     ))}
-                   </select>
-                   <label style={{ fontSize: 13, fontWeight: 600, color: "#8a8fa8" }}>Select Level:</label>
-                   <select
-                     value={activeFeeLevel}
-                     onChange={(e) => setActiveFeeLevel(e.target.value)}
-                     style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #e6dfd8", fontSize: 13, fontWeight: 600, color: "#2a2421", background: "#f5f2eb", cursor: "pointer" }}
-                   >
-                     <option value="pp">Pre-Primary (PP1–PP2)</option>
-                     <option value="lower_pri">Lower Primary (G1–G3)</option>
-                     <option value="upper_pri">Upper Primary (G4–G6)</option>
-                     <option value="jss">Junior Secondary (G7–G9)</option>
-                     <option value="sss">Senior Secondary (G10–G12)</option>
-                   </select>
-                 </div>
+                     {levelIsDraft ? '✎ DRAFT — click to publish' : '✓ PUBLISHED'}
+                   </button>
+                 )}
+               </div>
+               {/* Level report: every grade in the chosen level, ALL categories
+                   (All Students / Boarder / Day Scholar / specials), labelled. */}
+               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                 <button
+                   onClick={handlePrintFeeStructure}
+                   title={`Print / save as PDF: all ${PRICING_BANDS[pricingBand].label} grades, every category`}
+                   style={{ padding: "8px 14px", background: "#1A5F9C", border: "none", borderRadius: 8, fontSize: 12, color: "#fff", fontWeight: 700, cursor: "pointer" }}
+                 >🖨 Print / PDF</button>
+                 <button
+                   onClick={handleExportFeeStructureExcel}
+                   title={`Download Excel: all ${PRICING_BANDS[pricingBand].label} grades, every category`}
+                   style={{ padding: "8px 14px", background: "#1B6B3A", border: "none", borderRadius: 8, fontSize: 12, color: "#fff", fontWeight: 700, cursor: "pointer" }}
+                 >⬇ Excel</button>
+               </div>
               </div>
+
+              {/* One clean filter bar: Year · Level · Grade · Applies To */}
+              {(() => {
+                const filterLabel = { display: "block", fontSize: 10, fontWeight: 800, color: "#8a8fa8", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" };
+                const filterSelect = { width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #e6dfd8", fontSize: 13, fontWeight: 600, color: "#2a2421", background: "#fff", cursor: "pointer", boxSizing: "border-box", outline: "none" };
+                return (
+                  <div style={{
+                    display: "grid", gridTemplateColumns: "110px 1fr 1fr 1.4fr", gap: 14,
+                    padding: "14px 16px", background: "#faf9f6", border: "1px solid #e6dfd8",
+                    borderRadius: 12, marginBottom: 18, alignItems: "end",
+                  }}>
+                    <div>
+                      <label style={filterLabel}>Year</label>
+                      <select value={feeYear} onChange={(e) => setFeeYear(parseInt(e.target.value))} style={filterSelect}>
+                        {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1].map(y => (
+                          <option key={y} value={y}>{y}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={filterLabel}>Level</label>
+                      <select
+                        value={pricingBand}
+                        onChange={(e) => { setPricingBand(e.target.value); setActiveGrade(PRICING_BANDS[e.target.value].grades[0]); }}
+                        style={filterSelect}
+                      >
+                        {Object.entries(PRICING_BANDS).map(([k, b]) => (
+                          <option key={k} value={k}>{b.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={filterLabel}>Grade</label>
+                      <select value={activeGrade} onChange={(e) => setActiveGrade(e.target.value)} style={filterSelect}>
+                        {PRICING_BANDS[pricingBand].grades.map(g => (
+                          <option key={g} value={g}>{GRADE_LABELS[g]}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={filterLabel}>Applies To</label>
+                      <select
+                        value={activeCategory}
+                        onChange={(e) => {
+                          if (e.target.value === '__new__') { handleAddSpecialCategory(); return; }
+                          setActiveCategory(e.target.value);
+                        }}
+                        style={{ ...filterSelect, borderColor: activeCategory !== 'all' ? "#1A5F9C" : "#e6dfd8", color: activeCategory !== 'all' ? "#1A5F9C" : "#2a2421", fontWeight: 700 }}
+                      >
+                        {[{ id: 'all', name: 'All students', icon: '👥', kind: null },
+                          ...feeCategories.map(c => ({ id: c.id, name: c.name, icon: CATEGORY_ICON[c.kind] || '⭐' }))
+                        ].map(c => {
+                          const count = (feeStructures[sheetKey(activeGrade, c.id === 'all' ? null : c.id)] || []).length;
+                          return (
+                            <option key={c.id} value={c.id}>
+                              {c.icon} {c.name}{count > 0 ? ` (${count})` : ''}
+                            </option>
+                          );
+                        })}
+                        <option value="__new__">＋ New special structure…</option>
+                      </select>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {activeCategory !== 'all' && (
+                <div style={{ marginBottom: 14, padding: "8px 14px", background: "#FDF9F0", border: "1px solid #EAD9A8", borderRadius: 10, fontSize: 12, color: "#8A6A1F" }}>
+                  ⤴ Full bill for <strong>{feeCategories.find(c => c.id === activeCategory)?.name || 'this category'}</strong> — greyed rows are inherited from "All students" (click <strong>Override</strong> to price them differently); ⤴ rows override the shared price.
+                </div>
+              )}
 
               {/* Add Fee Item Form */}
               <div style={{
@@ -2169,24 +2547,46 @@ const Settings = ({ schoolConfig, initialTab }) => {
                       <th style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 120 }}>Term 2</th>
                       <th style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 120 }}>Term 3</th>
                       <th style={{ padding: "12px 16px", textAlign: "right", fontWeight: 800, color: "#2a2421", fontSize: 12, width: 130, background: "#f0f4f8" }}>Total (KES)</th>
-                      <th style={{ padding: "12px 16px", textAlign: "center", width: 50 }}></th>
+                      <th style={{ padding: "12px 16px", textAlign: "center", width: 110 }}></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(!feeStructures[activeFeeLevel] || feeStructures[activeFeeLevel].length === 0) ? (
-                      <tr><td colSpan="7" style={{ textAlign: "center", padding: "30px", color: "#8a8fa8", fontSize: 13 }}>No fee items added for this level.</td></tr>
+                    {displaySheet.length === 0 ? (
+                      <tr><td colSpan="7" style={{ textAlign: "center", padding: "30px", color: "#8a8fa8", fontSize: 13 }}>
+                        {activeCategory === 'all'
+                          ? `No charges priced for ${GRADE_LABELS[activeGrade]} yet — add the first one above.`
+                          : `Nothing billed for this category in ${GRADE_LABELS[activeGrade]} yet — price the "All students" sheet or add charges above.`}
+                      </td></tr>
                     ) : (
-                      feeStructures[activeFeeLevel].map((item, idx) => {
+                      displaySheet.map((item, idx) => {
                         const vh = voteheads.find(v => v.id === item.voteheadId);
-                        const rowTotal = item.t1 + item.t2 + item.t3;
+                        const inherited = item.source === 'shared';
+                        const isEditingRow = editingFeeItemId === item.id;
+                        const rowTotal = isEditingRow
+                          ? (parseFloat(feeItemEdit.t1) || 0) + (parseFloat(feeItemEdit.t2) || 0) + (parseFloat(feeItemEdit.t3) || 0)
+                          : item.t1 + item.t2 + item.t3;
+                        const overridesShared = activeCategory !== 'all' && sharedSheet.some(sItem => sItem.voteheadId === item.voteheadId);
+                        const termCellStyle = { padding: "12px 16px", textAlign: "right", fontWeight: 600, color: "#8a8fa8", fontFamily: "monospace", fontSize: 13 };
+                        const editInputStyle = { width: 90, padding: "7px 8px", borderRadius: 6, border: "1.5px solid #1A5F9C", fontSize: 13, textAlign: "right", fontFamily: "monospace", outline: "none", boxSizing: "border-box" };
                         return (
-                          <tr key={item.id} style={{ borderBottom: "1px solid #e6dfd8", background: idx % 2 === 0 ? "#fff" : "#f5f2eb" }}>
+                          <tr key={`${item.id}-${item.source || 'own'}`} style={{ borderBottom: "1px solid #e6dfd8", background: inherited ? "#fbfaf7" : (idx % 2 === 0 ? "#fff" : "#f5f2eb"), opacity: inherited ? 0.75 : 1 }}>
                             <td style={{ padding: "12px 16px", color: "#8a8fa8", fontWeight: 600, fontSize: 12 }}>{idx + 1}</td>
                             <td style={{ padding: "12px 16px" }}>
                               {vh ? (
                                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                  <span style={{ fontWeight: 700, color: "#2a2421", fontSize: 12 }}>{vh.code}</span>
-                                  <span style={{ fontWeight: 600, color: "#2a2421" }}>{vh.description}</span>
+                                  <span style={{ fontWeight: 700, color: inherited ? "#8a8fa8" : "#2a2421", fontSize: 12 }}>{vh.code}</span>
+                                  <span style={{ fontWeight: 600, color: inherited ? "#8a8fa8" : "#2a2421" }}>{vh.description}</span>
+                                  {inherited && (
+                                    <span title='Priced on the "All students" sheet — this category inherits it as-is' style={{ padding: "1px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700, background: "#EEF1F4", color: "#8a8fa8" }}>
+                                      inherited
+                                    </span>
+                                  )}
+                                  {!inherited && overridesShared && (
+                                    <span
+                                      title={'Overrides the "All students" price for this category'}
+                                      style={{ color: "#8A6A1F", fontSize: 13, fontWeight: 800, cursor: "help", lineHeight: 1 }}
+                                    >⤴</span>
+                                  )}
                                   {vh.applies_to && vh.applies_to !== 'all' && (
                                     <span title={APPLIES_TO_LABEL[vh.applies_to]} style={{
                                       padding: "2px 8px", borderRadius: 999, fontSize: 10.5, fontWeight: 700,
@@ -2204,28 +2604,77 @@ const Settings = ({ schoolConfig, initialTab }) => {
                                 </div>
                               ) : <span style={{ color: "red" }}>Warning: Deleted Votehead</span>}
                             </td>
-                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600, color: "#8a8fa8", fontFamily: "monospace", fontSize: 13 }}>{item.t1.toLocaleString()}</td>
-                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600, color: "#8a8fa8", fontFamily: "monospace", fontSize: 13 }}>{item.t2.toLocaleString()}</td>
-                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600, color: "#8a8fa8", fontFamily: "monospace", fontSize: 13 }}>{item.t3.toLocaleString()}</td>
-                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 800, color: "#D4AF37", background: "#f0f4f8", fontFamily: "monospace", fontSize: 13.5 }}>{rowTotal.toLocaleString()}</td>
-                            <td style={{ padding: "12px 16px", textAlign: "center" }}>
-                               <button onClick={() => removeFeeItem(item.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: "#c0392b" }}>🗑️</button>
+                            {isEditingRow ? (
+                              <>
+                                <td style={{ padding: "8px 16px", textAlign: "right" }}>
+                                  <input type="number" value={feeItemEdit.t1} autoFocus
+                                    onChange={(e) => setFeeItemEdit({ ...feeItemEdit, t1: e.target.value })}
+                                    onKeyDown={(e) => { if (e.key === "Enter") saveFeeItemEdit(); if (e.key === "Escape") setEditingFeeItemId(null); }}
+                                    style={editInputStyle} />
+                                </td>
+                                <td style={{ padding: "8px 16px", textAlign: "right" }}>
+                                  <input type="number" value={feeItemEdit.t2}
+                                    onChange={(e) => setFeeItemEdit({ ...feeItemEdit, t2: e.target.value })}
+                                    onKeyDown={(e) => { if (e.key === "Enter") saveFeeItemEdit(); if (e.key === "Escape") setEditingFeeItemId(null); }}
+                                    style={editInputStyle} />
+                                </td>
+                                <td style={{ padding: "8px 16px", textAlign: "right" }}>
+                                  <input type="number" value={feeItemEdit.t3}
+                                    onChange={(e) => setFeeItemEdit({ ...feeItemEdit, t3: e.target.value })}
+                                    onKeyDown={(e) => { if (e.key === "Enter") saveFeeItemEdit(); if (e.key === "Escape") setEditingFeeItemId(null); }}
+                                    style={editInputStyle} />
+                                </td>
+                              </>
+                            ) : (
+                              <>
+                                <td style={termCellStyle}>{item.t1.toLocaleString()}</td>
+                                <td style={termCellStyle}>{item.t2.toLocaleString()}</td>
+                                <td style={termCellStyle}>{item.t3.toLocaleString()}</td>
+                              </>
+                            )}
+                            <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 800, color: inherited ? "#8a8fa8" : "#D4AF37", background: "#f0f4f8", fontFamily: "monospace", fontSize: 13.5 }}>{rowTotal.toLocaleString()}</td>
+                            <td style={{ padding: "12px 16px", textAlign: "center", whiteSpace: "nowrap" }}>
+                              {inherited ? (
+                                <button onClick={() => overrideInheritedRow(item)}
+                                  title="Price this votehead differently for this category"
+                                  style={{ padding: "5px 12px", background: "#fff", border: "1px solid #8A6A1F", borderRadius: 6, fontSize: 11, color: "#8A6A1F", fontWeight: 700, cursor: "pointer" }}>
+                                  Override
+                                </button>
+                              ) : isEditingRow ? (
+                                <>
+                                  <button onClick={saveFeeItemEdit} title="Save amounts"
+                                    style={{ padding: "5px 12px", background: "#1B6B3A", border: "none", borderRadius: 6, fontSize: 11.5, color: "#fff", fontWeight: 700, cursor: "pointer", marginRight: 6 }}>Save</button>
+                                  <button onClick={() => setEditingFeeItemId(null)} title="Discard changes"
+                                    style={{ padding: "5px 10px", background: "#fff", border: "1px solid #e6dfd8", borderRadius: 6, fontSize: 11.5, color: "#8a8fa8", fontWeight: 700, cursor: "pointer" }}>Cancel</button>
+                                </>
+                              ) : (
+                                <>
+                                  <button onClick={() => startEditFeeItem(item)} title="Edit amounts"
+                                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, marginRight: 8, opacity: 0.7 }}>✏️</button>
+                                  <button onClick={() => removeFeeItem(item.id)} title="Remove from this sheet"
+                                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: "#c0392b", opacity: 0.7 }}>🗑️</button>
+                                </>
+                              )}
                             </td>
                           </tr>
                         );
                       })
                     )}
                   </tbody>
-                  {/* Dynamic Vertical Footer Totals */}
-                  {feeStructures[activeFeeLevel] && feeStructures[activeFeeLevel].length > 0 && (() => {
-                     const totalT1 = feeStructures[activeFeeLevel].reduce((sum, item) => sum + item.t1, 0);
-                     const totalT2 = feeStructures[activeFeeLevel].reduce((sum, item) => sum + item.t2, 0);
-                     const totalT3 = feeStructures[activeFeeLevel].reduce((sum, item) => sum + item.t3, 0);
+                  {/* Effective bill totals: for "All students" that's this sheet;
+                      for a category it's the MERGED sheet (shared + overrides). */}
+                  {effectiveSheet.length > 0 && (() => {
+                     const totalT1 = effectiveSheet.reduce((sum, item) => sum + item.t1, 0);
+                     const totalT2 = effectiveSheet.reduce((sum, item) => sum + item.t2, 0);
+                     const totalT3 = effectiveSheet.reduce((sum, item) => sum + item.t3, 0);
                      const grandTotal = totalT1 + totalT2 + totalT3;
+                     const label = activeCategory === 'all'
+                       ? 'GRAND TOTALS:'
+                       : `${(feeCategories.find(c => c.id === activeCategory)?.name || 'CATEGORY').toUpperCase()} PAYS (incl. inherited):`;
                      return (
                        <tfoot style={{ background: "#2a2421" }}>
                          <tr>
-                           <td colSpan="2" style={{ padding: "14px 16px", textAlign: "right", fontWeight: 800, color: "#fff", fontSize: 13, letterSpacing: "1px" }}>GRAND TOTALS:</td>
+                           <td colSpan="2" style={{ padding: "14px 16px", textAlign: "right", fontWeight: 800, color: "#fff", fontSize: 13, letterSpacing: "1px" }}>{label}</td>
                            <td style={{ padding: "14px 16px", textAlign: "right", fontWeight: 700, color: "#C4E1FA", fontFamily: "monospace", fontSize: 13.5 }}>{totalT1.toLocaleString()}</td>
                            <td style={{ padding: "14px 16px", textAlign: "right", fontWeight: 700, color: "#C4E1FA", fontFamily: "monospace", fontSize: 13.5 }}>{totalT2.toLocaleString()}</td>
                            <td style={{ padding: "14px 16px", textAlign: "right", fontWeight: 700, color: "#C4E1FA", fontFamily: "monospace", fontSize: 13.5 }}>{totalT3.toLocaleString()}</td>

@@ -63,6 +63,20 @@ function printTable(schoolName, title, headers, rows) {
 const FinanceReports = ({ schoolConfig }) => {
   const [year, setYear] = useState(new Date().getFullYear());
   const [report, setReport] = useState('summary');
+  const appliedWorkingYear = React.useRef(false);
+
+  // Honour the school's working year from Finance Settings (once); the
+  // on-screen year selector takes over afterwards.
+  useEffect(() => {
+    if (!schoolConfig?.id || appliedWorkingYear.current) return;
+    appliedWorkingYear.current = true;
+    (async () => {
+      const { data } = await supabase
+        .from('fee_settings').select('working_year')
+        .eq('school_id', schoolConfig.id).maybeSingle();
+      if (data?.working_year) setYear(data.working_year);
+    })();
+  }, [schoolConfig?.id]);
   const [isLoading, setIsLoading] = useState(true);
 
   const [students, setStudents] = useState([]);
