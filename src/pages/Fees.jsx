@@ -77,6 +77,10 @@ const Fees = ({ schoolConfig }) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedLevel, setSelectedLevel] = useState("Senior Secondary");
   const [selectedGrade, setSelectedGrade] = useState("Grade 10");
+  // Stream filter — "all" by default (full student list); only narrows when
+  // the user explicitly picks a stream. Resets on level/grade change since
+  // streams belong to a grade.
+  const [selectedStream, setSelectedStream] = useState("all");
   const [year, setYear] = useState(new Date().getFullYear());
 
   const [studentsList, setStudentsList] = useState([]);
@@ -524,11 +528,12 @@ const Fees = ({ schoolConfig }) => {
         const matchesSearch = studentName(s).toLowerCase().includes(q) || (s.adm_no || "").toLowerCase().includes(q);
         const matchesLevel = levelGrades.includes(s.level_id);
         const matchesGrade = selectedGrade === "all" ? true : s.level_id === targetGradeId;
-        return matchesSearch && matchesLevel && matchesGrade;
+        const matchesStream = selectedStream === "all" ? true : s.stream_id === selectedStream;
+        return matchesSearch && matchesLevel && matchesGrade && matchesStream;
       })
       .map(s => ({ ...s, concession: concessionFor(s), ...listMetricsFor(s) }))
       .sort((a, b) => b.balance - a.balance);
-  }, [studentsList, structureRows, studentCharges, voteheadsById, feeCats, paidByStudent, concessionByStudent, realByStudent, allocModeDefault, termFilter, searchTerm, selectedLevel, selectedGrade]);
+  }, [studentsList, structureRows, studentCharges, voteheadsById, feeCats, paidByStudent, concessionByStudent, realByStudent, allocModeDefault, termFilter, searchTerm, selectedLevel, selectedGrade, selectedStream]);
 
   const studentById = useMemo(() => {
     const m = {};
@@ -1219,7 +1224,7 @@ const Fees = ({ schoolConfig }) => {
                 <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>LEVEL:</span>
                 <select
                   value={selectedLevel}
-                  onChange={(e) => { setSelectedLevel(e.target.value); setSelectedGrade(GRADES_BY_LEVEL[e.target.value][0]); }}
+                  onChange={(e) => { setSelectedLevel(e.target.value); setSelectedGrade(GRADES_BY_LEVEL[e.target.value][0]); setSelectedStream("all"); }}
                   style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none", minWidth: "140px" }}
                 >
                   {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl} value={lvl}>{lvl}</option>)}
@@ -1229,13 +1234,41 @@ const Fees = ({ schoolConfig }) => {
                 <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>GRADE:</span>
                 <select
                   value={selectedGrade}
-                  onChange={(e) => setSelectedGrade(e.target.value)}
+                  onChange={(e) => { setSelectedGrade(e.target.value); setSelectedStream("all"); }}
                   style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none", minWidth: "120px" }}
                 >
                   <option value="all">All {selectedLevel}</option>
                   {GRADES_BY_LEVEL[selectedLevel].map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
               </div>
+              {(() => {
+                // Streams for whatever is in view: one grade's streams, or every
+                // stream across the level when grade = "all".
+                const visibleGrades = selectedGrade === "all"
+                  ? GRADES_BY_LEVEL[selectedLevel].map(g => GRADE_NAME_TO_CODE[g])
+                  : [GRADE_NAME_TO_CODE[selectedGrade]];
+                const streamOptions = streamsList
+                  .filter(st => visibleGrades.includes(st.level_id))
+                  .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+                if (!streamOptions.length) return null;   // school has no streams here — keep the bar clean
+                return (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>STREAM:</span>
+                    <select
+                      value={selectedStream}
+                      onChange={(e) => setSelectedStream(e.target.value)}
+                      style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none", minWidth: "120px" }}
+                    >
+                      <option value="all">All streams</option>
+                      {streamOptions.map(st => (
+                        <option key={st.id} value={st.id}>
+                          {st.name}{selectedGrade === "all" ? ` (${GRADE_CODE_TO_NAME[st.level_id] || st.level_id})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })()}
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>TERM:</span>
                 <select
