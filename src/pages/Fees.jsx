@@ -78,8 +78,8 @@ const Fees = ({ schoolConfig }) => {
   const [selectedLevel, setSelectedLevel] = useState("Senior Secondary");
   const [selectedGrade, setSelectedGrade] = useState("Grade 10");
   // Stream filter — "all" by default (full student list); only narrows when
-  // the user explicitly picks a stream. Resets on level/grade change since
-  // streams belong to a grade.
+  // the user explicitly picks a stream. Streams are school-wide, so the
+  // selection stays valid across level/grade changes.
   const [selectedStream, setSelectedStream] = useState("all");
   const [year, setYear] = useState(new Date().getFullYear());
 
@@ -233,8 +233,10 @@ const Fees = ({ schoolConfig }) => {
         supabase.from('fee_invoices').select('*')
           .eq('school_id', schoolConfig.id).eq('year', year)
           .order('created_at', { ascending: false }),
-        supabase.from('streams').select('id, name, level_id')
-          .eq('school_id', schoolConfig.id),
+        // Streams are school-wide (no grade column) — selecting a nonexistent
+        // level_id made this query fail silently and left streamsList empty.
+        supabase.from('streams').select('id, name')
+          .eq('school_id', schoolConfig.id).order('name'),
         supabase.from('fee_sponsors').select('*')
           .eq('school_id', schoolConfig.id).order('name'),
         supabase.from('fee_adjustments').select('*')
@@ -1224,7 +1226,7 @@ const Fees = ({ schoolConfig }) => {
                 <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>LEVEL:</span>
                 <select
                   value={selectedLevel}
-                  onChange={(e) => { setSelectedLevel(e.target.value); setSelectedGrade(GRADES_BY_LEVEL[e.target.value][0]); setSelectedStream("all"); }}
+                  onChange={(e) => { setSelectedLevel(e.target.value); setSelectedGrade(GRADES_BY_LEVEL[e.target.value][0]); }}
                   style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none", minWidth: "140px" }}
                 >
                   {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl} value={lvl}>{lvl}</option>)}
@@ -1234,41 +1236,28 @@ const Fees = ({ schoolConfig }) => {
                 <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>GRADE:</span>
                 <select
                   value={selectedGrade}
-                  onChange={(e) => { setSelectedGrade(e.target.value); setSelectedStream("all"); }}
+                  onChange={(e) => setSelectedGrade(e.target.value)}
                   style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none", minWidth: "120px" }}
                 >
                   <option value="all">All {selectedLevel}</option>
                   {GRADES_BY_LEVEL[selectedLevel].map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
               </div>
-              {(() => {
-                // Streams for whatever is in view: one grade's streams, or every
-                // stream across the level when grade = "all".
-                const visibleGrades = selectedGrade === "all"
-                  ? GRADES_BY_LEVEL[selectedLevel].map(g => GRADE_NAME_TO_CODE[g])
-                  : [GRADE_NAME_TO_CODE[selectedGrade]];
-                const streamOptions = streamsList
-                  .filter(st => visibleGrades.includes(st.level_id))
-                  .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-                if (!streamOptions.length) return null;   // school has no streams here — keep the bar clean
-                return (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>STREAM:</span>
-                    <select
-                      value={selectedStream}
-                      onChange={(e) => setSelectedStream(e.target.value)}
-                      style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none", minWidth: "120px" }}
-                    >
-                      <option value="all">All streams</option>
-                      {streamOptions.map(st => (
-                        <option key={st.id} value={st.id}>
-                          {st.name}{selectedGrade === "all" ? ` (${GRADE_CODE_TO_NAME[st.level_id] || st.level_id})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                );
-              })()}
+              {streamsList.length > 0 && (
+                // Streams are school-wide, so the same list applies to every
+                // level/grade; hidden entirely for schools without streams.
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>STREAM:</span>
+                  <select
+                    value={selectedStream}
+                    onChange={(e) => setSelectedStream(e.target.value)}
+                    style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none", minWidth: "120px" }}
+                  >
+                    <option value="all">All streams</option>
+                    {streamsList.map(st => <option key={st.id} value={st.id}>{st.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>TERM:</span>
                 <select
@@ -1670,7 +1659,7 @@ const Fees = ({ schoolConfig }) => {
                 <label style={modalLabel}>Stream</label>
                 <select value={genForm.streamId} onChange={(e) => setGenForm({ ...genForm, streamId: e.target.value })} style={modalInput}>
                   <option value="">All streams in {genForm.grade}</option>
-                  {streamsList.filter(st => st.level_id === GRADE_NAME_TO_CODE[genForm.grade]).map(st => (
+                  {streamsList.map(st => (
                     <option key={st.id} value={st.id}>{st.name}</option>
                   ))}
                 </select>
