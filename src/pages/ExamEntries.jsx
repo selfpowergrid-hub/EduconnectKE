@@ -587,10 +587,14 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
                 }
                 const allowedStreamIds = teacherAllowed?.streamsByGrade[entryGrade] || new Set();
                 const hasWildcard = allowedStreamIds.has(null);
-                const allowedSpecific = dbStreams.filter(s => allowedStreamIds.has(s.id));
+                // A wildcard ("all streams") assignment allows every stream, so
+                // list them individually too — the teacher can still drill down.
+                const allowedSpecific = hasWildcard
+                  ? dbStreams
+                  : dbStreams.filter(s => allowedStreamIds.has(s.id));
                 return (
                   <>
-                    {hasWildcard && <option value="All">All Streams</option>}
+                    {(hasWildcard || allowedSpecific.length > 1) && <option value="All">All Streams</option>}
                     {allowedSpecific.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </>
                 );
