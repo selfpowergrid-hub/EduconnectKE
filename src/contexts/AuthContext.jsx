@@ -77,6 +77,7 @@ export function AuthProvider({ children }) {
           totalStudents: data.total_students,
           subscriptionCost: data.subscription_cost,
           login_code: data.login_code,
+          schoolCode: data.school_code,
         };
         setSchoolConfig(config);
         setPlan(data.plan || 'starter');
@@ -126,6 +127,7 @@ export function AuthProvider({ children }) {
         totalStudents: schoolRow.total_students,
         subscriptionCost: schoolRow.subscription_cost,
         login_code: schoolRow.login_code,
+        schoolCode: schoolRow.school_code,
       });
       setPlan(schoolRow.plan || 'starter');
       setRole('teacher');

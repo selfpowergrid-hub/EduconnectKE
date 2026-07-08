@@ -1,15 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import logo from '../assets/logo.jpg';
-
-// Mirrors the Postgres normalize_login_code() rules so we can preview
-// the code locally before the server confirms it.
-const clientNormalizeCode = (raw) => {
-  if (!raw) return '';
-  let s = raw.toUpperCase().replace(/[^A-Z0-9]+/g, '-');
-  s = s.replace(/^-+|-+$/g, '').slice(0, 16).replace(/-+$/g, '');
-  return s;
-};
 
 const LoginPage = ({ onParentLogin }) => {
   const [view, setView] = useState('chooser'); // 'chooser' | 'admin' | 'register' | 'teacher' | 'parent'
@@ -21,13 +12,6 @@ const LoginPage = ({ onParentLogin }) => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-
-  // School code picker (register view)
-  const [proposedCode, setProposedCode] = useState('');
-  const [codeEdited, setCodeEdited] = useState(false);
-  const [codeStatus, setCodeStatus] = useState('idle'); // idle | checking | ok | taken | invalid
-  const [codeMessage, setCodeMessage] = useState('');
-  const [normalizedCode, setNormalizedCode] = useState('');
 
   // Teacher login state
   const [schoolCode, setSchoolCode] = useState(() => localStorage.getItem('teacher_school_code') || '');
@@ -74,56 +58,6 @@ const LoginPage = ({ onParentLogin }) => {
       setIsLoading(false);
     }
   };
-
-  // Auto-derive the code from school name until the admin manually edits it.
-  useEffect(() => {
-    if (view !== 'register' || codeEdited) return;
-    setProposedCode(clientNormalizeCode(schoolName));
-  }, [schoolName, codeEdited, view]);
-
-  // Debounced availability check.
-  useEffect(() => {
-    if (view !== 'register') return;
-    const preview = clientNormalizeCode(proposedCode);
-    if (!preview || preview.length < 4) {
-      setCodeStatus(proposedCode ? 'invalid' : 'idle');
-      setCodeMessage(proposedCode ? 'Code must be at least 4 letters/numbers.' : '');
-      setNormalizedCode('');
-      return;
-    }
-    setCodeStatus('checking');
-    setCodeMessage('Checking…');
-    const handle = setTimeout(async () => {
-      try {
-        const { data: normalized, error: normErr } = await supabase
-          .rpc('normalize_login_code', { p_code: proposedCode });
-        if (normErr) throw normErr;
-        if (!normalized) {
-          setCodeStatus('invalid');
-          setCodeMessage('Code must be at least 4 letters/numbers.');
-          setNormalizedCode('');
-          return;
-        }
-        setNormalizedCode(normalized);
-        const { data: available, error: availErr } = await supabase
-          .rpc('is_login_code_available', { p_code: proposedCode });
-        if (availErr) throw availErr;
-        if (available) {
-          setCodeStatus('ok');
-          setCodeMessage(`Available — teachers will type ${normalized}`);
-        } else {
-          setCodeStatus('taken');
-          setCodeMessage('That code is already taken.');
-        }
-      } catch (e) {
-        setCodeStatus('invalid');
-        setCodeMessage(e?.message?.includes('function')
-          ? 'Database helpers not installed yet — run the school-code migration.'
-          : (e?.message || 'Could not check code.'));
-      }
-    }, 400);
-    return () => clearTimeout(handle);
-  }, [proposedCode, view]);
 
   const handleLookupSchool = async () => {
     const code = schoolCode.trim().toUpperCase();
@@ -173,13 +107,11 @@ const LoginPage = ({ onParentLogin }) => {
     try {
       if (mode === 'signup') {
         if (!schoolName.trim()) { setError('Please enter your school name'); setIsLoading(false); return; }
-        if (codeStatus !== 'ok' || !normalizedCode) {
-          setError('Please pick an available school code before continuing.');
-          setIsLoading(false); return;
-        }
+        // The school's code (SCH-###) is assigned automatically by the database
+        // on first registration — no code picker at signup.
         const { data, error: err } = await supabase.auth.signUp({
           email, password,
-          options: { data: { school_name: schoolName, school_login_code: normalizedCode } },
+          options: { data: { school_name: schoolName } },
         });
         if (err) throw err;
         if (data.user && data.user.identities?.length === 0) {
@@ -375,35 +307,13 @@ const LoginPage = ({ onParentLogin }) => {
                     onFocus={e => e.target.style.borderColor = '#D4AF37'} onBlur={e => e.target.style.borderColor = '#e6dfd8'} />
                 </div>
               </div>
-              <div>
-                <label style={labelBase}>School Code</label>
-                <div style={{ position: 'relative' }}>
-                  <span style={iconPos}>🏷️</span>
-                  <input
-                    type="text"
-                    value={proposedCode}
-                    onChange={e => { setProposedCode(e.target.value.toUpperCase()); setCodeEdited(true); }}
-                    placeholder="e.g. MWANGA-ACADEMY"
-                    required
-                    style={{ ...inputBase, textTransform: 'uppercase', letterSpacing: '0.04em' }}
-                    onFocus={e => e.target.style.borderColor = '#D4AF37'}
-                    onBlur={e => e.target.style.borderColor = '#e6dfd8'}
-                  />
-                </div>
-                <div style={{
-                  fontSize: 11, marginTop: 6, display: 'flex', alignItems: 'center', gap: 6,
-                  color: codeStatus === 'ok' ? '#1B6B3A'
-                       : codeStatus === 'checking' ? '#8a8fa8'
-                       : codeStatus === 'idle' ? '#8a8fa8'
-                       : '#C0392B',
-                  fontWeight: 600,
-                }}>
-                  {codeStatus === 'ok' && '✓'}
-                  {codeStatus === 'checking' && '⏳'}
-                  {(codeStatus === 'taken' || codeStatus === 'invalid') && '✗'}
-                  {codeStatus === 'idle' && '💡'}
-                  <span>{codeMessage || 'Teachers will type this code on their sign-in page.'}</span>
-                </div>
+              <div style={{
+                fontSize: 12, color: '#8A6A1F', background: '#fefbf2',
+                border: '1px solid #e6d28a', borderRadius: 10, padding: '10px 14px',
+                display: 'flex', alignItems: 'center', gap: 8, lineHeight: 1.5,
+              }}>
+                <span>🏷️</span>
+                <span>Your school code (e.g. <strong>SCH-001</strong>) is assigned automatically and shown in Settings after you sign in. Teachers and parents type it to reach your school.</span>
               </div>
               <div>
                 <label style={labelBase}>Email Address</label>
@@ -426,7 +336,7 @@ const LoginPage = ({ onParentLogin }) => {
                   </button>
                 </div>
               </div>
-              <button type="submit" disabled={isLoading || codeStatus !== 'ok'} style={primaryBtn(isLoading || codeStatus !== 'ok')}>
+              <button type="submit" disabled={isLoading} style={primaryBtn(isLoading)}>
                 {isLoading ? '⏳ Please wait...' : 'Create Account →'}
               </button>
             </form>
@@ -452,7 +362,7 @@ const LoginPage = ({ onParentLogin }) => {
                       type="text"
                       value={schoolCode}
                       onChange={e => { setSchoolCode(e.target.value.toUpperCase()); setTeacherList([]); setSelectedTeacherEmail(''); }}
-                      placeholder="e.g. TABOLWA-HIGH"
+                      placeholder="e.g. SCH-001"
                       style={{ ...inputBase, textTransform: 'uppercase' }}
                       onFocus={e => e.target.style.borderColor = '#D4AF37'}
                       onBlur={e => e.target.style.borderColor = '#e6dfd8'}
@@ -541,7 +451,7 @@ const LoginPage = ({ onParentLogin }) => {
                     type="text"
                     value={parentSchoolCode}
                     onChange={e => setParentSchoolCode(e.target.value.toUpperCase())}
-                    placeholder="e.g. TABOLWA-HIGH"
+                    placeholder="e.g. SCH-001"
                     required
                     style={{ ...inputBase, textTransform: 'uppercase' }}
                     onFocus={e => e.target.style.borderColor = '#1A5F9C'}

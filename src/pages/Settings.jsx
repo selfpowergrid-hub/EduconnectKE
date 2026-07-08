@@ -3,6 +3,7 @@ import * as XLSXLib from 'xlsx';
 import { CLASSES, FEE_STRUCTURE, ACADEMIC_GRADES, getClassesByType } from '../data/mockData';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import SchoolCodeCard from '../components/school/SchoolCodeCard';
 
 const Settings = ({ schoolConfig, initialTab }) => {
   const { updateSchoolConfig } = useAuth();
@@ -1322,6 +1323,9 @@ const Settings = ({ schoolConfig, initialTab }) => {
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+
+              {/* System-assigned school code (read-only) */}
+              <SchoolCodeCard code={schoolConfig?.schoolCode} />
 
               {/* ─── Section 1: School Identity & Branding ─── */}
               <section style={sectionCardStyle}>

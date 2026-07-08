@@ -62,8 +62,7 @@ const TeacherAllocations = ({ schoolConfig }) => {
     <div style={{ paddingBottom: 40 }}>
       <div style={{ marginBottom: 16 }}>
         <SchoolCodeCard
-          schoolId={schoolConfig?.id}
-          currentCode={schoolConfig?.login_code}
+          code={schoolConfig?.schoolCode}
           dense
         />
       </div>
@@ -326,7 +325,7 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
 
   const copyCreds = () => {
     if (!savedCreds) return;
-    const txt = `Email: ${savedCreds.email}\nPassword: ${savedCreds.password}\nSchool code: ${schoolConfig?.login_code || ''}`;
+    const txt = `Email: ${savedCreds.email}\nPassword: ${savedCreds.password}\nSchool code: ${schoolConfig?.schoolCode || ''}`;
     navigator.clipboard?.writeText(txt);
   };
 
@@ -446,8 +445,8 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
                   <div style={{ fontSize: 12, color: '#2a2421', fontFamily: 'monospace', lineHeight: 1.7 }}>
                     <div><strong>Email:</strong> {savedCreds.email}</div>
                     <div><strong>Password:</strong> {savedCreds.password}</div>
-                    {schoolConfig?.login_code && (
-                      <div><strong>School code:</strong> {schoolConfig.login_code}</div>
+                    {schoolConfig?.schoolCode && (
+                      <div><strong>School code:</strong> {schoolConfig.schoolCode}</div>
                     )}
                   </div>
                 </div>

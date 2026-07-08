@@ -60,6 +60,7 @@ const GRADE_LABEL: Record<string, string> = {
   g1: "Grade 1", g2: "Grade 2", g3: "Grade 3", g4: "Grade 4", g5: "Grade 5", g6: "Grade 6",
   g7: "Grade 7", g8: "Grade 8", g9: "Grade 9",
   g10: "Grade 10", g11: "Grade 11", g12: "Grade 12",
+  f3: "Form 3", f4: "Form 4",
 };
 
 Deno.serve(async (req) => {
@@ -73,7 +74,7 @@ Deno.serve(async (req) => {
     return json({ error: "Invalid JSON" }, 400);
   }
 
-  const code = payload.school_code?.trim().toUpperCase();
+  const code = payload.school_code?.trim();
   const admNo = payload.adm_no?.trim();
   const phoneInput = normalizePhone(payload.phone);
   const year = Number.isInteger(payload.year) ? payload.year! : new Date().getFullYear();
@@ -87,11 +88,16 @@ Deno.serve(async (req) => {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // 1. Resolve the school from its login_code.
+  // 1. Resolve the school from its SCH-### code (or the legacy login_code).
+  const { data: schoolId, error: resolveErr } = await admin
+    .rpc("resolve_school_by_code", { p: code });
+  if (resolveErr) return json({ error: resolveErr.message }, 500);
+  if (!schoolId) return json({ error: "School code not recognised" }, 404);
+
   const { data: school, error: schoolErr } = await admin
     .from("school_registrations")
-    .select("id, school_name, login_code")
-    .eq("login_code", code)
+    .select("id, school_name, school_code, login_code")
+    .eq("id", schoolId)
     .single();
   if (schoolErr || !school) return json({ error: "School code not recognised" }, 404);
 
@@ -191,7 +197,7 @@ Deno.serve(async (req) => {
   }
 
   return json({
-    school: { id: school.id, name: school.school_name, login_code: school.login_code },
+    school: { id: school.id, name: school.school_name, school_code: school.school_code, login_code: school.login_code },
     year,
     children: result,
   });

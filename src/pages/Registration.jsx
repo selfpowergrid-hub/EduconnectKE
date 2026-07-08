@@ -102,10 +102,9 @@ const Registration = ({ onComplete, schoolConfig, userEmail }) => {
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-          {schoolConfig?.id && (
+          {schoolConfig?.id && schoolConfig?.schoolCode && (
             <SchoolCodeCard
-              schoolId={schoolConfig.id}
-              currentCode={schoolConfig.login_code}
+              code={schoolConfig.schoolCode}
             />
           )}
 

@@ -1,9 +1,10 @@
 // Edge Function: list-school-teachers
 //
-// Public lookup used by the teacher login page. Given a school login_code,
-// returns the list of teachers (id, full_name) for that school who have an
-// auth user, plus the staff's email (used to call signInWithPassword on the
-// client). NO authentication required — the school login_code is the gate.
+// Public lookup used by the teacher login page. Given a school code (the
+// system-assigned SCH-### code, or the legacy login_code as an alias), returns
+// the list of teachers (id, full_name) for that school who have an auth user,
+// plus the staff's email (used to call signInWithPassword on the client).
+// NO authentication required — the school code is the gate.
 //
 // Why an Edge Function rather than a public RLS policy on staff:
 //   - Avoids exposing the entire staff table publicly.
@@ -44,18 +45,25 @@ Deno.serve(async (req) => {
     return json({ error: "Invalid JSON" }, 400);
   }
 
-  const code = payload.login_code?.trim().toUpperCase();
-  if (!code) return json({ error: "login_code is required" }, 400);
-  if (code.length > 32) return json({ error: "login_code too long" }, 400);
+  // Accept both field names; the client may send either.
+  const code = (payload.login_code ?? (payload as { school_code?: string }).school_code)?.trim();
+  if (!code) return json({ error: "school_code is required" }, 400);
+  if (code.length > 32) return json({ error: "school_code too long" }, 400);
 
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
+  // Resolve SCH-### first, then fall back to the legacy login_code.
+  const { data: schoolId, error: resolveErr } = await admin
+    .rpc("resolve_school_by_code", { p: code });
+  if (resolveErr) return json({ error: resolveErr.message }, 500);
+  if (!schoolId) return json({ error: "School code not recognised" }, 404);
+
   const { data: school, error: schoolErr } = await admin
     .from("school_registrations")
     .select("id, school_name")
-    .eq("login_code", code)
+    .eq("id", schoolId)
     .single();
 
   if (schoolErr || !school) {
