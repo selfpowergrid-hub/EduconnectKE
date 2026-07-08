@@ -160,8 +160,10 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
 
   const handleEditClick = (student) => {
     setNewStudent({
-      first_name: student.first_name || "",
-      last_name: student.last_name || "",
+      // Full name lives in first_name (single-field convention). Merge any
+      // legacy last_name so older records show their whole name in the field.
+      first_name: `${student.first_name || ""} ${student.last_name || ""}`.trim(),
+      last_name: "",
       adm_no: student.adm_no || "",
       gender: student.gender || "M",
       level_id: student.level_id,
@@ -205,14 +207,17 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
   };
 
   const handleSaveStudent = async () => {
-    if (!newStudent.adm_no || !newStudent.first_name || !newStudent.last_name) {
-      alert("Please fill in all required fields.");
+    if (!newStudent.adm_no || !newStudent.first_name.trim()) {
+      alert("Please enter the admission number and the student's full name.");
       return;
     }
 
     setIsSaving(true);
     try {
       const payload = { ...newStudent };
+      // The whole name is captured in first_name; last_name stays blank.
+      payload.first_name = payload.first_name.trim();
+      payload.last_name = "";
       // Empty selects come through as "" — store NULL, not an invalid UUID.
       payload.stream_id = payload.stream_id || null;
       // Boarding status is authoritative; a dorm bed is optional detail and
@@ -529,7 +534,7 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <StudentAvatar
                             photoUrl={getStudentPhotoUrl(s.photo_path, s.id)}
-                            name={s.full_name || `${s.first_name} ${s.last_name}`}
+                            name={s.full_name || `${s.first_name} ${s.last_name}`.trim()}
                             size={32}
                           />
                           <div>
@@ -698,27 +703,15 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
                 </select>
               </div>
 
-              {/* First Name */}
-              <div>
-                <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#4A4A6A", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>First Name</label>
-                <input 
-                  type="text" 
+              {/* Full Name — one field, spans both columns */}
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#4A4A6A", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Full Name</label>
+                <input
+                  type="text"
                   value={newStudent.first_name}
                   onChange={(e) => setNewStudent({...newStudent, first_name: e.target.value})}
-                  placeholder="e.g. David"
-                  style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1.5px solid #e6dfd8", fontSize: 13, boxSizing: "border-box", background: "#ffffff", outline: "none", transition: "border-color 0.2s" }} 
-                />
-              </div>
-
-              {/* Last Name */}
-              <div>
-                <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#4A4A6A", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Last Name</label>
-                <input 
-                  type="text" 
-                  value={newStudent.last_name}
-                  onChange={(e) => setNewStudent({...newStudent, last_name: e.target.value})}
-                  placeholder="e.g. Otieno"
-                  style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1.5px solid #e6dfd8", fontSize: 13, boxSizing: "border-box", background: "#ffffff", outline: "none", transition: "border-color 0.2s" }} 
+                  placeholder="e.g. David Mario Kiplagat"
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1.5px solid #e6dfd8", fontSize: 13, boxSizing: "border-box", background: "#ffffff", outline: "none", transition: "border-color 0.2s" }}
                 />
               </div>
 
