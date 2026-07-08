@@ -106,7 +106,10 @@ Deno.serve(async (req) => {
     .single();
   if (schoolErr || !school) return json({ error: "School code not recognised" }, 404);
 
-  // 2. Anchor on (school_id, adm_no) — unique per school — then verify the phone.
+  // 2. Anchor on (school_id, adm_no) — unique per school — then verify the phone
+  //    against ANY guardian on file (father or mother), so either parent can
+  //    sign in. Falls back to the legacy single parent_phone for students not
+  //    yet given guardian rows.
   const { data: matched, error: matchErr } = await admin
     .from("students")
     .select("id, parent_phone")
@@ -114,8 +117,21 @@ Deno.serve(async (req) => {
     .eq("adm_no", admNo)
     .maybeSingle();
 
+  if (matchErr || !matched) {
+    return json({ error: "Those details don't match our records. Check the phone number and admission number." }, 401);
+  }
+
+  const { data: guardianRows } = await admin
+    .from("student_guardians")
+    .select("phone_normalized")
+    .eq("student_id", matched.id);
+
+  const phoneOnFile =
+    (guardianRows || []).some((g: { phone_normalized: string | null }) => g.phone_normalized === phoneInput) ||
+    normalizePhone(matched.parent_phone) === phoneInput;
+
   // Generic failure: never reveal which of the two fields was wrong.
-  if (matchErr || !matched || normalizePhone(matched.parent_phone) !== phoneInput) {
+  if (!phoneOnFile) {
     return json({ error: "Those details don't match our records. Check the phone number and admission number." }, 401);
   }
 

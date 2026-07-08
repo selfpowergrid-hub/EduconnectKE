@@ -133,6 +133,18 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
     photo_path: ""
   });
 
+  // Parents / guardians for the student being added or edited. Two blank rows
+  // (father, mother) by default; either parent's phone works at the parent
+  // portal. The primary (first) phone is mirrored to students.parent_phone.
+  const emptyGuardians = () => ([
+    { relationship: "father", full_name: "", phone: "", email: "", id_number: "" },
+    { relationship: "mother", full_name: "", phone: "", email: "", id_number: "" },
+  ]);
+  const [guardians, setGuardians] = useState(emptyGuardians());
+  const updateGuardian = (i, field, val) => setGuardians(gs => gs.map((g, idx) => idx === i ? { ...g, [field]: val } : g));
+  const addGuardian = () => setGuardians(gs => [...gs, { relationship: "guardian", full_name: "", phone: "", email: "", id_number: "" }]);
+  const removeGuardian = (i) => setGuardians(gs => gs.filter((_, idx) => idx !== i));
+
   const resetForm = () => {
     setNewStudent({
       first_name: "",
@@ -145,12 +157,13 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
       parent_phone: "",
       photo_path: ""
     });
+    setGuardians(emptyGuardians());
     setEditingStudentId(null);
     setPendingPhotoBlob(null);
     setRemoveExistingPhoto(false);
   };
 
-  const handleEditClick = (student) => {
+  const handleEditClick = async (student) => {
     setNewStudent({
       // Full name lives in first_name (single-field convention). Merge any
       // legacy last_name so older records show their whole name in the field.
@@ -169,6 +182,35 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
     setPendingPhotoBlob(null);
     setRemoveExistingPhoto(false);
     setShowModal(true);
+
+    // Load this student's guardians. Falls back to a single row seeded from the
+    // legacy parent_phone if none exist yet (or the table isn't installed).
+    try {
+      const { data, error } = await supabase
+        .from('student_guardians')
+        .select('*')
+        .eq('student_id', student.id)
+        .order('is_primary', { ascending: false });
+      if (error) throw error;
+      if (data && data.length) {
+        setGuardians(data.map(g => ({
+          relationship: g.relationship || 'guardian',
+          full_name: g.full_name || '',
+          phone: g.phone || '',
+          email: g.email || '',
+          id_number: g.id_number || '',
+        })));
+      } else if (student.parent_phone) {
+        setGuardians([{ relationship: 'guardian', full_name: '', phone: student.parent_phone, email: '', id_number: '' }]);
+      } else {
+        setGuardians(emptyGuardians());
+      }
+    } catch {
+      // Table not installed yet — keep the legacy single-phone view.
+      setGuardians(student.parent_phone
+        ? [{ relationship: 'guardian', full_name: '', phone: student.parent_phone, email: '', id_number: '' }]
+        : emptyGuardians());
+    }
   };
 
   const handleDeleteStudent = async (id) => {
@@ -212,6 +254,18 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
       payload.last_name = "";
       // Empty selects come through as "" — store NULL, not an invalid UUID.
       payload.stream_id = payload.stream_id || null;
+      // Guardians drive the phone: mirror the first guardian's phone to the
+      // legacy students.parent_phone so fees/reports keep working.
+      const cleanGuardians = guardians
+        .map(g => ({
+          relationship: g.relationship || 'guardian',
+          full_name: (g.full_name || '').trim(),
+          phone: (g.phone || '').trim(),
+          email: (g.email || '').trim(),
+          id_number: (g.id_number || '').trim(),
+        }))
+        .filter(g => g.phone || g.full_name || g.email || g.id_number);
+      payload.parent_phone = cleanGuardians.find(g => g.phone)?.phone || null;
       // Boarding status is authoritative; a dorm bed is optional detail and
       // only kept for boarders.
       payload.boarding_status = payload.boarding_status === 'boarder' ? 'boarder' : 'day';
@@ -245,6 +299,31 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
           throw new Error("Student was not added. Check your database permissions (RLS policies).");
         }
         studentId = data[0].id;
+      }
+
+      // Guardians — replace-all: clear existing rows, insert the filled ones.
+      // Wrapped so a missing table (migration not yet applied) never blocks the
+      // student save; the mirrored parent_phone still keeps parent login working.
+      if (studentId) {
+        try {
+          await supabase.from('student_guardians').delete().eq('student_id', studentId);
+          if (cleanGuardians.length) {
+            const rows = cleanGuardians.map((g, i) => ({
+              school_id: schoolConfig.id,
+              student_id: studentId,
+              relationship: g.relationship,
+              full_name: g.full_name || null,
+              phone: g.phone || null,
+              email: g.email || null,
+              id_number: g.id_number || null,
+              is_primary: i === 0,
+            }));
+            const { error: gErr } = await supabase.from('student_guardians').insert(rows);
+            if (gErr) throw gErr;
+          }
+        } catch (e) {
+          console.error('Guardian save skipped:', e);
+        }
       }
 
       // Photo handling — happens after the row exists so we have a stable ID
@@ -803,16 +882,50 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
                 </div>
               )}
 
-              {/* Phone */}
-              <div>
-                <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#4A4A6A", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Parent/Guardian Phone</label>
-                <input 
-                  type="text" 
-                  value={newStudent.parent_phone}
-                  onChange={(e) => setNewStudent({...newStudent, parent_phone: e.target.value})}
-                  placeholder="e.g. 0712345678"
-                  style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1.5px solid #e6dfd8", fontSize: 13, boxSizing: "border-box", background: "#ffffff", outline: "none", transition: "border-color 0.2s" }} 
-                />
+              {/* Parents / Guardians */}
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#4A4A6A", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Parents / Guardians</label>
+                <div style={{ fontSize: 11.5, color: "#8a8fa8", marginBottom: 10, lineHeight: 1.5 }}>
+                  Either parent can sign in to the parent portal with their own phone number and the student's admission number.
+                </div>
+                {guardians.map((g, i) => {
+                  const fieldStyle = { width: "100%", padding: "9px 12px", borderRadius: 8, border: "1.5px solid #e6dfd8", fontSize: 13, boxSizing: "border-box", background: "#ffffff", outline: "none" };
+                  return (
+                    <div key={i} style={{ border: "1px solid #e6dfd8", borderRadius: 10, padding: 12, marginBottom: 10, background: "#faf8f3" }}>
+                      <div style={{ display: "flex", gap: 10, marginBottom: 8, alignItems: "center" }}>
+                        <select
+                          value={g.relationship}
+                          onChange={(e) => updateGuardian(i, "relationship", e.target.value)}
+                          style={{ ...fieldStyle, width: "auto", fontWeight: 700, cursor: "pointer" }}
+                        >
+                          <option value="father">Father</option>
+                          <option value="mother">Mother</option>
+                          <option value="guardian">Guardian</option>
+                          <option value="other">Other</option>
+                        </select>
+                        <div style={{ flex: 1 }} />
+                        {guardians.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeGuardian(i)}
+                            style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #e6dfd8", background: "#fff", color: "#C0392B", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                          >Remove</button>
+                        )}
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <input type="text" value={g.full_name} onChange={(e) => updateGuardian(i, "full_name", e.target.value)} placeholder="Full name" style={fieldStyle} />
+                        <input type="text" value={g.phone} onChange={(e) => updateGuardian(i, "phone", e.target.value)} placeholder="Phone e.g. 0712345678" style={fieldStyle} />
+                        <input type="email" value={g.email} onChange={(e) => updateGuardian(i, "email", e.target.value)} placeholder="Email (optional)" style={fieldStyle} />
+                        <input type="text" value={g.id_number} onChange={(e) => updateGuardian(i, "id_number", e.target.value)} placeholder="National ID (optional)" style={fieldStyle} />
+                      </div>
+                    </div>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={addGuardian}
+                  style={{ padding: "8px 14px", borderRadius: 8, border: "1.5px dashed #1B6B3A", background: "#fff", color: "#1B6B3A", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
+                >+ Add another guardian</button>
               </div>
             </div>
 
