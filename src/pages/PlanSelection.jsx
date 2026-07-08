@@ -13,10 +13,9 @@ const PlanSelection = ({ onSelectPlan }) => {
     }}>
       {/* Header */}
       <div style={{ textAlign: 'center', marginBottom: 48, maxWidth: 600 }}>
-        <img src={logo} alt="LogiQ-Taaluma Logo" style={{
-          width: 80, height: 'auto', borderRadius: 14, margin: '0 auto 24px',
-          boxShadow: '0 6px 24px rgba(212,175,55,0.3)',
-        }} />
+        <div style={{ width: 104, height: 104, margin: '0 auto 24px', borderRadius: 20, background: '#fff', border: '1px solid #ece5db', boxShadow: '0 6px 24px rgba(42,36,33,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 15, boxSizing: 'border-box' }}>
+          <img src={logo} alt="LogiQ-Taaluma Logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+        </div>
         <h1 style={{
           fontFamily: "'EB Garamond', serif", fontSize: 36, fontWeight: 700,
           color: '#2a2421', margin: '0 0 12px', letterSpacing: '-0.02em',

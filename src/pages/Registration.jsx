@@ -93,7 +93,9 @@ const Registration = ({ onComplete, schoolConfig, userEmail }) => {
     <div className="main-scroll" style={{ height: "auto", minHeight: "100%", overflowY: "visible", padding: "20px", boxSizing: "border-box" }}>
       <div style={{ maxWidth: 800, margin: "0 auto" }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <img src={logo} alt="LogiQ-Taaluma Logo" style={{ width: 80, height: 'auto', borderRadius: 12, marginBottom: 16, boxShadow: '0 6px 20px rgba(212,175,55,0.2)' }} />
+          <div style={{ width: 100, height: 100, margin: '0 auto 16px', borderRadius: 18, background: '#fff', border: '1px solid #ece5db', boxShadow: '0 6px 20px rgba(42,36,33,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 14, boxSizing: 'border-box' }}>
+            <img src={logo} alt="LogiQ-Taaluma Logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+          </div>
           <h1 style={{ fontSize: 24, fontWeight: 900, color: "#1A1A2E", margin: 0 }}>School Registration</h1>
           <p style={{ color: "#8A8FA8", marginTop: 8, fontSize: 15 }}>Welcome to LogiQ-Taaluma. Please set up your institution.</p>
           <div style={{ marginTop: 12, fontSize: 12, color: "#1B6B3A", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
