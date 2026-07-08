@@ -19,6 +19,73 @@ export const GRADE_CODE_TO_NAME = Object.fromEntries(
   Object.entries(GRADE_NAME_TO_CODE).map(([k, v]) => [v, k])
 );
 
+// ---------------------------------------------------------------------------
+// Lenient normalizers for the standard fields. A bulk import should accept the
+// many ways people actually type these values ("G10", "g 10", "grade10",
+// "MALE", "boarding") and quietly canonicalize them, rather than rejecting the
+// row. Each returns { value, matched, changed } so the caller can note what it
+// interpreted. `matched: false` means we genuinely couldn't resolve it.
+
+// "G10" | "g 10" | "grade10" | "GR 10" | "10" | "pp1" | "PP 2" → a valid grade.
+export function normalizeGrade(raw, validGrades) {
+  const s = String(raw ?? '').trim();
+  if (!s) return { value: '', matched: false, changed: false };
+
+  const exact = validGrades.find(g => g.toLowerCase() === s.toLowerCase());
+  if (exact) return { value: exact, matched: true, changed: exact !== s };
+
+  const up = s.toUpperCase().replace(/[._-]/g, ' ');
+
+  // Pre-primary: PP1, PP 1, P.P.2, PRE PRIMARY 1
+  const pp = up.match(/^P\s*P\s*0*(\d)/) || (/PRE/.test(up) && up.match(/(\d)/));
+  if (pp) {
+    const cand = 'PP' + pp[1];
+    const hit = validGrades.find(g => g.toLowerCase() === cand.toLowerCase());
+    if (hit) return { value: hit, matched: true, changed: true };
+  }
+
+  // Grade N / G N / GR N / STD N / plain N — but never "Form N" (ambiguous).
+  if (!/PP|PRE|FORM/.test(up)) {
+    const num = up.match(/(\d{1,2})/);
+    if (num) {
+      const cand = 'Grade ' + parseInt(num[1], 10);
+      const hit = validGrades.find(g => g.toLowerCase() === cand.toLowerCase());
+      if (hit) return { value: hit, matched: true, changed: true };
+    }
+  }
+
+  return { value: s, matched: false, changed: false };
+}
+
+// Case- and whitespace-insensitive match against a configured name list
+// (streams, dorms). Blank is allowed for optional fields.
+export function normalizeName(raw, validNames) {
+  const s = String(raw ?? '').trim();
+  if (!s) return { value: '', matched: true, changed: false };
+  const key = (v) => v.toLowerCase().replace(/\s+/g, '');
+  const hit = validNames.find(n => key(n) === key(s));
+  if (hit) return { value: hit, matched: true, changed: hit !== s };
+  return { value: s, matched: false, changed: false };
+}
+
+// M / F from many spellings.
+export function normalizeGender(raw) {
+  const s = String(raw ?? '').trim().toLowerCase();
+  if (!s) return { value: '', matched: false, changed: false };
+  if (['m', 'male', 'boy', 'b'].includes(s)) return { value: 'M', matched: true, changed: s !== 'M' };
+  if (['f', 'female', 'girl', 'g'].includes(s)) return { value: 'F', matched: true, changed: s !== 'F' };
+  return { value: s.toUpperCase(), matched: false, changed: false };
+}
+
+// Day / Boarder from "d", "day", "b", "boarder", "boarding", "resident".
+export function normalizeBoarding(raw) {
+  const s = String(raw ?? '').trim().toLowerCase();
+  if (!s) return { value: 'day', matched: true, changed: false, blank: true };
+  if (/^(b|board|resid)/.test(s)) return { value: 'boarder', matched: true, changed: s !== 'boarder' };
+  if (/^(d|day)/.test(s)) return { value: 'day', matched: true, changed: s !== 'day' };
+  return { value: 'day', matched: false, changed: true };
+}
+
 const TEMPLATE_HEADERS = ["Adm No", "Full Name", "Grade", "Stream", "Gender", "Parent Phone", "Boarding", "Dorm"];
 
 const EXAMPLE_ROWS = [
@@ -163,16 +230,16 @@ export function validateRows(parsedRows, { validGrades, validStreams, validDorms
   parsedRows.forEach((row, idx) => {
     const errors = [];
     const warnings = [];
+    const notes = [];   // informational auto-corrections (row stays valid)
 
     const admNo = row['Adm No'] || '';
     const fullName = row['Full Name'] || '';
-    const grade = row['Grade'] || '';
-    const stream = row['Stream'] || '';
-    const gender = (row['Gender'] || '').toUpperCase();
+    const rawGrade = row['Grade'] || '';
+    const rawStream = row['Stream'] || '';
+    const rawGender = row['Gender'] || '';
+    const rawBoarding = row['Boarding'] || '';
+    const rawDorm = row['Dorm'] || '';
     const phone = row['Parent Phone'] || '';
-    const boardingRaw = (row['Boarding'] || '').toLowerCase();
-    const boarding = boardingRaw.startsWith('board') ? 'boarder' : 'day';
-    const dorm = row['Dorm'] || '';
 
     if (!admNo) errors.push('Adm No is required');
     if (!fullName) errors.push('Full Name is required');
@@ -182,18 +249,64 @@ export function validateRows(parsedRows, { validGrades, validStreams, validDorms
 
     if (admNo && existingAdmNos.has(admNo)) errors.push(`Adm No "${admNo}" already exists in the school`);
 
-    if (grade && !validGrades.includes(grade)) errors.push(`Grade "${grade}" is not valid (expected one of: ${validGrades.join(', ')})`);
-    if (!grade) errors.push('Grade is required');
-
-    if (stream && validStreams.length && !validStreams.includes(stream)) {
-      errors.push(`Stream "${stream}" is not valid (expected one of: ${validStreams.join(', ')})`);
+    // Grade — lenient: "G10" / "g 10" / "10" → "Grade 10".
+    let grade = '';
+    if (!rawGrade) {
+      errors.push('Grade is required');
+    } else {
+      const g = normalizeGrade(rawGrade, validGrades);
+      if (g.matched) {
+        grade = g.value;
+        if (g.changed) notes.push(`Grade read as "${grade}"`);
+      } else {
+        errors.push(`Grade "${rawGrade}" is not valid (expected one of: ${validGrades.join(', ')})`);
+      }
     }
 
-    if (gender && gender !== 'M' && gender !== 'F') errors.push(`Gender "${gender}" must be M or F`);
-    if (!gender) warnings.push('Gender is blank — defaults to M');
+    // Stream — case/spacing-insensitive against configured streams.
+    let stream = '';
+    if (rawStream && validStreams.length) {
+      const st = normalizeName(rawStream, validStreams);
+      if (st.matched) {
+        stream = st.value;
+        if (st.changed) notes.push(`Stream read as "${stream}"`);
+      } else {
+        errors.push(`Stream "${rawStream}" is not valid (expected one of: ${validStreams.join(', ')})`);
+      }
+    } else if (rawStream) {
+      stream = rawStream;   // no streams configured — kept as text, ignored on insert
+    }
 
-    if (dorm && !validDorms.includes(dorm)) {
-      errors.push(`Dorm "${dorm}" is not valid (expected one of: ${validDorms.join(', ') || 'none configured'})`);
+    // Gender — M/F from many spellings; blank defaults to M.
+    let gender = 'M';
+    if (!rawGender) {
+      warnings.push('Gender is blank — defaults to M');
+    } else {
+      const gd = normalizeGender(rawGender);
+      if (gd.matched) {
+        gender = gd.value;
+        if (gd.changed) notes.push(`Gender read as "${gender}"`);
+      } else {
+        errors.push(`Gender "${rawGender}" must be M or F`);
+      }
+    }
+
+    // Boarding — Day/Boarder from many spellings; blank defaults to Day.
+    const bd = normalizeBoarding(rawBoarding);
+    const boarding = bd.value;
+    if (!bd.matched) notes.push(`Boarding "${rawBoarding}" not recognised — treated as Day`);
+    else if (bd.changed && !bd.blank) notes.push(`Boarding read as "${boarding === 'boarder' ? 'Boarder' : 'Day'}"`);
+
+    // Dorm — case/spacing-insensitive against configured dorms.
+    let dorm = '';
+    if (rawDorm) {
+      const dm = normalizeName(rawDorm, validDorms);
+      if (dm.matched && dm.value) {
+        dorm = dm.value;
+        if (dm.changed) notes.push(`Dorm read as "${dorm}"`);
+      } else {
+        errors.push(`Dorm "${rawDorm}" is not valid (expected one of: ${validDorms.join(', ') || 'none configured'})`);
+      }
     }
     if (dorm && boarding !== 'boarder') {
       warnings.push('Dorm set but boarding is Day — student will be treated as a boarder');
@@ -207,12 +320,13 @@ export function validateRows(parsedRows, { validGrades, validStreams, validDorms
       fullName,
       grade,
       stream,
-      gender: gender || 'M',
+      gender,
       phone,
       boarding: dorm ? 'boarder' : boarding,
       dorm,
       errors,
       warnings,
+      notes,
       isValid: errors.length === 0,
     });
   });

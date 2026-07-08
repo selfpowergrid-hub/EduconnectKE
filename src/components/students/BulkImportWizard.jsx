@@ -352,8 +352,16 @@ const BulkImportWizard = ({ schoolConfig, streams, dorms, existingStudents, plan
                             <td style={{ padding: '8px 10px' }}>{r.fullName || '—'}</td>
                             <td style={{ padding: '8px 10px' }}>{r.grade || '—'}</td>
                             <td style={{ padding: '8px 10px' }}>{r.stream || '—'}</td>
-                            <td style={{ padding: '8px 10px', color: r.errors.length ? '#C0392B' : '#B7791F', fontSize: 11 }}>
-                              {[...r.errors, ...r.warnings].join('; ') || ''}
+                            <td style={{ padding: '8px 10px', fontSize: 11 }}>
+                              {r.errors.length > 0 && (
+                                <span style={{ color: '#C0392B' }}>{r.errors.join('; ')}</span>
+                              )}
+                              {r.warnings.length > 0 && (
+                                <span style={{ color: '#B7791F' }}>{(r.errors.length ? '; ' : '')}{r.warnings.join('; ')}</span>
+                              )}
+                              {r.notes?.length > 0 && (
+                                <span style={{ color: '#1B6B3A' }}>{((r.errors.length || r.warnings.length) ? '; ' : '')}✎ {r.notes.join('; ')}</span>
+                              )}
                             </td>
                           </tr>
                         ))}
