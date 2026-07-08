@@ -7,7 +7,9 @@ export const LEVELS = {
   "Pre-Primary": ["PP1", "PP2"],
   "Primary": ["Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6"],
   "Junior Secondary": ["Grade 7", "Grade 8", "Grade 9"],
-  "Senior Secondary": ["Grade 10", "Grade 11", "Grade 12"],
+  // CBC has reached Grade 10; the phasing-out 8-4-4 cohort sits in Form 3/4,
+  // so senior secondary carries both alongside each other.
+  "Senior Secondary": ["Grade 10", "Grade 11", "Grade 12", "Form 3", "Form 4"],
 };
 
 // Kept for existing imports — the full, unscoped map.
@@ -19,6 +21,7 @@ export const GRADE_NAME_TO_CODE = {
   "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
   "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
   "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12",
+  "Form 3": "f3", "Form 4": "f4",
 };
 
 export const GRADE_CODE_TO_NAME = Object.fromEntries(

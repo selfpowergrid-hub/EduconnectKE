@@ -34,6 +34,17 @@ export function normalizeGrade(raw, validGrades) {
     if (hit) return { value: hit, matched: true, changed: true };
   }
 
+  // Form N (8-4-4): F3, F 4, FORM3, FORM 03 — resolved only through
+  // validGrades, so a Form the school does not teach is left unmatched for the
+  // caller to report as out-of-scope.
+  const fm = up.match(/^F(?:ORM)?\s*0*(\d{1,2})$/);
+  if (fm) {
+    const cand = 'Form ' + parseInt(fm[1], 10);
+    const hit = validGrades.find(g => g.toLowerCase() === cand.toLowerCase());
+    if (hit) return { value: hit, matched: true, changed: true };
+    return { value: s, matched: false, changed: false };
+  }
+
   // Grade N / G N / GR N / STD N / plain N — but never "Form N" (ambiguous).
   if (!/PP|PRE|FORM/.test(up)) {
     const num = up.match(/(\d{1,2})/);

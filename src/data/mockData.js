@@ -18,6 +18,9 @@ export const CLASSES = [
   { id: "g10", name: "Grade 10", age: "15-16 yrs", color: "#6C3483", bg: "#F5EEF8", type: "Secondary" },
   { id: "g11", name: "Grade 11", age: "16-17 yrs", color: "#6C3483", bg: "#F5EEF8", type: "Secondary" },
   { id: "g12", name: "Grade 12", age: "17-18 yrs", color: "#6C3483", bg: "#F5EEF8", type: "Secondary" },
+  // 8-4-4 cohort still in the system, senior-secondary only.
+  { id: "f3", name: "Form 3", age: "16-17 yrs", color: "#6C3483", bg: "#F5EEF8", type: "Secondary" },
+  { id: "f4", name: "Form 4", age: "17-18 yrs", color: "#6C3483", bg: "#F5EEF8", type: "Secondary" },
 ];
 
 export const getClassesByType = (type) => {
