@@ -1,21 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import SchoolCodeCard from '../components/school/SchoolCodeCard';
-
-const GRADES_BY_LEVEL = {
-  "Pre-Primary": ["PP1", "PP2"],
-  "Primary": ["Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6"],
-  "Junior Secondary": ["Grade 7", "Grade 8", "Grade 9"],
-  "Senior Secondary": ["Grade 10", "Grade 11", "Grade 12"]
-};
-
-const GRADE_NAME_TO_CODE = {
-  "PP1": "pp1", "PP2": "pp2",
-  "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
-  "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-  "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
-};
-const GRADE_CODE_TO_NAME = Object.fromEntries(Object.entries(GRADE_NAME_TO_CODE).map(([k, v]) => [v, k]));
+import { GRADE_NAME_TO_CODE, GRADE_CODE_TO_NAME, gradesByLevelForSchool } from '../lib/schoolLevels';
 
 // Which module shell a staff login lands in (staff.app_role). Finance roles
 // get the Accounting module only; teachers get Examinations only.
@@ -174,11 +160,20 @@ const TeacherAllocations = ({ schoolConfig }) => {
 // ----------------------------------------------------------------------
 
 const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, onClose, onSaved }) => {
-  const [newAssign, setNewAssign] = useState({
-    subject_id: subjects[0]?.id || '',
-    level: 'Senior Secondary',
-    grade: 'Grade 10',
-    stream_id: '',
+  // Levels/grades scoped to what this school actually teaches.
+  const GRADES_BY_LEVEL = useMemo(
+    () => gradesByLevelForSchool(schoolConfig?.schoolType),
+    [schoolConfig?.schoolType]
+  );
+  const [newAssign, setNewAssign] = useState(() => {
+    const scoped = gradesByLevelForSchool(schoolConfig?.schoolType);
+    const firstLevel = Object.keys(scoped)[0];
+    return {
+      subject_id: subjects[0]?.id || '',
+      level: firstLevel,
+      grade: scoped[firstLevel][0],
+      stream_id: '',
+    };
   });
   const [isAdding, setIsAdding] = useState(false);
   const [email, setEmail] = useState(teacher.email || '');
@@ -486,7 +481,7 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
                   <label style={labelStyle}>Level</label>
                   <select
                     value={newAssign.level}
-                    onChange={(e) => setNewAssign({ ...newAssign, level: e.target.value, grade: GRADES_BY_LEVEL[e.target.value][0], stream_id: '' })}
+                    onChange={(e) => setNewAssign({ ...newAssign, level: e.target.value, grade: (GRADES_BY_LEVEL[e.target.value] || [])[0], stream_id: '' })}
                     style={inputStyle}
                   >
                     {Object.keys(GRADES_BY_LEVEL).map(l => <option key={l}>{l}</option>)}
@@ -495,7 +490,7 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
                 <div>
                   <label style={labelStyle}>Grade</label>
                   <select value={newAssign.grade} onChange={(e) => setNewAssign({ ...newAssign, grade: e.target.value, stream_id: '' })} style={inputStyle}>
-                    {GRADES_BY_LEVEL[newAssign.level].map(g => <option key={g}>{g}</option>)}
+                    {(GRADES_BY_LEVEL[newAssign.level] || []).map(g => <option key={g}>{g}</option>)}
                   </select>
                 </div>
                 <div>

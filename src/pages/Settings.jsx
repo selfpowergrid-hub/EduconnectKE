@@ -1,11 +1,29 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import * as XLSXLib from 'xlsx';
-import { CLASSES, FEE_STRUCTURE, ACADEMIC_GRADES } from '../data/mockData';
+import { CLASSES, FEE_STRUCTURE, ACADEMIC_GRADES, getClassesByType } from '../data/mockData';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 
 const Settings = ({ schoolConfig, initialTab }) => {
+  const { updateSchoolConfig } = useAuth();
   const [activeTab, setActiveTab] = useState(initialTab || "school");
   const [isLoading, setIsLoading] = useState(false);
+
+  // Level → its classes, scoped to what this school actually teaches. Drives
+  // the grading-system and fee-structure level/grade pickers.
+  const scopedLevelClasses = useMemo(() => {
+    const scoped = getClassesByType(schoolConfig?.schoolType);
+    return {
+      "Pre-Primary": scoped.filter(c => c.id.startsWith("pp")),
+      "Primary": scoped.filter(c => c.type === "Primary" && !c.id.startsWith("pp")),
+      "Junior Secondary": scoped.filter(c => c.type === "JSS"),
+      "Senior Secondary": scoped.filter(c => c.type === "Secondary"),
+    };
+  }, [schoolConfig?.schoolType]);
+  const scopedLevelNames = useMemo(
+    () => Object.keys(scopedLevelClasses).filter(l => scopedLevelClasses[l].length > 0),
+    [scopedLevelClasses]
+  );
 
   // School Information state
   const [schoolInfo, setSchoolInfo] = useState({
@@ -91,8 +109,8 @@ const Settings = ({ schoolConfig, initialTab }) => {
   };
 
   const [schoolLevels, setSchoolLevels] = useState({
-    primary: schoolConfig?.schoolType === "Primary & JSS" || schoolConfig?.schoolType === "Primary",
-    senior: schoolConfig?.schoolType === "Secondary" || schoolConfig?.schoolType === "SS"
+    primary: schoolConfig?.schoolType === "Primary & JSS" || schoolConfig?.schoolType === "Primary" || schoolConfig?.schoolType === "All Levels",
+    senior: schoolConfig?.schoolType === "Secondary" || schoolConfig?.schoolType === "SS" || schoolConfig?.schoolType === "Senior Secondary" || schoolConfig?.schoolType === "All Levels"
   });
   const [logoPreview, setLogoPreview] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -216,6 +234,13 @@ const Settings = ({ schoolConfig, initialTab }) => {
     }
   };
 
+  // Institutional levels → the single school_type value stored on the school.
+  const levelsToSchoolType = ({ primary, senior }) => {
+    if (primary && senior) return "All Levels";
+    if (senior) return "Secondary";
+    return "Primary & JSS";
+  };
+
   const handleSaveSchoolInfo = async () => {
     setIsLoading(true);
     try {
@@ -236,6 +261,19 @@ const Settings = ({ schoolConfig, initialTab }) => {
         }
         throw error;
       }
+
+      // Persist the institutional levels (school_type) and refresh the in-memory
+      // config so every scoped grade dropdown updates immediately.
+      const nextSchoolType = levelsToSchoolType(schoolLevels);
+      if (nextSchoolType !== schoolConfig.schoolType) {
+        const { error: typeErr } = await supabase
+          .from('school_registrations')
+          .update({ school_type: nextSchoolType })
+          .eq('id', schoolConfig.id);
+        if (typeErr) throw typeErr;
+        updateSchoolConfig({ ...schoolConfig, schoolType: nextSchoolType });
+      }
+
       alert('School information saved successfully!');
     } catch (err) {
       alert('Failed to save school info: ' + err.message);
@@ -245,7 +283,13 @@ const Settings = ({ schoolConfig, initialTab }) => {
   };
 
   // Grading System state
-  const [gradingLevel, setGradingLevel] = useState("Junior Secondary");
+  const [gradingLevel, setGradingLevel] = useState(() => {
+    const scoped = getClassesByType(schoolConfig?.schoolType);
+    if (scoped.some(c => c.type === "JSS")) return "Junior Secondary";
+    if (scoped.some(c => c.type === "Secondary")) return "Senior Secondary";
+    if (scoped.some(c => c.type === "Primary" && !c.id.startsWith("pp"))) return "Primary";
+    return "Pre-Primary";
+  });
   const [selectedGradingGrade, setSelectedGradingGrade] = useState("");
   const [gradingExpanded, setGradingExpanded] = useState(false);
   const [gradesList, setGradesList] = useState([]);
@@ -304,7 +348,13 @@ const Settings = ({ schoolConfig, initialTab }) => {
   };
 
   // Subjects state
-  const [subjectLevel, setSubjectLevel] = useState("Primary");
+  const [subjectLevel, setSubjectLevel] = useState(() => {
+    const scoped = getClassesByType(schoolConfig?.schoolType);
+    if (scoped.some(c => c.type === "Primary" && !c.id.startsWith("pp"))) return "Primary";
+    if (scoped.some(c => c.type === "JSS")) return "Junior Secondary";
+    if (scoped.some(c => c.type === "Secondary")) return "Senior Secondary";
+    return "Pre-Primary";
+  });
   const [selectedSubjectGrade, setSelectedSubjectGrade] = useState("");
   const [subjectsExpanded, setSubjectsExpanded] = useState(false);
 
@@ -1108,7 +1158,14 @@ const Settings = ({ schoolConfig, initialTab }) => {
   ];
 
   const handleLevelChange = (level) => {
-    setSchoolLevels(prev => ({ ...prev, [level]: !prev[level] }));
+    setSchoolLevels(prev => {
+      const next = { ...prev, [level]: !prev[level] };
+      if (!next.primary && !next.senior) {
+        alert("A school must teach at least one level.");
+        return prev;
+      }
+      return next;
+    });
   };
 
   const handleLogoUpload = (file) => {
@@ -2006,12 +2063,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
               boxShadow: "0 1px 2px rgba(0,0,0,0.02)" 
             }}>
               {(() => {
-                const GRADES_BY_LEVEL = {
-                  "Pre-Primary": CLASSES.filter(c => c.id.startsWith("pp")),
-                  "Primary": CLASSES.filter(c => c.type === "Primary" && !c.id.startsWith("pp")),
-                  "Junior Secondary": CLASSES.filter(c => c.type === "JSS"),
-                  "Senior Secondary": CLASSES.filter(c => c.type === "Secondary"),
-                };
+                const GRADES_BY_LEVEL = scopedLevelClasses;
                 const selectStyle = {
                   width: "100%", padding: "12px 16px", borderRadius: 8,
                   border: "1px solid #e6dfd8", fontSize: 14, background: "#fff",
@@ -2033,10 +2085,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                           }}
                           style={selectStyle}
                         >
-                          <option value="Pre-Primary">Pre-Primary</option>
-                          <option value="Primary">Primary</option>
-                          <option value="Junior Secondary">Junior Secondary</option>
-                          <option value="Senior Secondary">Senior Secondary</option>
+                          {scopedLevelNames.map(l => <option key={l} value={l}>{l}</option>)}
                         </select>
                         <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
                       </div>
@@ -2731,12 +2780,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
 
             {/* Level & Grade Dropdowns - matching Exam Settings style */}
             {(() => {
-              const GRADES_BY_LEVEL = {
-                "Pre-Primary": CLASSES.filter(c => c.id.startsWith("pp")),
-                "Primary": CLASSES.filter(c => c.type === "Primary" && !c.id.startsWith("pp")),
-                "Junior Secondary": CLASSES.filter(c => c.type === "JSS"),
-                "Senior Secondary": CLASSES.filter(c => c.type === "Secondary"),
-              };
+              const GRADES_BY_LEVEL = scopedLevelClasses;
               const selectStyle = {
                 width: "100%", padding: "12px 16px", borderRadius: 8,
                 border: "1px solid #e6dfd8", fontSize: 14, background: "#fff",
@@ -2758,10 +2802,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                         }}
                         style={selectStyle}
                       >
-                        <option value="Pre-Primary">Pre-Primary</option>
-                        <option value="Primary">Primary</option>
-                        <option value="Junior Secondary">Junior Secondary</option>
-                        <option value="Senior Secondary">Senior Secondary</option>
+                        {scopedLevelNames.map(l => <option key={l} value={l}>{l}</option>)}
                       </select>
                       <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
                     </div>

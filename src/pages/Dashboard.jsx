@@ -8,7 +8,7 @@ const Dashboard = ({ schoolConfig, currentPlan, studentCount, staffCount }) => {
   const planData = PLANS[currentPlan] || PLANS.starter;
 
   const currentTypeClasses = useMemo(() => {
-    return getClassesByType(schoolConfig?.schoolType || "Primary & JSS");
+    return getClassesByType(schoolConfig?.schoolType);
   }, [schoolConfig]);
 
   const totalStudents = studentCount;

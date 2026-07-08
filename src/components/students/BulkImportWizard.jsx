@@ -1,12 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
 import {
-  GRADES_BY_LEVEL,
   downloadTemplate,
   parseExcelFile,
   validateRows,
   toInsertPayload,
 } from '../../lib/studentImport';
+import { gradesByLevelForSchool } from '../../lib/schoolLevels';
 
 const STEPS = ['Configure', 'Upload & Preview', 'Import'];
 
@@ -22,11 +22,21 @@ const inputStyle = {
 
 const BulkImportWizard = ({ schoolConfig, streams, dorms, existingStudents, planRemaining, onClose, onImported }) => {
   const [step, setStep] = useState(0);
-  const [defaults, setDefaults] = useState({
-    level: 'Junior Secondary',
-    grade: 'Grade 7',
-    stream: '',
-    gender: 'per_row',
+  // Levels/grades scoped to what this school actually teaches — a secondary
+  // school importing "G7" must get a row error, not a saved student.
+  const GRADES_BY_LEVEL = useMemo(
+    () => gradesByLevelForSchool(schoolConfig?.schoolType),
+    [schoolConfig?.schoolType]
+  );
+  const [defaults, setDefaults] = useState(() => {
+    const scoped = gradesByLevelForSchool(schoolConfig?.schoolType);
+    const firstLevel = Object.keys(scoped)[0];
+    return {
+      level: firstLevel,
+      grade: scoped[firstLevel][0],
+      stream: '',
+      gender: 'per_row',
+    };
   });
   const [file, setFile] = useState(null);
   const [parsedRows, setParsedRows] = useState([]);
@@ -180,7 +190,7 @@ const BulkImportWizard = ({ schoolConfig, streams, dorms, existingStudents, plan
                     onChange={(e) => setDefaults({
                       ...defaults,
                       level: e.target.value,
-                      grade: GRADES_BY_LEVEL[e.target.value][0],
+                      grade: (GRADES_BY_LEVEL[e.target.value] || [])[0],
                     })}
                     style={inputStyle}
                   >

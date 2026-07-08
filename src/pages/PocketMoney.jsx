@@ -1,35 +1,27 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { GRADE_NAME_TO_CODE, GRADE_CODE_TO_NAME, gradesByLevelForSchool } from '../lib/schoolLevels';
 
 // Pocket Money — student personal (custodial) accounts. Deposits from
 // parents, withdrawals by students, running balances and statements.
 // Deliberately separate from school fee finances: different tables, no
 // contact with invoices, the fee ledger, or finance reports.
 
-const GRADES_BY_LEVEL = {
-  "Pre-Primary": ["PP1", "PP2"],
-  "Primary": ["Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6"],
-  "Junior Secondary": ["Grade 7", "Grade 8", "Grade 9"],
-  "Senior Secondary": ["Grade 10", "Grade 11", "Grade 12"]
-};
-const GRADE_NAME_TO_CODE = {
-  "PP1": "pp1", "PP2": "pp2",
-  "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
-  "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-  "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
-};
-const GRADE_CODE_TO_NAME = Object.fromEntries(Object.entries(GRADE_NAME_TO_CODE).map(([k, v]) => [v, k]));
-
 const sName = (s) => s ? `${s.first_name || ''} ${s.last_name || ''}`.trim() : '—';
 const kes = (n) => Math.round(Number(n) || 0).toLocaleString();
 
 const PocketMoney = ({ schoolConfig }) => {
+  // Levels/grades scoped to what this school actually teaches.
+  const GRADES_BY_LEVEL = useMemo(
+    () => gradesByLevelForSchool(schoolConfig?.schoolType),
+    [schoolConfig?.schoolType]
+  );
   const [activeTab, setActiveTab] = useState('balances');
   const [students, setStudents] = useState([]);
   const [txns, setTxns] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedLevel, setSelectedLevel] = useState('Senior Secondary');
+  const [selectedLevel, setSelectedLevel] = useState(() => Object.keys(gradesByLevelForSchool(schoolConfig?.schoolType))[0]);
   const [selectedGrade, setSelectedGrade] = useState('all');
 
   // Deposit / withdraw modal
@@ -92,7 +84,7 @@ const PocketMoney = ({ schoolConfig }) => {
 
   const filteredStudents = useMemo(() => {
     const q = searchTerm.toLowerCase();
-    const levelGrades = GRADES_BY_LEVEL[selectedLevel].map(n => GRADE_NAME_TO_CODE[n]);
+    const levelGrades = (GRADES_BY_LEVEL[selectedLevel] || []).map(n => GRADE_NAME_TO_CODE[n]);
     const target = selectedGrade === 'all' ? null : GRADE_NAME_TO_CODE[selectedGrade];
     return students
       .filter(s => (sName(s).toLowerCase().includes(q) || (s.adm_no || '').toLowerCase().includes(q))
@@ -293,7 +285,7 @@ const PocketMoney = ({ schoolConfig }) => {
             <select value={selectedGrade} onChange={(e) => setSelectedGrade(e.target.value)}
               style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid #E8EAF0', fontSize: 13, background: '#fff' }}>
               <option value="all">All {selectedLevel}</option>
-              {GRADES_BY_LEVEL[selectedLevel].map(g => <option key={g} value={g}>{g}</option>)}
+              {(GRADES_BY_LEVEL[selectedLevel] || []).map(g => <option key={g} value={g}>{g}</option>)}
             </select>
           </>
         )}

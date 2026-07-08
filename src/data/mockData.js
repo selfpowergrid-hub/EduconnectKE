@@ -24,10 +24,13 @@ export const getClassesByType = (type) => {
   if (type === "Primary & JSS" || type === "Primary") {
     return CLASSES.filter(c => c.type === "Primary" || c.type === "JSS");
   }
-  if (type === "Secondary" || type === "SS") {
+  if (type === "Secondary" || type === "SS" || type === "Senior Secondary") {
     return CLASSES.filter(c => c.type === "Secondary");
   }
-  return CLASSES.filter(c => c.type === type);
+  // Unknown / "All Levels" / missing → show everything rather than hide a
+  // school's own classes.
+  const matched = CLASSES.filter(c => c.type === type);
+  return matched.length ? matched : CLASSES;
 };
 
 export const SUBJECTS_BY_LEVEL = {

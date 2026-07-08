@@ -5,22 +5,21 @@ import { getPlanLimits } from '../lib/planConfig';
 import BulkImportWizard from '../components/students/BulkImportWizard';
 import PhotoUpload, { StudentAvatar } from '../components/students/PhotoUpload';
 import { uploadStudentPhoto, deleteStudentPhoto, getStudentPhotoUrl } from '../lib/imageProcessing';
-
-const GRADES_BY_LEVEL = {
-  "Pre-Primary": ["PP1", "PP2"],
-  "Primary": ["Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6"],
-  "Junior Secondary": ["Grade 7", "Grade 8", "Grade 9"],
-  "Senior Secondary": ["Grade 10", "Grade 11", "Grade 12"]
-};
+import { GRADE_NAME_TO_CODE, GRADE_CODE_TO_NAME, gradesByLevelForSchool } from '../lib/schoolLevels';
 
 const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
   const isTeacher = role === 'teacher';
+  // Levels/grades scoped to what this school actually teaches.
+  const GRADES_BY_LEVEL = useMemo(
+    () => gradesByLevelForSchool(schoolConfig?.schoolType),
+    [schoolConfig?.schoolType]
+  );
   const [studentsList, setStudentsList] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [boardingFilter, setBoardingFilter] = useState("all"); // all | day | boarder
-  const [selectedLevel, setSelectedLevel] = useState("Junior Secondary");
-  const [selectedGrade, setSelectedGrade] = useState("Grade 7");
+  const [selectedLevel, setSelectedLevel] = useState(() => Object.keys(gradesByLevelForSchool(schoolConfig?.schoolType))[0]);
+  const [selectedGrade, setSelectedGrade] = useState(() => Object.values(gradesByLevelForSchool(schoolConfig?.schoolType))[0][0]);
   const [currentPage, setCurrentPage] = useState(1);
   const [streams, setStreams] = useState([]);
   const [dorms, setDorms] = useState([]);
@@ -89,15 +88,8 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
   }, [schoolConfig]);
 
   const filteredStudents = useMemo(() => {
-    const gradeIdMap = {
-      "PP1": "pp1", "PP2": "pp2",
-      "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
-      "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-      "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
-    };
-
-    const targetGradeId = selectedGrade === "all" ? null : gradeIdMap[selectedGrade];
-    const levelGrades = GRADES_BY_LEVEL[selectedLevel].map(name => gradeIdMap[name]);
+    const targetGradeId = selectedGrade === "all" ? null : GRADE_NAME_TO_CODE[selectedGrade];
+    const levelGrades = (GRADES_BY_LEVEL[selectedLevel] || []).map(name => GRADE_NAME_TO_CODE[name]);
 
     return studentsList.filter(s => {
       const nameMatch = s.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -114,7 +106,7 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
 
   // Sync selectedGrade when selectedLevel changes
   useEffect(() => {
-    setSelectedGrade(GRADES_BY_LEVEL[selectedLevel][0]);
+    setSelectedGrade((GRADES_BY_LEVEL[selectedLevel] || [])[0]);
     setCurrentPage(1);
   }, [selectedLevel]);
 
@@ -426,7 +418,7 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
                 style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none", minWidth: "120px" }}
               >
                 <option value="all">All {selectedLevel}</option>
-                {GRADES_BY_LEVEL[selectedLevel].map(g => <option key={g} value={g}>{g}</option>)}
+                {(GRADES_BY_LEVEL[selectedLevel] || []).map(g => <option key={g} value={g}>{g}</option>)}
               </select>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -718,29 +710,17 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
               {/* Level */}
               <div>
                 <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#4A4A6A", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Academic Level</label>
-                <select 
+                <select
                   value={(() => {
-                    const gradeIdMap = {
-                      "pp1": "PP1", "pp2": "PP2",
-                      "g1": "Grade 1", "g2": "Grade 2", "g3": "Grade 3", "g4": "Grade 4", "g5": "Grade 5", "g6": "Grade 6",
-                      "g7": "Grade 7", "g8": "Grade 8", "g9": "Grade 9",
-                      "g10": "Grade 10", "g11": "Grade 11", "g12": "Grade 12"
-                    };
-                    const gradeName = gradeIdMap[newStudent.level_id];
+                    const gradeName = GRADE_CODE_TO_NAME[newStudent.level_id];
                     for (const [lvl, grades] of Object.entries(GRADES_BY_LEVEL)) {
                       if (grades.includes(gradeName)) return lvl;
                     }
-                    return "Junior Secondary";
+                    return Object.keys(GRADES_BY_LEVEL)[0];
                   })()}
                   onChange={(e) => {
-                    const firstGrade = GRADES_BY_LEVEL[e.target.value][0];
-                    const gradeIdMap = {
-                      "PP1": "pp1", "PP2": "pp2",
-                      "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
-                      "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-                      "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
-                    };
-                    setNewStudent({...newStudent, level_id: gradeIdMap[firstGrade]});
+                    const firstGrade = (GRADES_BY_LEVEL[e.target.value] || [])[0];
+                    setNewStudent({...newStudent, level_id: GRADE_NAME_TO_CODE[firstGrade]});
                   }}
                   style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1.5px solid #e6dfd8", fontSize: 13, boxSizing: "border-box", background: "#ffffff", outline: "none", cursor: "pointer", transition: "border-color 0.2s" }}
                 >
@@ -757,22 +737,14 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
                   style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1.5px solid #e6dfd8", fontSize: 13, boxSizing: "border-box", background: "#ffffff", outline: "none", cursor: "pointer", transition: "border-color 0.2s" }}
                 >
                   {(() => {
-                    const gradeIdMap = {
-                      "PP1": "pp1", "PP2": "pp2",
-                      "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
-                      "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-                      "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
-                    };
-                    
-                    const revMap = Object.fromEntries(Object.entries(gradeIdMap).map(([k, v]) => [v, k]));
-                    const gradeName = revMap[newStudent.level_id];
-                    let currentLvl = "Junior Secondary";
+                    const gradeName = GRADE_CODE_TO_NAME[newStudent.level_id];
+                    let currentLvl = Object.keys(GRADES_BY_LEVEL)[0];
                     for (const [lvl, grades] of Object.entries(GRADES_BY_LEVEL)) {
                       if (grades.includes(gradeName)) currentLvl = lvl;
                     }
 
-                    return GRADES_BY_LEVEL[currentLvl].map(name => (
-                      <option key={name} value={gradeIdMap[name]}>{name}</option>
+                    return (GRADES_BY_LEVEL[currentLvl] || []).map(name => (
+                      <option key={name} value={GRADE_NAME_TO_CODE[name]}>{name}</option>
                     ));
                   })()}
                 </select>

@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { CLASSES } from '../data/mockData';
+import { getClassesByType } from '../data/mockData';
+
+// Class-type → level label, so the Level dropdown only offers types the
+// school actually teaches.
+const TYPE_LABEL = { Primary: 'Primary', JSS: 'Junior Secondary', Secondary: 'Senior Secondary' };
 
 const Marksheets = ({ schoolConfig, examsList }) => {
   const [students, setStudents] = useState([]);
@@ -11,15 +15,27 @@ const Marksheets = ({ schoolConfig, examsList }) => {
   const [schoolInfo, setSchoolInfo] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Classes scoped to what this school actually teaches.
+  const currentTypeClasses = useMemo(() => getClassesByType(schoolConfig?.schoolType), [schoolConfig]);
+  // Distinct class types available at this school, in canonical order.
+  const availableTypes = useMemo(() => {
+    const order = ['Primary', 'JSS', 'Secondary'];
+    return order.filter(t => currentTypeClasses.some(c => c.type === t));
+  }, [currentTypeClasses]);
+
   // Filters
-  const [selectedLevel, setSelectedLevel] = useState('Secondary');
-  const [selectedClass, setSelectedClass] = useState('g10');
+  const [selectedLevel, setSelectedLevel] = useState(() => {
+    const scoped = getClassesByType(schoolConfig?.schoolType);
+    return scoped[0]?.type || 'All';
+  });
+  const [selectedClass, setSelectedClass] = useState(() => {
+    const scoped = getClassesByType(schoolConfig?.schoolType);
+    return scoped[0]?.id || '';
+  });
   const [selectedStream, setSelectedStream] = useState('all');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedTerm, setSelectedTerm] = useState('Term 1');
   const [selectedExamId, setSelectedExamId] = useState('average'); // 'average' or specific exam.id
-
-  const currentTypeClasses = useMemo(() => CLASSES, []);
 
   // Filter Classes by Level
   const filteredClasses = useMemo(() => {
@@ -274,10 +290,8 @@ const Marksheets = ({ schoolConfig, examsList }) => {
         <div style={{ flex: 1, minWidth: 120 }}>
           <div style={labelStyle}>Level</div>
           <select value={selectedLevel} onChange={e => setSelectedLevel(e.target.value)} style={selectStyle}>
-            <option value="All">All Levels</option>
-            <option value="Primary">Primary</option>
-            <option value="JSS">Junior Secondary</option>
-            <option value="Secondary">Senior Secondary</option>
+            {availableTypes.length > 1 && <option value="All">All Levels</option>}
+            {availableTypes.map(t => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
           </select>
         </div>
         <div style={{ flex: 1, minWidth: 120 }}>

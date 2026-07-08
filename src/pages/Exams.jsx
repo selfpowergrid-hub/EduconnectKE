@@ -1,13 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { STUDENTS, getClassesByType, SUBJECTS_BY_LEVEL, ACADEMIC_GRADES, COMPETENCY_GRADES } from '../data/mockData';
 import { supabase } from '../lib/supabase';
-
-const GRADES_BY_LEVEL = {
-  "Pre-Primary": ["PP1", "PP2"],
-  "Primary": ["Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6"],
-  "Junior Secondary": ["Grade 7", "Grade 8", "Grade 9"],
-  "Senior Secondary": ["Grade 10", "Grade 11", "Grade 12"]
-};
+import { LEVELS, gradesByLevelForSchool } from '../lib/schoolLevels';
 
 const getGradeLevel = (classId) => {
   if (classId.startsWith("p")) return "upper_primary"; // p1-p8
@@ -20,21 +14,27 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
   // Tab State: 'listings' | 'options' | 'entry'
   const [activeTab, setActiveTab] = useState("listings");
 
+  // Levels/grades scoped to what this school actually teaches.
+  const GRADES_BY_LEVEL = useMemo(
+    () => gradesByLevelForSchool(schoolConfig?.schoolType),
+    [schoolConfig?.schoolType]
+  );
+
   const currentTypeClasses = useMemo(() => {
-    return getClassesByType(schoolConfig?.schoolType || "Primary");
+    return getClassesByType(schoolConfig?.schoolType);
   }, [schoolConfig]);
 
   // --- Exam Listings State ---
   // Received as props from App.jsx
   const [newExam, setNewExam] = useState({ name: "", subject: "Mathematics", weight: "", total_marks: "100", order: "" });
 
-  const [filterLevel, setFilterLevel] = useState("Senior Secondary");
-  const [filterGrade, setFilterGrade] = useState("Grade 10");
+  const [filterLevel, setFilterLevel] = useState(() => Object.keys(gradesByLevelForSchool(schoolConfig?.schoolType))[0]);
+  const [filterGrade, setFilterGrade] = useState(() => Object.values(gradesByLevelForSchool(schoolConfig?.schoolType))[0][0]);
   const [filterTerm, setFilterTerm] = useState("Term 1");
 
   // Sync filterGrade when filterLevel changes
   useEffect(() => {
-    setFilterGrade(GRADES_BY_LEVEL[filterLevel][0]);
+    setFilterGrade((GRADES_BY_LEVEL[filterLevel] || [])[0]);
     fetchGradingSystems();
   }, [filterLevel]);
 
@@ -169,10 +169,11 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
       "g10": "Grade 10", "g11": "Grade 11", "g12": "Grade 12"
     };
     
-    // Find the Level based on the Grade
+    // Find the Level based on the Grade — use the full level map so an exam
+    // for a grade outside this school's current scope still resolves.
     let detectedLevel = "Primary";
     const gradeName = idToGradeMap[exam.level_id];
-    for (const [lvl, grades] of Object.entries(GRADES_BY_LEVEL)) {
+    for (const [lvl, grades] of Object.entries(LEVELS)) {
       if (grades.includes(gradeName)) {
         detectedLevel = lvl;
         break;
@@ -983,7 +984,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
               <div>
                 <label style={labelStyle}>Grade</label>
                 <select value={editingExam.grade} onChange={(e) => setEditingExam({...editingExam, grade: e.target.value})} style={inputStyle}>
-                  {(GRADES_BY_LEVEL[editingExam.level] || []).map(g => <option key={g}>{g}</option>)}
+                  {(GRADES_BY_LEVEL[editingExam.level] || LEVELS[editingExam.level] || []).map(g => <option key={g}>{g}</option>)}
                 </select>
               </div>
 

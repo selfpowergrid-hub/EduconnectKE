@@ -1,23 +1,13 @@
 import * as XLSX from 'xlsx';
+import { GRADE_NAME_TO_CODE, LEVELS } from './schoolLevels';
 
-export const GRADES_BY_LEVEL = {
-  "Pre-Primary": ["PP1", "PP2"],
-  "Primary": ["Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6"],
-  "Junior Secondary": ["Grade 7", "Grade 8", "Grade 9"],
-  "Senior Secondary": ["Grade 10", "Grade 11", "Grade 12"]
-};
+// Grade constants moved to schoolLevels.js — re-exported so existing imports keep working.
+export { GRADES_BY_LEVEL, GRADE_NAME_TO_CODE, GRADE_CODE_TO_NAME } from './schoolLevels';
 
-export const GRADE_NAME_TO_CODE = {
-  "PP1": "pp1", "PP2": "pp2",
-  "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3",
-  "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
-  "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-  "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
-};
-
-export const GRADE_CODE_TO_NAME = Object.fromEntries(
-  Object.entries(GRADE_NAME_TO_CODE).map(([k, v]) => [v, k])
-);
+// Every grade the system knows about, regardless of a school's configured
+// levels — used to tell "this isn't a grade" apart from "this school does not
+// teach that grade".
+const ALL_GRADE_NAMES = Object.values(LEVELS).flat();
 
 // ---------------------------------------------------------------------------
 // Lenient normalizers for the standard fields. A bulk import should accept the
@@ -259,7 +249,14 @@ export function validateRows(parsedRows, { validGrades, validStreams, validDorms
         grade = g.value;
         if (g.changed) notes.push(`Grade read as "${grade}"`);
       } else {
-        errors.push(`Grade "${rawGrade}" is not valid (expected one of: ${validGrades.join(', ')})`);
+        // Distinguish "not a grade at all" from "a real grade this school does
+        // not teach" so the user gets an actionable message.
+        const globally = normalizeGrade(rawGrade, ALL_GRADE_NAMES);
+        if (globally.matched) {
+          errors.push(`${globally.value} is not offered at this school (this school teaches: ${validGrades.join(', ')})`);
+        } else {
+          errors.push(`Grade "${rawGrade}" is not valid (expected one of: ${validGrades.join(', ')})`);
+        }
       }
     }
 

@@ -1,12 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-
-const GRADES_BY_LEVEL = {
-  "Pre-Primary": ["PP1", "PP2"],
-  "Primary": ["Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6"],
-  "Junior Secondary": ["Grade 7", "Grade 8", "Grade 9"],
-  "Senior Secondary": ["Grade 10", "Grade 11", "Grade 12"]
-};
+import { LEVELS, GRADE_NAME_TO_CODE, GRADE_CODE_TO_NAME, gradesByLevelForSchool } from '../lib/schoolLevels';
 
 const levelToSubjectKey = {
   "Pre-Primary": "ecde",
@@ -15,24 +9,12 @@ const levelToSubjectKey = {
   "Senior Secondary": "senior"
 };
 
-const getGradeId = (gradeName) => {
-  const gradeIdMap = {
-    "PP1": "pp1", "PP2": "pp2",
-    "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
-    "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-    "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
-  };
-  return gradeIdMap[gradeName];
-};
+const getGradeId = (gradeName) => GRADE_NAME_TO_CODE[gradeName];
 
-const GRADE_CODE_TO_NAME = {
-  "pp1": "PP1", "pp2": "PP2",
-  "g1": "Grade 1", "g2": "Grade 2", "g3": "Grade 3", "g4": "Grade 4", "g5": "Grade 5", "g6": "Grade 6",
-  "g7": "Grade 7", "g8": "Grade 8", "g9": "Grade 9",
-  "g10": "Grade 10", "g11": "Grade 11", "g12": "Grade 12"
-};
+// Lookup over the full map — resolving an existing student's grade must work
+// even if it falls outside the school's configured levels.
 const gradeNameToLevel = (gradeName) => {
-  for (const [lvl, grades] of Object.entries(GRADES_BY_LEVEL)) {
+  for (const [lvl, grades] of Object.entries(LEVELS)) {
     if (grades.includes(gradeName)) return lvl;
   }
   return null;
@@ -41,6 +23,11 @@ const gradeNameToLevel = (gradeName) => {
 const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, teacherInfo, focusMode, setFocusMode }) => {
   const isTeacher = role === 'teacher';
   const assignments = teacherInfo?.assignments || [];
+  // Levels/grades scoped to what this school actually teaches.
+  const GRADES_BY_LEVEL = useMemo(
+    () => gradesByLevelForSchool(schoolConfig?.schoolType),
+    [schoolConfig?.schoolType]
+  );
   const [filterBarHidden, setFilterBarHidden] = useState(false);
   const [students, setStudents] = useState([]);
   const [dbSubjects, setDbSubjects] = useState([]);
@@ -48,8 +35,8 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
   const [dbStreams, setDbStreams] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   // Filters State
-  const [entryLevel, setEntryLevel] = useState("Senior Secondary");
-  const [entryGrade, setEntryGrade] = useState("Grade 10");
+  const [entryLevel, setEntryLevel] = useState(() => Object.keys(gradesByLevelForSchool(schoolConfig?.schoolType))[0]);
+  const [entryGrade, setEntryGrade] = useState(() => Object.values(gradesByLevelForSchool(schoolConfig?.schoolType))[0][0]);
   const [entryStream, setEntryStream] = useState("All");
   const [entrySubject, setEntrySubject] = useState("");
   const [entryTerm, setEntryTerm] = useState("Term 1");
@@ -566,7 +553,7 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
               setEntryLevel(e.target.value);
               const grades = isTeacher && teacherAllowed
                 ? [...(teacherAllowed.gradesByLevel[e.target.value] || [])]
-                : GRADES_BY_LEVEL[e.target.value];
+                : (GRADES_BY_LEVEL[e.target.value] || []);
               setEntryGrade(grades[0]);
             }} style={inputStyle}>
               {(isTeacher && teacherAllowed
@@ -581,7 +568,7 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
             <select value={entryGrade} onChange={(e) => setEntryGrade(e.target.value)} style={inputStyle}>
               {(isTeacher && teacherAllowed
                 ? [...(teacherAllowed.gradesByLevel[entryLevel] || [])]
-                : GRADES_BY_LEVEL[entryLevel]
+                : (GRADES_BY_LEVEL[entryLevel] || [])
               ).map(g => <option key={g}>{g}</option>)}
             </select>
           </div>
@@ -759,14 +746,14 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
         }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <label style={labelStyle}>Level</label>
-            <select value={entryLevel} onChange={(e) => { setEntryLevel(e.target.value); setEntryGrade(GRADES_BY_LEVEL[e.target.value][0]); setSelectedStudent(null); }} style={inputStyle}>
+            <select value={entryLevel} onChange={(e) => { setEntryLevel(e.target.value); setEntryGrade((GRADES_BY_LEVEL[e.target.value] || [])[0]); setSelectedStudent(null); }} style={inputStyle}>
               {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl}>{lvl}</option>)}
             </select>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <label style={labelStyle}>Grade</label>
             <select value={entryGrade} onChange={(e) => { setEntryGrade(e.target.value); setSelectedStudent(null); }} style={inputStyle}>
-              {GRADES_BY_LEVEL[entryLevel].map(g => <option key={g}>{g}</option>)}
+              {(GRADES_BY_LEVEL[entryLevel] || []).map(g => <option key={g}>{g}</option>)}
             </select>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

@@ -1,20 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-
-const GRADES_BY_LEVEL = {
-  "Pre-Primary": ["PP1", "PP2"],
-  "Primary": ["Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6"],
-  "Junior Secondary": ["Grade 7", "Grade 8", "Grade 9"],
-  "Senior Secondary": ["Grade 10", "Grade 11", "Grade 12"]
-};
-
-const GRADE_NAME_TO_CODE = {
-  "PP1": "pp1", "PP2": "pp2",
-  "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
-  "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-  "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
-};
-const GRADE_CODE_TO_NAME = Object.fromEntries(Object.entries(GRADE_NAME_TO_CODE).map(([k, v]) => [v, k]));
+import { GRADE_NAME_TO_CODE, GRADE_CODE_TO_NAME, gradesByLevelForSchool } from '../lib/schoolLevels';
 
 // Pricing is now keyed per grade (fee_level stores the grade code directly);
 // the CBC band only survives as an invoice-generation target on the server.
@@ -27,6 +13,15 @@ const FEE_LEVEL_LABEL = {
   upper_pri: "Upper Primary (G4–G6)",
   jss: "Junior Secondary (G7–G9)",
   sss: "Senior Secondary (G10–G12)",
+};
+
+// Which CBC fee bands belong to each institutional level, so the invoice
+// wizard only offers bands the school actually teaches.
+const FEE_LEVELS_BY_SCHOOL_LEVEL = {
+  "Pre-Primary": ["pp"],
+  "Primary": ["lower_pri", "upper_pri"],
+  "Junior Secondary": ["jss"],
+  "Senior Secondary": ["sss"],
 };
 
 const INVOICE_STATUS_STYLE = {
@@ -73,10 +68,24 @@ function amountInWords(amount) {
 }
 
 const Fees = ({ schoolConfig }) => {
+  // Levels/grades scoped to what this school actually teaches.
+  const GRADES_BY_LEVEL = useMemo(
+    () => gradesByLevelForSchool(schoolConfig?.schoolType),
+    [schoolConfig?.schoolType]
+  );
+  const defaultLevel = Object.keys(GRADES_BY_LEVEL)[0];
+  const scopedGradeNames = useMemo(
+    () => Object.values(GRADES_BY_LEVEL).flat(),
+    [GRADES_BY_LEVEL]
+  );
+  const feeLevelOptions = useMemo(
+    () => Object.keys(GRADES_BY_LEVEL).flatMap(l => FEE_LEVELS_BY_SCHOOL_LEVEL[l] || []),
+    [GRADES_BY_LEVEL]
+  );
   const [activeTab, setActiveTab] = useState("balances");
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedLevel, setSelectedLevel] = useState("Senior Secondary");
-  const [selectedGrade, setSelectedGrade] = useState("Grade 10");
+  const [selectedLevel, setSelectedLevel] = useState(defaultLevel);
+  const [selectedGrade, setSelectedGrade] = useState(GRADES_BY_LEVEL[defaultLevel][0]);
   // Stream filter — "all" by default (full student list); only narrows when
   // the user explicitly picks a stream. Streams are school-wide, so the
   // selection stays valid across level/grade changes.
@@ -125,7 +134,7 @@ const Fees = ({ schoolConfig }) => {
   const [streamsList, setStreamsList] = useState([]);
   const [invTermFilter, setInvTermFilter] = useState("all");
   const [showGenModal, setShowGenModal] = useState(false);
-  const [genForm, setGenForm] = useState({ term: "1", scope: "school", feeLevel: "jss", grade: "Grade 7", streamId: "", dueDate: "" });
+  const [genForm, setGenForm] = useState({ term: "1", scope: "school", feeLevel: feeLevelOptions[0], grade: scopedGradeNames[0], streamId: "", dueDate: "" });
   const [isGenerating, setIsGenerating] = useState(false);
   const [genResult, setGenResult] = useState(null);
   const [invoiceModal, setInvoiceModal] = useState(null);   // invoice row or null
@@ -522,7 +531,7 @@ const Fees = ({ schoolConfig }) => {
 
   const filteredStudents = useMemo(() => {
     const targetGradeId = selectedGrade === "all" ? null : GRADE_NAME_TO_CODE[selectedGrade];
-    const levelGrades = GRADES_BY_LEVEL[selectedLevel].map(name => GRADE_NAME_TO_CODE[name]);
+    const levelGrades = (GRADES_BY_LEVEL[selectedLevel] || []).map(name => GRADE_NAME_TO_CODE[name]);
 
     return studentsList
       .filter(s => {
@@ -1240,7 +1249,7 @@ const Fees = ({ schoolConfig }) => {
                   style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none", minWidth: "120px" }}
                 >
                   <option value="all">All {selectedLevel}</option>
-                  {GRADES_BY_LEVEL[selectedLevel].map(g => <option key={g} value={g}>{g}</option>)}
+                  {(GRADES_BY_LEVEL[selectedLevel] || []).map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
               </div>
               {streamsList.length > 0 && (
@@ -1640,7 +1649,7 @@ const Fees = ({ schoolConfig }) => {
               <>
                 <label style={modalLabel}>CBC Level</label>
                 <select value={genForm.feeLevel} onChange={(e) => setGenForm({ ...genForm, feeLevel: e.target.value })} style={modalInput}>
-                  {Object.entries(FEE_LEVEL_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  {feeLevelOptions.map(k => <option key={k} value={k}>{FEE_LEVEL_LABEL[k]}</option>)}
                 </select>
               </>
             )}
@@ -1649,7 +1658,7 @@ const Fees = ({ schoolConfig }) => {
               <>
                 <label style={modalLabel}>Grade</label>
                 <select value={genForm.grade} onChange={(e) => setGenForm({ ...genForm, grade: e.target.value, streamId: "" })} style={modalInput}>
-                  {Object.values(GRADES_BY_LEVEL).flat().map(g => <option key={g} value={g}>{g}</option>)}
+                  {scopedGradeNames.map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
               </>
             )}
