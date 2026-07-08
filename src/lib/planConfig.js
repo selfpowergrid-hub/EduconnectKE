@@ -1,5 +1,5 @@
 /**
- * LOGIQ Plan Configuration
+ * LogiQ-Taaluma Plan Configuration
  * Defines the three subscription tiers and their feature gates.
  */
 

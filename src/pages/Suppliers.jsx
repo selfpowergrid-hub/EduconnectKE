@@ -52,7 +52,7 @@ function printVoucher(schoolConfig, payment, allocations) {
   </style></head><body>
     <div class="vno">PAYMENT VOUCHER<br/>${payment.voucher_no}${payment.status === 'voided' ? '<br/><span style="color:#C0392B">*** VOID ***</span>' : ''}</div>
     <h2>${schoolConfig?.school_name || 'School'}</h2>
-    <p class="sub">Generated ${new Date().toLocaleString()} · EduConnect KE</p>
+    <p class="sub">Generated ${new Date().toLocaleString()} · LogiQ-Taaluma</p>
     <table class="meta">
       <tr><td class="k">Paid to</td><td><strong>${payment.suppliers?.name || ''}</strong></td></tr>
       <tr><td class="k">Date</td><td>${payment.paid_at}</td></tr>
@@ -104,7 +104,7 @@ function printTable(schoolName, title, headers, rows) {
     @media print { .noprint { display: none; } }
   </style></head><body>
     <h2>${schoolName || 'School'}</h2>
-    <p class="sub">${title} · generated ${new Date().toLocaleString()} · EduConnect KE</p>
+    <p class="sub">${title} · generated ${new Date().toLocaleString()} · LogiQ-Taaluma</p>
     <table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
     <div class="noprint" style="margin-top:16px;text-align:center;">
       <button onclick="window.print()" style="padding:8px 22px;">Print</button>
@@ -135,7 +135,7 @@ function printLpo(schoolConfig, po, supplier, items) {
   </style></head><body>
     <div class="vno">LOCAL PURCHASE ORDER<br/>${po.lpo_no}${po.status === 'cancelled' ? '<br/><span style="color:#C0392B">*** CANCELLED ***</span>' : ''}</div>
     <h2>${schoolConfig?.school_name || 'School'}</h2>
-    <p class="sub">Generated ${new Date().toLocaleString()} · EduConnect KE</p>
+    <p class="sub">Generated ${new Date().toLocaleString()} · LogiQ-Taaluma</p>
     <table class="meta">
       <tr><td class="k">To (supplier)</td><td><strong>${supplier?.name || ''}</strong></td></tr>
       <tr><td class="k">Phone</td><td>${supplier?.phone || '—'}</td></tr>
@@ -176,7 +176,7 @@ function printPcv(schoolConfig, v) {
   </style></head><body>
     <div class="vno">PETTY CASH VOUCHER<br/>${v.voucher_no}${v.status === 'voided' ? '<br/><span style="color:#C0392B">*** VOID ***</span>' : ''}</div>
     <h2>${schoolConfig?.school_name || 'School'}</h2>
-    <p class="sub">Generated ${new Date().toLocaleString()} · EduConnect KE</p>
+    <p class="sub">Generated ${new Date().toLocaleString()} · LogiQ-Taaluma</p>
     <table class="meta">
       <tr><td class="k">Paid to</td><td><strong>${v.payee}</strong></td></tr>
       <tr><td class="k">Date</td><td>${v.expense_date}</td></tr>

@@ -34,9 +34,9 @@ const ParentPortal = ({ data, onSignOut, onReloadYear }) => {
         borderBottom: '1px solid #e6dfd8', background: '#fff', position: 'sticky', top: 0, zIndex: 10,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-          <img src={logo} alt="LOGIQ" style={{ width: 34, height: 34, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
+          <img src={logo} alt="LogiQ-Taaluma" style={{ width: 34, height: 34, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 10.5, fontWeight: 800, color: '#D4AF37', letterSpacing: '0.12em' }}>LOGIQ · PARENT PORTAL</div>
+            <div style={{ fontSize: 10.5, fontWeight: 800, color: '#D4AF37', letterSpacing: '0.05em' }}>LogiQ-Taaluma · PARENT PORTAL</div>
             <div style={{ fontSize: 14, fontWeight: 700, color: '#2a2421', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {data?.school?.name || 'School'}
             </div>

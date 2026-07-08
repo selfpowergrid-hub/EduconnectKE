@@ -13,7 +13,7 @@ const PlanSelection = ({ onSelectPlan }) => {
     }}>
       {/* Header */}
       <div style={{ textAlign: 'center', marginBottom: 48, maxWidth: 600 }}>
-        <img src={logo} alt="LOGIQ Logo" style={{
+        <img src={logo} alt="LogiQ-Taaluma Logo" style={{
           width: 80, height: 'auto', borderRadius: 14, margin: '0 auto 24px',
           boxShadow: '0 6px 24px rgba(212,175,55,0.3)',
         }} />

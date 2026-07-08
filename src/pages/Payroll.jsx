@@ -53,7 +53,7 @@ function printPayslip(schoolConfig, run, slip, lines) {
   openPrintDoc(`Payslip ${slip.staff_name} ${monthLabel}`, `
     <div class="tag">PAYSLIP<br/>${monthLabel}<br/><span class="conf">CONFIDENTIAL</span></div>
     <h2>${schoolConfig?.school_name || 'School'}</h2>
-    <p class="sub">Generated ${new Date().toLocaleString()} · EduConnect KE</p>
+    <p class="sub">Generated ${new Date().toLocaleString()} · LogiQ-Taaluma</p>
     <table class="meta">
       <tr><td class="k">Employee</td><td><strong>${slip.staff_name}</strong></td></tr>
       <tr><td class="k">KRA PIN</td><td>${slip.kra_pin || '—'}</td></tr>
@@ -84,7 +84,7 @@ function printMusterRoll(schoolConfig, run, slips) {
   openPrintDoc(`Payroll register ${monthLabel}`, `
     <div class="tag">PAYROLL REGISTER<br/>${monthLabel}<br/><span class="conf">CONFIDENTIAL</span></div>
     <h2>${schoolConfig?.school_name || 'School'}</h2>
-    <p class="sub">Muster roll · ${slips.length} employees · generated ${new Date().toLocaleString()} · EduConnect KE</p>
+    <p class="sub">Muster roll · ${slips.length} employees · generated ${new Date().toLocaleString()} · LogiQ-Taaluma</p>
     <table>
       <thead><tr><th>#</th><th>Employee</th><th>KRA PIN</th><th style="text-align:right">Gross</th>
       <th style="text-align:right">NSSF</th><th style="text-align:right">SHIF</th><th style="text-align:right">Levy</th>
@@ -114,7 +114,7 @@ function printP9(schoolConfig, p9) {
   openPrintDoc(`P9 ${p9.staff_name} ${p9.year}`, `
     <div class="tag">TAX DEDUCTION CARD (P9)<br/>YEAR ${p9.year}</div>
     <h2>${schoolConfig?.school_name || 'School'}</h2>
-    <p class="sub">Employer's certificate of pay and tax · generated ${new Date().toLocaleString()} · EduConnect KE</p>
+    <p class="sub">Employer's certificate of pay and tax · generated ${new Date().toLocaleString()} · LogiQ-Taaluma</p>
     <table class="meta">
       <tr><td class="k">Employee</td><td><strong>${p9.staff_name}</strong></td></tr>
       <tr><td class="k">Employee KRA PIN</td><td>${p9.kra_pin || '—'}</td></tr>

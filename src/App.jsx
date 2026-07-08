@@ -273,9 +273,9 @@ function App() {
           alignItems: 'center', borderBottom: '1px solid #e6dfd8', background: '#fff',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <img src={logo} alt="LOGIQ Logo" style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover' }} />
+            <img src={logo} alt="LogiQ-Taaluma Logo" style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover' }} />
             <span style={{ fontFamily: "'EB Garamond', serif", fontSize: 20, fontWeight: 700, color: '#2a2421' }}>
-              LOGIQ
+              LogiQ-Taaluma
             </span>
           </div>
           <button onClick={signOut} style={{

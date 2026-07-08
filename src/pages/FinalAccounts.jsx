@@ -52,7 +52,7 @@ function printTable(schoolName, title, headers, rows) {
     @media print { .noprint { display: none; } }
   </style></head><body>
     <h2>${schoolName || 'School'}</h2>
-    <p class="sub">${title} · generated ${new Date().toLocaleString()} · EduConnect KE</p>
+    <p class="sub">${title} · generated ${new Date().toLocaleString()} · LogiQ-Taaluma</p>
     <table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
     <div class="noprint" style="margin-top:16px;text-align:center;">
       <button onclick="window.print()" style="padding:8px 22px;">Print</button>

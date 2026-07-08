@@ -192,8 +192,8 @@ const LoginPage = ({ onParentLogin }) => {
 
   const Header = ({ title, subtitle }) => (
     <div style={{ textAlign: 'center', marginBottom: 28 }}>
-      <img src={logo} alt="LOGIQ" style={{ width: 56, height: 'auto', borderRadius: 12, marginBottom: 14, boxShadow: '0 4px 14px rgba(212,175,55,0.18)' }} />
-      <div style={{ fontSize: 11, fontWeight: 800, color: '#D4AF37', letterSpacing: '0.18em', marginBottom: 14 }}>LOGIQ</div>
+      <img src={logo} alt="LogiQ-Taaluma" style={{ width: 56, height: 'auto', borderRadius: 12, marginBottom: 14, boxShadow: '0 4px 14px rgba(212,175,55,0.18)' }} />
+      <div style={{ fontSize: 11, fontWeight: 800, color: '#D4AF37', letterSpacing: '0.06em', marginBottom: 14 }}>LogiQ-Taaluma</div>
       <h2 style={{ fontSize: 24, fontWeight: 800, color: '#2a2421', margin: '0 0 6px' }}>{title}</h2>
       {subtitle && <p style={{ fontSize: 14, color: '#8a8fa8', margin: 0, lineHeight: 1.5 }}>{subtitle}</p>}
     </div>
@@ -215,8 +215,8 @@ const LoginPage = ({ onParentLogin }) => {
         {view === 'chooser' && (
           <div style={cardStyle}>
             <div style={{ textAlign: 'center', marginBottom: 32 }}>
-              <img src={logo} alt="LOGIQ" style={{ width: 72, height: 'auto', borderRadius: 14, marginBottom: 16, boxShadow: '0 6px 20px rgba(212,175,55,0.22)' }} />
-              <h1 style={{ fontSize: 30, fontWeight: 800, color: '#D4AF37', margin: '0 0 6px', letterSpacing: '0.08em' }}>LOGIQ</h1>
+              <img src={logo} alt="LogiQ-Taaluma" style={{ width: 72, height: 'auto', borderRadius: 14, marginBottom: 16, boxShadow: '0 6px 20px rgba(212,175,55,0.22)' }} />
+              <h1 style={{ fontSize: 30, fontWeight: 800, color: '#D4AF37', margin: '0 0 6px', letterSpacing: '0.02em' }}>LogiQ-Taaluma</h1>
               <p style={{ fontSize: 13, color: '#8a8fa8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 600 }}>
                 Online School Management
               </p>
@@ -254,7 +254,7 @@ const LoginPage = ({ onParentLogin }) => {
               <ChooserCard
                 icon="✨"
                 title="Register a New School"
-                body="Set up your school on LOGIQ in a few minutes."
+                body="Set up your school on LogiQ-Taaluma in a few minutes."
                 onClick={() => { setView('register'); setError(''); }}
                 accent="#2a2421"
               />
@@ -308,7 +308,7 @@ const LoginPage = ({ onParentLogin }) => {
         {view === 'register' && (
           <div style={cardStyle}>
             <button onClick={goChooser} style={backBtnStyle}>← Back</button>
-            <Header title="Register your school" subtitle="Set up your school on LOGIQ" />
+            <Header title="Register your school" subtitle="Set up your school on LogiQ-Taaluma" />
             {errorBlock}
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
               <div>

@@ -224,7 +224,7 @@ const PocketMoney = ({ schoolConfig }) => {
         <div>Prepared by (Finance Office)</div>
         <div>Parent / Guardian</div>
       </div>
-      <p class="foot">Pocket money is held in trust for the student and is separate from school fees. Generated via EduConnect KE · ${new Date().toLocaleString()}</p>
+      <p class="foot">Pocket money is held in trust for the student and is separate from school fees. Generated via LogiQ-Taaluma · ${new Date().toLocaleString()}</p>
       <div class="noprint" style="text-align:center;margin-top:16px;">
         <button onclick="window.print()" style="padding:8px 24px;">Print / Save as PDF</button>
       </div>

@@ -42,7 +42,7 @@ const ParentFees = ({ fees, year, school, child, guardianName, onChangeYear, rel
         <div class="row"><span class="k">Method</span><span class="v">${(p.method || '—').toUpperCase()}${p.reference ? ` · ${p.reference}` : ''}</span></div>
         <div class="row"><span class="k">Fee year</span><span class="v">${fees?.year || year}</span></div>
         <div class="amt"><span class="lbl">Amount paid</span><span class="val">KES ${Number(p.amount).toLocaleString()}</span></div>
-        <div class="foot">System-generated receipt via LOGIQ. For queries contact the school's finance office.</div>
+        <div class="foot">System-generated receipt via LogiQ-Taaluma. For queries contact the school's finance office.</div>
         <div class="noprint" style="text-align:center;margin-top:14px;">
           <button onclick="window.print()" style="padding:8px 24px;">Print / Save as PDF</button>
         </div>
@@ -119,7 +119,7 @@ const ParentFees = ({ fees, year, school, child, guardianName, onChangeYear, rel
           <td class="num" style="font-size:14px;">KES ${balance.toLocaleString()}</td>
         </tr>
       </table>
-      <p style="font-size:10px;color:#666;margin-top:14px;">This statement is system-generated from ${school?.name || 'the school'}'s fee records via LOGIQ. For queries contact the school's finance office.</p>
+      <p style="font-size:10px;color:#666;margin-top:14px;">This statement is system-generated from ${school?.name || 'the school'}'s fee records via LogiQ-Taaluma. For queries contact the school's finance office.</p>
       <div class="noprint" style="text-align:center;margin-top:14px;">
         <button onclick="window.print()" style="padding:8px 24px;">Print / Save as PDF</button>
       </div>

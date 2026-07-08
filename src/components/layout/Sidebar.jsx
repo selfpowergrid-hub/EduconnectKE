@@ -44,9 +44,9 @@ const Sidebar = ({
     >
       {/* Brand Header */}
       <div style={{ padding: "28px 24px 20px", borderBottom: `1px solid ${hairline}`, display: "flex", alignItems: "center", gap: 12 }}>
-        <img src={logo} alt="LOGIQ Logo" style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', boxShadow: `0 4px 12px ${activeColor}44` }} />
+        <img src={logo} alt="LogiQ-Taaluma Logo" style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', boxShadow: `0 4px 12px ${activeColor}44` }} />
         <div style={{ fontFamily: "'EB Garamond', serif", fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em", color: "#fff" }}>
-          LOGIQ
+          LogiQ-Taaluma
         </div>
       </div>
 

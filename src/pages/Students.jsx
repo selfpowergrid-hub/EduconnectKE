@@ -424,7 +424,7 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
             </tbody>
           </table>
           <div class="footer">
-            <span>LOGIQ Educational Management System</span>
+            <span>LogiQ-Taaluma Educational Management System</span>
             <span>Total Students: ${filteredStudents.length}</span>
             <span>Page 1 of 1</span>
           </div>
