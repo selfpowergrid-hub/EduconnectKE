@@ -123,17 +123,24 @@ Deno.serve(async (req) => {
 
   const { data: guardianRows } = await admin
     .from("student_guardians")
-    .select("phone_normalized")
+    .select("full_name, relationship, phone_normalized")
     .eq("student_id", matched.id);
 
-  const phoneOnFile =
-    (guardianRows || []).some((g: { phone_normalized: string | null }) => g.phone_normalized === phoneInput) ||
-    normalizePhone(matched.parent_phone) === phoneInput;
+  const matchedGuardian = (guardianRows || []).find(
+    (g: { phone_normalized: string | null }) => g.phone_normalized === phoneInput,
+  );
+  const phoneOnFile = !!matchedGuardian || normalizePhone(matched.parent_phone) === phoneInput;
 
   // Generic failure: never reveal which of the two fields was wrong.
   if (!phoneOnFile) {
     return json({ error: "Those details don't match our records. Check the phone number and admission number." }, 401);
   }
+
+  // Who is signing in (for a friendly greeting). Null when matched only via the
+  // legacy parent_phone with no guardian record.
+  const guardian = matchedGuardian
+    ? { name: matchedGuardian.full_name || null, relationship: matchedGuardian.relationship || null }
+    : null;
 
   // 3. Strict: only the student whose admission number was entered. Siblings
   //    are NOT auto-loaded by phone — a parent signs in per child.
@@ -219,6 +226,7 @@ Deno.serve(async (req) => {
 
   return json({
     school: { id: school.id, name: school.school_name, school_code: school.school_code, login_code: school.login_code },
+    guardian,
     year,
     children: result,
   });

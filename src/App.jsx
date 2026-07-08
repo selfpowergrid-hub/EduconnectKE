@@ -29,14 +29,30 @@ function App() {
     catch { return null; }
   });
 
-  const handleParentLogin = (data) => {
-    sessionStorage.setItem('parent_session', JSON.stringify(data));
-    setParentSession(data);
+  const handleParentLogin = (data, creds) => {
+    // Keep the login credentials in the session so the portal can re-query a
+    // different fee year without asking the parent to sign in again.
+    const withCreds = { ...data, _creds: creds || data?._creds || null };
+    sessionStorage.setItem('parent_session', JSON.stringify(withCreds));
+    setParentSession(withCreds);
   };
 
   const handleParentSignOut = () => {
     sessionStorage.removeItem('parent_session');
     setParentSession(null);
+  };
+
+  // Re-run the parent lookup for a chosen fee year (results are unchanged; only
+  // the fee statement/summary is year-scoped). Returns true on success.
+  const handleParentReloadYear = async (year) => {
+    const creds = parentSession?._creds;
+    if (!creds) return false;
+    const { data, error } = await supabase.functions.invoke('parent-portal', {
+      body: { ...creds, year },
+    });
+    if (error || !data || data.error) return false;
+    handleParentLogin(data, creds);
+    return true;
   };
 
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -225,7 +241,7 @@ function App() {
   // --- Parent Portal (separate from the admin/teacher Supabase session) ---
   // Checked before the auth spinner so parents never wait on Supabase auth init.
   if (parentSession) {
-    return <ParentPortal data={parentSession} onSignOut={handleParentSignOut} />;
+    return <ParentPortal data={parentSession} onSignOut={handleParentSignOut} onReloadYear={handleParentReloadYear} />;
   }
 
   // --- Loading State ---

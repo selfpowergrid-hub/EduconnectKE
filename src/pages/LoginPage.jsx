@@ -52,7 +52,7 @@ const LoginPage = ({ onParentLogin }) => {
       if (data?.error) throw new Error(data.error);
       if (!data?.children?.length) throw new Error('No records found for those details.');
       localStorage.setItem('parent_school_code', code);
-      onParentLogin?.(data);
+      onParentLogin?.(data, { school_code: code, phone: parentPhone.trim(), adm_no: parentAdmNo.trim() });
     } catch (err) {
       setError(err.message || 'Could not sign in.');
     } finally {
