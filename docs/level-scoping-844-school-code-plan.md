@@ -1,6 +1,9 @@
 # Plan — Level Scoping, 8-4-4 Forms, and System School Codes (SCH-###)
 
-**Status:** approved plan, not yet implemented.
+**Status:** implemented locally, not pushed. Phase A `d69f5ae`, Phase B `2a59a87`, Phase C `18b2e44`.
+Pending manual steps: run migrations `20260708120000_form3_form4_grades.sql` and
+`20260708130000_system_school_codes.sql`; deploy edge functions `list-school-teachers`
+and `parent-portal`; then re-run RLS probes.
 **Audience:** any implementing model (Sonnet 5 / Opus 4.8+). Follow this document strictly.
 **Golden rules for the implementer:**
 
