@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { PLANS } from '../../lib/planConfig';
 
-const Header = ({ onMenuClick, activePageLabel, userEmail, currentPlan, onSignOut, studentCount = 0 }) => {
+const Header = ({ onMenuClick, activePageLabel, userEmail, schoolName, currentPlan, onSignOut, studentCount = 0 }) => {
   const [showDropdown, setShowDropdown] = useState(false);
   const planData = PLANS[currentPlan] || PLANS.starter;
   const initials = userEmail
@@ -47,28 +47,40 @@ const Header = ({ onMenuClick, activePageLabel, userEmail, currentPlan, onSignOu
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-        {/* User Avatar + Dropdown */}
+        {/* School name + email + Avatar (click to open the account dropdown) */}
         <div style={{ position: "relative" }}>
           <div
             onClick={() => setShowDropdown(!showDropdown)}
-            style={{ 
-              width: 36, 
-              height: 36, 
-              borderRadius: "50%", 
-              background: "#D4AF37", 
-              color: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontWeight: 700,
-              fontSize: 13,
-              border: "2px solid #fff",
-              boxShadow: "0 0 0 1px #e6dfd8",
-              cursor: "pointer",
-              transition: "box-shadow 0.2s",
-            }}
+            style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
           >
-            {initials}
+            <div className="hide-mobile" style={{ textAlign: "right", minWidth: 0, maxWidth: 220 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#2a2421", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {schoolName || 'Administrator'}
+              </div>
+              <div style={{ fontSize: 11, color: "#8a8fa8", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {userEmail || 'admin@educonnect.com'}
+              </div>
+            </div>
+            <div
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: "50%",
+                background: "#D4AF37",
+                color: "#fff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontWeight: 700,
+                fontSize: 13,
+                border: "2px solid #fff",
+                boxShadow: "0 0 0 1px #e6dfd8",
+                flexShrink: 0,
+                transition: "box-shadow 0.2s",
+              }}
+            >
+              {initials}
+            </div>
           </div>
 
           {/* Dropdown Menu */}

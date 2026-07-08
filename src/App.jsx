@@ -344,6 +344,7 @@ function App() {
             activePageLabel={activeNavLink?.label || 'Dashboard'}
             onMenuClick={toggleMobileMenu}
             userEmail={user?.email}
+            schoolName={schoolConfig?.schoolName}
             currentPlan={plan}
             onSignOut={signOut}
             studentCount={studentCount}

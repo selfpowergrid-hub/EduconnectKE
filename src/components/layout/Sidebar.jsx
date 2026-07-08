@@ -7,7 +7,7 @@ import logo from '../../assets/logo.jpg';
 // accent are computed by App from the module registry and passed in; this
 // component only renders + handles the module switcher.
 const Sidebar = ({
-  activeId, onNavigate, schoolConfig, currentPlan, userEmail, onSignOut,
+  activeId, onNavigate, currentPlan,
   isMobile, isOpen, onClose,
   dashboardItem, navSections = [], accent = '#1B6B3A',
   availableModules = [], activeModule, onSwitchModule,
@@ -28,7 +28,6 @@ const Sidebar = ({
     if (isMobile) onClose();
   };
 
-  const initials = userEmail ? userEmail.split('@')[0].slice(0, 2).toUpperCase() : 'AD';
   const showSwitcher = availableModules.length > 1;
 
   return (
@@ -150,30 +149,8 @@ const Sidebar = ({
           </div>
         ))}
       </div>
-
-      {/* User Footer */}
-      <div style={{ padding: "16px 24px 24px", borderTop: `1px solid ${hairline}`, display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ width: 32, height: 32, borderRadius: 8, background: activeColor, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#fff" }}>
-          {initials}
-        </div>
-        <div style={{ overflow: "hidden", flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
-            {schoolConfig?.schoolName || 'Administrator'}
-          </div>
-          <div style={{ fontSize: 11, color: textSecondary, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
-            {userEmail || 'admin@educonnect.com'}
-          </div>
-        </div>
-        <button
-          onClick={onSignOut}
-          title="Sign Out"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, opacity: 0.5, padding: 4, transition: 'opacity 0.2s' }}
-          onMouseEnter={e => e.target.style.opacity = 1}
-          onMouseLeave={e => e.target.style.opacity = 0.5}
-        >
-          🚪
-        </button>
-      </div>
+      {/* The school name + account (and Sign Out) now live in the top-right
+          header; the sidebar bottom is left free for menu items. */}
     </div>
   );
 };
