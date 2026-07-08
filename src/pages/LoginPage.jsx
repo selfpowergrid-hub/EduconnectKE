@@ -158,7 +158,7 @@ const LoginPage = ({ onParentLogin }) => {
   const cardStyle = {
     background: '#fff',
     borderRadius: 20,
-    padding: '40px 36px',
+    padding: '28px 34px',
     boxShadow: '0 12px 40px rgba(42,36,33,0.08), 0 2px 8px rgba(42,36,33,0.04)',
     border: '1px solid #ece5db',
     width: '100%',
@@ -208,7 +208,7 @@ const LoginPage = ({ onParentLogin }) => {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      padding: '40px 20px',
+      padding: '24px 20px',
       fontFamily: "'Inter', sans-serif",
     }}>
       <div style={{ width: '100%', maxWidth: 460 }}>
@@ -216,24 +216,24 @@ const LoginPage = ({ onParentLogin }) => {
         {/* ───────── CHOOSER ───────── */}
         {view === 'chooser' && (
           <div style={cardStyle}>
-            <div style={{ textAlign: 'center', marginBottom: 32 }}>
-              <div style={{ width: 128, height: 128, margin: '0 auto 16px', borderRadius: 22, background: '#fff', border: '1px solid #ece5db', boxShadow: '0 8px 24px rgba(42,36,33,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, boxSizing: 'border-box' }}>
+            <div style={{ textAlign: 'center', marginBottom: 18 }}>
+              <div style={{ width: 84, height: 84, margin: '0 auto 10px', borderRadius: 18, background: '#fff', border: '1px solid #ece5db', boxShadow: '0 6px 18px rgba(42,36,33,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12, boxSizing: 'border-box' }}>
                 <img src={logo} alt="LogiQ-Taaluma" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
               </div>
-              <h1 style={{ fontSize: 30, fontWeight: 800, color: '#D4AF37', margin: '0 0 6px', letterSpacing: '0.02em' }}>LogiQ-Taaluma</h1>
-              <p style={{ fontSize: 13, color: '#8a8fa8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 600 }}>
+              <h1 style={{ fontSize: 26, fontWeight: 800, color: '#D4AF37', margin: '0 0 3px', letterSpacing: '0.02em' }}>LogiQ-Taaluma</h1>
+              <p style={{ fontSize: 12, color: '#8a8fa8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 600 }}>
                 Online School Management
               </p>
             </div>
 
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#2a2421', textAlign: 'center', margin: '0 0 6px' }}>
+            <h2 style={{ fontSize: 17, fontWeight: 700, color: '#2a2421', textAlign: 'center', margin: '0 0 4px' }}>
               How would you like to continue?
             </h2>
-            <p style={{ fontSize: 13, color: '#8a8fa8', textAlign: 'center', margin: '0 0 24px' }}>
+            <p style={{ fontSize: 12.5, color: '#8a8fa8', textAlign: 'center', margin: '0 0 16px' }}>
               Choose the option that fits you best.
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <ChooserCard
                 icon="🏫"
                 title="Admin Sign In"
@@ -264,7 +264,7 @@ const LoginPage = ({ onParentLogin }) => {
               />
             </div>
 
-            <p style={{ textAlign: 'center', fontSize: 11, color: '#a0a4b0', marginTop: 28, letterSpacing: '0.05em' }}>
+            <p style={{ textAlign: 'center', fontSize: 11, color: '#a0a4b0', marginTop: 16, letterSpacing: '0.05em' }}>
               🇰🇪 Built for Kenyan Schools · CBC Aligned
             </p>
           </div>
@@ -532,8 +532,8 @@ const ChooserCard = ({ icon, title, body, onClick, accent }) => {
         width: '100%',
         display: 'flex',
         alignItems: 'center',
-        gap: 14,
-        padding: '16px 18px',
+        gap: 12,
+        padding: '12px 16px',
         background: hover ? '#fafaf5' : '#fff',
         border: `1.5px solid ${hover ? accent : '#ece5db'}`,
         borderRadius: 14,
@@ -544,14 +544,14 @@ const ChooserCard = ({ icon, title, body, onClick, accent }) => {
       }}
     >
       <div style={{
-        width: 44, height: 44, borderRadius: 12,
+        width: 40, height: 40, borderRadius: 11,
         background: `${accent}15`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 22, flexShrink: 0,
+        fontSize: 20, flexShrink: 0,
       }}>{icon}</div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: '#2a2421', marginBottom: 2 }}>{title}</div>
-        <div style={{ fontSize: 12, color: '#8a8fa8', lineHeight: 1.4 }}>{body}</div>
+        <div style={{ fontSize: 14.5, fontWeight: 700, color: '#2a2421', marginBottom: 1 }}>{title}</div>
+        <div style={{ fontSize: 11.5, color: '#8a8fa8', lineHeight: 1.35 }}>{body}</div>
       </div>
       <div style={{ color: accent, fontSize: 18, fontWeight: 700, flexShrink: 0 }}>→</div>
     </button>
