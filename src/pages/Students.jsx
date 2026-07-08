@@ -18,6 +18,7 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [boardingFilter, setBoardingFilter] = useState("all"); // all | day | boarder
+  const [selectedStream, setSelectedStream] = useState("all"); // "all" or a stream id
   const [selectedLevel, setSelectedLevel] = useState(() => Object.keys(gradesByLevelForSchool(schoolConfig?.schoolType))[0]);
   const [selectedGrade, setSelectedGrade] = useState(() => Object.values(gradesByLevelForSchool(schoolConfig?.schoolType))[0][0]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -99,10 +100,11 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
       const matchesLevel = levelGrades.includes(s.level_id);
       const matchesGrade = selectedGrade === "all" ? true : s.level_id === targetGradeId;
       const matchesBoarding = boardingFilter === "all" ? true : (s.boarding_status || 'day') === boardingFilter;
+      const matchesStream = selectedStream === "all" ? true : s.stream_id === selectedStream;
 
-      return matchesSearch && matchesLevel && matchesGrade && matchesBoarding;
+      return matchesSearch && matchesLevel && matchesGrade && matchesBoarding && matchesStream;
     });
-  }, [searchTerm, selectedLevel, selectedGrade, boardingFilter, studentsList]);
+  }, [searchTerm, selectedLevel, selectedGrade, boardingFilter, selectedStream, studentsList]);
 
   // Sync selectedGrade when selectedLevel changes
   useEffect(() => {
@@ -500,6 +502,21 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
                 {(GRADES_BY_LEVEL[selectedLevel] || []).map(g => <option key={g} value={g}>{g}</option>)}
               </select>
             </div>
+            {streams.length > 0 && (
+              // Streams are school-wide, so the same list applies across grades;
+              // hidden for schools that have no streams configured.
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>STREAM:</span>
+                <select
+                  value={selectedStream}
+                  onChange={(e) => { setSelectedStream(e.target.value); setCurrentPage(1); }}
+                  style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", outline: "none", minWidth: "120px" }}
+                >
+                  <option value="all">All streams</option>
+                  {streams.map(st => <option key={st.id} value={st.id}>{st.name}</option>)}
+                </select>
+              </div>
+            )}
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>BOARDING:</span>
               <select
@@ -725,16 +742,17 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
         }}>
           <div style={{
             background: "#fff", borderRadius: 16, width: "100%", maxWidth: 520,
-            boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1)", overflow: "hidden"
+            boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1)", overflow: "hidden",
+            display: "flex", flexDirection: "column", maxHeight: "90vh"
           }}>
-            <div style={{ padding: "20px 24px", borderBottom: "1px solid #E8EAF0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f5f2eb" }}>
+            <div style={{ padding: "20px 24px", borderBottom: "1px solid #E8EAF0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f5f2eb", flexShrink: 0 }}>
               <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "#2a2421" }}>
                 {editingStudentId ? "📝 Edit Student Details" : "🎓 New Student Admission"}
               </h3>
               <button onClick={() => setShowModal(false)} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#8a8fa8" }}>&times;</button>
             </div>
             
-            <div style={{ padding: "20px 28px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px 20px" }}>
+            <div style={{ padding: "20px 28px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px 20px", overflowY: "auto", flex: "1 1 auto", minHeight: 0 }}>
               {/* Photo */}
               <div style={{ gridColumn: "span 2", padding: "10px 0", borderBottom: "1px dashed #e6dfd8" }}>
                 <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#4A4A6A", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Student Photo</label>
@@ -929,7 +947,7 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
               </div>
             </div>
 
-            <div style={{ padding: "20px 24px", background: "#f5f2eb", borderTop: "1px solid #E8EAF0", display: "flex", justifyContent: "flex-end", gap: 12 }}>
+            <div style={{ padding: "20px 24px", background: "#f5f2eb", borderTop: "1px solid #E8EAF0", display: "flex", justifyContent: "flex-end", gap: 12, flexShrink: 0 }}>
               <button 
                 onClick={() => setShowModal(false)}
                 style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #e6dfd8", background: "#fff", color: "#2a2421", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
