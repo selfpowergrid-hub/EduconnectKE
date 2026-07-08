@@ -1,11 +1,16 @@
 // Edge Function: parent-portal
 //
 // Public lookup used by the parent/guardian login page. Given a school
-// login_code + parent phone + a child's admission number, it verifies the
-// pair and returns, for every child on that phone at that school:
+// code + parent phone + a child's admission number, it verifies the triple and
+// returns, for the single student whose admission number was entered:
 //   - basic profile (name, grade, stream, photo)
 //   - exam results (per exam, per subject, with totals)
 //   - a fee summary (billed / paid / balance + payment history)
+//
+// Strict by design: siblings are NOT auto-loaded by matching phone number. A
+// parent with more than one child signs in separately for each (school code +
+// phone + that child's admission number), so a shared or mistyped phone can
+// never surface another family's student.
 //
 // NO Supabase session is created. The (school_code + adm_no + phone) triple is
 // the gate. All reads run with the service role, so the underlying tables keep
@@ -114,16 +119,16 @@ Deno.serve(async (req) => {
     return json({ error: "Those details don't match our records. Check the phone number and admission number." }, 401);
   }
 
-  // 3. All children of this guardian at this school (same stored phone).
-  const { data: children, error: childErr } = await admin
+  // 3. Strict: only the student whose admission number was entered. Siblings
+  //    are NOT auto-loaded by phone — a parent signs in per child.
+  const { data: child, error: childErr } = await admin
     .from("students")
     .select("id, adm_no, first_name, last_name, gender, level_id, stream_id, photo_path")
-    .eq("school_id", school.id)
-    .eq("parent_phone", matched.parent_phone)
-    .order("adm_no");
+    .eq("id", matched.id)
+    .single();
   if (childErr) return json({ error: childErr.message }, 500);
 
-  const kids = children && children.length ? children : [];
+  const kids = child ? [child] : [];
 
   // 4. School-wide reference maps (one fetch, reused for every child).
   const [examsRes, subjectsRes, streamsRes] = await Promise.all([
