@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import logo from '../assets/logo.jpg';
 
@@ -19,6 +19,7 @@ const LoginPage = ({ onParentLogin }) => {
   const [schoolNameLookup, setSchoolNameLookup] = useState('');
   const [selectedTeacherEmail, setSelectedTeacherEmail] = useState('');
   const [isLookingUp, setIsLookingUp] = useState(false);
+  const [codeNotFound, setCodeNotFound] = useState(false);
 
   // Parent login state
   const [parentSchoolCode, setParentSchoolCode] = useState(() => localStorage.getItem('parent_school_code') || '');
@@ -59,30 +60,41 @@ const LoginPage = ({ onParentLogin }) => {
     }
   };
 
-  const handleLookupSchool = async () => {
+  // Auto-resolve the school (and its teacher list) as the code is typed, so the
+  // whole form is filled in one pass — no separate "Find" step. Debounced.
+  useEffect(() => {
+    if (view !== 'teacher') return;
     const code = schoolCode.trim().toUpperCase();
-    if (!code) { setError('Enter your school code first.'); return; }
-    setError('');
+    setTeacherList([]);
+    setSelectedTeacherEmail('');
+    setSchoolNameLookup('');
+    setCodeNotFound(false);
+    if (code.length < 4) { setIsLookingUp(false); return; }
+
+    let cancelled = false;
     setIsLookingUp(true);
-    try {
-      const { data, error: err } = await supabase.functions.invoke('list-school-teachers', { body: { login_code: code } });
-      if (err) throw err;
-      if (data?.error) throw new Error(data.error);
-      setSchoolNameLookup(data.school_name || '');
-      setTeacherList(data.teachers || []);
-      setSelectedTeacherEmail('');
-      localStorage.setItem('teacher_school_code', code);
-      if ((data.teachers || []).length === 0) {
-        setError('No teacher logins have been created for this school yet. Ask your admin.');
+    const handle = setTimeout(async () => {
+      try {
+        const { data, error: err } = await supabase.functions.invoke('list-school-teachers', { body: { school_code: code } });
+        if (cancelled) return;
+        if (err || data?.error) throw new Error(data?.error || 'not found');
+        setSchoolNameLookup(data.school_name || '');
+        setTeacherList(data.teachers || []);
+        localStorage.setItem('teacher_school_code', code);
+        setError((data.teachers || []).length === 0
+          ? 'No teacher logins have been created for this school yet. Ask your admin.'
+          : '');
+      } catch {
+        if (cancelled) return;
+        setTeacherList([]);
+        setSchoolNameLookup('');
+        setCodeNotFound(true);   // shown quietly under the field
+      } finally {
+        if (!cancelled) setIsLookingUp(false);
       }
-    } catch (err) {
-      setError(err.message || 'Could not find that school.');
-      setTeacherList([]);
-      setSchoolNameLookup('');
-    } finally {
-      setIsLookingUp(false);
-    }
-  };
+    }, 500);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [schoolCode, view]);
 
   const handleTeacherSignIn = async (e) => {
     e.preventDefault();
@@ -350,88 +362,83 @@ const LoginPage = ({ onParentLogin }) => {
         {view === 'teacher' && (
           <div style={cardStyle}>
             <button onClick={goChooser} style={backBtnStyle}>← Back</button>
-            <Header title="Teacher sign in" subtitle="Enter your school code, pick your name, and sign in" />
+            <Header title="Teacher sign in" subtitle="Enter your school code, name and password, then sign in" />
             {errorBlock}
             <form onSubmit={handleTeacherSignIn} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
               <div>
                 <label style={labelBase}>School Code</label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <div style={{ position: 'relative', flex: 1 }}>
-                    <span style={iconPos}>🏷️</span>
-                    <input
-                      type="text"
-                      value={schoolCode}
-                      onChange={e => { setSchoolCode(e.target.value.toUpperCase()); setTeacherList([]); setSelectedTeacherEmail(''); }}
-                      placeholder="e.g. SCH-001"
-                      style={{ ...inputBase, textTransform: 'uppercase' }}
-                      onFocus={e => e.target.style.borderColor = '#D4AF37'}
-                      onBlur={e => e.target.style.borderColor = '#e6dfd8'}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleLookupSchool}
-                    disabled={isLookingUp}
-                    style={{
-                      padding: '0 18px', borderRadius: 12, border: '1.5px solid #1B6B3A',
-                      background: isLookingUp ? '#8A8FA8' : '#fff', color: isLookingUp ? '#fff' : '#1B6B3A',
-                      fontWeight: 700, fontSize: 13, cursor: isLookingUp ? 'wait' : 'pointer', whiteSpace: 'nowrap',
-                    }}
-                  >{isLookingUp ? '…' : 'Find'}</button>
+                <div style={{ position: 'relative' }}>
+                  <span style={iconPos}>🏷️</span>
+                  <input
+                    type="text"
+                    value={schoolCode}
+                    onChange={e => setSchoolCode(e.target.value.toUpperCase())}
+                    placeholder="e.g. SCH-001"
+                    style={{ ...inputBase, textTransform: 'uppercase' }}
+                    onFocus={e => e.target.style.borderColor = '#D4AF37'}
+                    onBlur={e => e.target.style.borderColor = '#e6dfd8'}
+                  />
                 </div>
-                {schoolNameLookup && (
+                {isLookingUp && (
+                  <div style={{ fontSize: 12, color: '#8a8fa8', fontWeight: 600, marginTop: 6 }}>⏳ Checking…</div>
+                )}
+                {!isLookingUp && schoolNameLookup && (
                   <div style={{ fontSize: 12, color: '#1B6B3A', fontWeight: 700, marginTop: 6 }}>✓ {schoolNameLookup}</div>
+                )}
+                {!isLookingUp && codeNotFound && (
+                  <div style={{ fontSize: 12, color: '#C0392B', fontWeight: 700, marginTop: 6 }}>✗ School code not recognised</div>
                 )}
               </div>
 
-              {teacherList.length > 0 && (
-                <>
-                  <div>
-                    <label style={labelBase}>Your Name</label>
-                    <div style={{ position: 'relative' }}>
-                      <span style={iconPos}>👤</span>
-                      <select
-                        value={selectedTeacherEmail}
-                        onChange={e => setSelectedTeacherEmail(e.target.value)}
-                        style={{ ...inputBase, appearance: 'auto' }}
-                        required
-                      >
-                        <option value="">— Select your name —</option>
-                        {teacherList.map(t => (
-                          <option key={t.id} value={t.email}>{t.full_name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
+              <div>
+                <label style={labelBase}>Your Name</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={iconPos}>👤</span>
+                  <select
+                    value={selectedTeacherEmail}
+                    onChange={e => setSelectedTeacherEmail(e.target.value)}
+                    disabled={teacherList.length === 0}
+                    style={{ ...inputBase, appearance: 'auto', cursor: teacherList.length ? 'pointer' : 'not-allowed', opacity: teacherList.length ? 1 : 0.6 }}
+                    required
+                  >
+                    <option value="">{teacherList.length ? '— Select your name —' : 'Enter your school code first'}</option>
+                    {teacherList.map(t => (
+                      <option key={t.id} value={t.email}>{t.full_name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
-                  <div>
-                    <label style={labelBase}>Password</label>
-                    <div style={{ position: 'relative' }}>
-                      <span style={iconPos}>🔒</span>
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        placeholder="Enter your password"
-                        required
-                        style={{ ...inputBase, paddingRight: 48 }}
-                        onFocus={e => e.target.style.borderColor = '#D4AF37'}
-                        onBlur={e => e.target.style.borderColor = '#e6dfd8'}
-                      />
-                      <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, opacity: 0.5 }}>
-                        {showPassword ? '🙈' : '👁️'}
-                      </button>
-                    </div>
-                  </div>
+              <div>
+                <label style={labelBase}>Password</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={iconPos}>🔒</span>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    placeholder="Enter your password"
+                    required
+                    style={{ ...inputBase, paddingRight: 48 }}
+                    onFocus={e => e.target.style.borderColor = '#D4AF37'}
+                    onBlur={e => e.target.style.borderColor = '#e6dfd8'}
+                  />
+                  <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, opacity: 0.5 }}>
+                    {showPassword ? '🙈' : '👁️'}
+                  </button>
+                </div>
+                <div style={{ fontSize: 11.5, color: '#8a8fa8', marginTop: 6, lineHeight: 1.5 }}>
+                  Your admin sets your password and can reset it if you forget.
+                </div>
+              </div>
 
-                  <button type="submit" disabled={isLoading} style={{
-                    width: '100%', padding: 16, background: isLoading ? '#8a8fa8' : '#1B6B3A',
-                    color: '#fff', border: 'none', borderRadius: 12, fontSize: 15, fontWeight: 800,
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
-                    boxShadow: '0 4px 16px rgba(27,107,58,0.3)', transition: 'all 0.2s', marginTop: 4,
-                  }}>{isLoading ? '⏳ Signing in…' : 'Sign In →'}</button>
-                </>
-              )}
+              <button type="submit" disabled={isLoading || !selectedTeacherEmail || !password} style={{
+                width: '100%', padding: 16,
+                background: (isLoading || !selectedTeacherEmail || !password) ? '#8a8fa8' : '#1B6B3A',
+                color: '#fff', border: 'none', borderRadius: 12, fontSize: 15, fontWeight: 800,
+                cursor: (isLoading || !selectedTeacherEmail || !password) ? 'not-allowed' : 'pointer',
+                boxShadow: '0 4px 16px rgba(27,107,58,0.3)', transition: 'all 0.2s', marginTop: 4,
+              }}>{isLoading ? '⏳ Signing in…' : 'Sign In →'}</button>
             </form>
           </div>
         )}
