@@ -28,8 +28,12 @@ import Banking from '../pages/Banking';
 import Suppliers from '../pages/Suppliers';
 import Payroll from '../pages/Payroll';
 import FinalAccounts from '../pages/FinalAccounts';
+import GettingStarted from '../pages/GettingStarted';
 
 const DASHBOARD = { id: 'dashboard', label: 'Dashboard', icon: '🏠', component: Dashboard };
+
+// Setup guide — admin only, shown first in every module shell.
+const GETTING_STARTED_ITEM = { id: 'getting-started', label: 'Getting Started', icon: '🚀', component: GettingStarted };
 
 // Shared core — administration of school-wide data. Rendered inside whichever
 // module shell the admin is in. `roles` (when present) limits visibility:
@@ -180,7 +184,12 @@ export function navForModule(moduleKey, role) {
         .map((s) => ({ ...s, items: s.items.filter((i) => i.roles && i.roles.includes(role)) }))
         .filter((s) => s.items.length > 0);
 
-  return { dashboard: mod.dashboard, sections: [...moduleSections, ...coreSections] };
+  // Admins get the setup guide pinned first in every module.
+  const setupSection = role === 'admin'
+    ? [{ title: 'Setup', icon: '🚀', items: [GETTING_STARTED_ITEM] }]
+    : [];
+
+  return { dashboard: mod.dashboard, sections: [...setupSection, ...moduleSections, ...coreSections] };
 }
 
 // Flat id -> item lookup across a module's nav (incl. dashboard), for routing.

@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import Registration from './pages/Registration';
 import LoginPage from './pages/LoginPage';
 import ParentPortal from './pages/parent/ParentPortal';
+import OnboardingWidget from './components/help/OnboardingWidget';
 import PlanGate from './components/common/PlanGate';
 import { useAuth } from './contexts/AuthContext';
 import { supabase } from './lib/supabase';
@@ -238,6 +239,17 @@ function App() {
     setIsMobileMenuOpen(false);
   };
 
+  // Deep-link used by the Getting Started checklist: optionally switch module
+  // (without bouncing to its dashboard), then open the target page/tab.
+  const goToPage = (navId, targetModule) => {
+    if (targetModule && targetModule !== moduleKey && availableModules.includes(targetModule)) {
+      setActiveModule(targetModule);
+      localStorage.setItem('active_module', targetModule);
+    }
+    setActiveTab(navId);
+    setIsMobileMenuOpen(false);
+  };
+
   // --- Parent Portal (separate from the admin/teacher Supabase session) ---
   // Checked before the auth spinner so parents never wait on Supabase auth init.
   if (parentSession) {
@@ -363,6 +375,14 @@ function App() {
           }}
         >
           <div style={{ maxWidth: focusMode ? '100%' : 1200, margin: "0 auto" }}>
+            {role === 'admin' && activeTab === 'dashboard' && (
+              <OnboardingWidget
+                schoolConfig={schoolConfig}
+                activeModule={moduleKey}
+                onNavigateTo={goToPage}
+                onOpenChecklist={() => goToPage('getting-started')}
+              />
+            )}
             {isPageAllowed ? (
               <ActivePage
                 schoolConfig={schoolConfig}
@@ -378,6 +398,9 @@ function App() {
                 staffCount={staffCount}
                 role={role}
                 teacherInfo={teacherInfo}
+                activeModule={moduleKey}
+                availableModules={availableModules}
+                onNavigateTo={goToPage}
                 focusMode={focusMode}
                 setFocusMode={setFocusMode}
               />
