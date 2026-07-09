@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { PLANS } from '../../lib/planConfig';
+import HelpMenu from '../help/HelpMenu';
 
-const Header = ({ onMenuClick, activePageLabel, userEmail, schoolName, currentPlan, onSignOut, studentCount = 0 }) => {
+const Header = ({ onMenuClick, activePageLabel, userEmail, schoolName, currentPlan, onSignOut, studentCount = 0,
+  pageId, module, role, schoolConfig, onOpenChecklist }) => {
   const [showDropdown, setShowDropdown] = useState(false);
   const planData = PLANS[currentPlan] || PLANS.starter;
   const initials = userEmail
@@ -46,19 +48,26 @@ const Header = ({ onMenuClick, activePageLabel, userEmail, schoolName, currentPl
         </h1>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        {/* Help */}
+        <HelpMenu
+          pageId={pageId}
+          module={module}
+          role={role}
+          schoolConfig={schoolConfig}
+          userEmail={userEmail}
+          onOpenChecklist={onOpenChecklist}
+        />
+
         {/* School name + email + Avatar (click to open the account dropdown) */}
         <div style={{ position: "relative" }}>
           <div
             onClick={() => setShowDropdown(!showDropdown)}
             style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
           >
-            <div className="hide-mobile" style={{ textAlign: "right", minWidth: 0, maxWidth: 220 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#2a2421", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <div className="hide-mobile" style={{ textAlign: "right", minWidth: 0, maxWidth: 240 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#2a2421", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {schoolName || 'Administrator'}
-              </div>
-              <div style={{ fontSize: 11, color: "#8a8fa8", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {userEmail || 'admin@educonnect.com'}
               </div>
             </div>
             <div
@@ -96,16 +105,6 @@ const Header = ({ onMenuClick, activePageLabel, userEmail, schoolName, currentPl
                 boxShadow: "0 8px 32px rgba(0,0,0,0.1)", padding: "8px 0",
                 minWidth: 260, overflow: "hidden",
               }}>
-                {/* User info */}
-                <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0" }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#2a2421" }}>
-                    {userEmail?.split('@')[0] || 'Administrator'}
-                  </div>
-                  <div style={{ fontSize: 11, color: "#8a8fa8", marginTop: 2 }}>
-                    {userEmail || 'admin@educonnect.com'}
-                  </div>
-                </div>
-
                 {/* Subscription info */}
                 <div style={{ padding: "16px", borderBottom: "1px solid #f0f0f0", background: "#fcfcfc" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#8a8fa8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>

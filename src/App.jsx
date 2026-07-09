@@ -361,6 +361,11 @@ function App() {
             currentPlan={plan}
             onSignOut={signOut}
             studentCount={studentCount}
+            pageId={activeTab}
+            module={moduleKey}
+            role={role}
+            schoolConfig={schoolConfig}
+            onOpenChecklist={() => goToPage('getting-started')}
           />
         )}
 
