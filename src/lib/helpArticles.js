@@ -319,14 +319,19 @@ export const ARTICLES = [
   },
 ];
 
-const STOP = new Set(['how', 'do', 'i', 'to', 'a', 'an', 'the', 'my', 'of', 'in', 'on', 'can', 'is', 'are', 'and', 'for', 'with', 'you', 'your', 'me', 'it', 'we', 'our']);
+// "school" is treated as noise — nearly every article mentions it.
+const STOP = new Set(['how', 'do', 'i', 'to', 'a', 'an', 'the', 'my', 'of', 'in', 'on', 'can', 'is', 'are', 'and', 'for', 'with', 'you', 'your', 'me', 'it', 'we', 'our', 'school', 'schools', 'set', 'up']);
+
+// Light stem so plurals match singulars ("students" → "student", "fees" → "fee").
+const stem = (w) => (w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w);
 
 // Local keyword search — scores title/keywords/body matches; no AI/network.
 export function searchArticles(query, moduleKey) {
   const words = String(query || '')
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((w) => w.length > 1 && !STOP.has(w));
+    .filter((w) => w.length > 1 && !STOP.has(w))
+    .map(stem);
   if (!words.length) return [];
 
   return ARTICLES

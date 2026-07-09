@@ -1,37 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { helpFor } from '../../lib/helpContent';
 import { searchArticles, articlesByCategory } from '../../lib/helpArticles';
+import HelpBody from './HelpBody';
 import AskForHelp from './AskForHelp';
 
 const accent = '#1B6B3A';
-
-// Renders an article/page-help body: what / why / steps / tips.
-const HelpBody = ({ content }) => (
-  <div>
-    {content.what && <p style={{ fontSize: 14, color: '#2a2421', margin: '0 0 12px', lineHeight: 1.55 }}>{content.what}</p>}
-    {content.why && (
-      <div style={{ fontSize: 13, color: '#8A6A1F', background: '#fefbf2', border: '1px solid #f0e2b8', borderRadius: 10, padding: '10px 13px', marginBottom: 14, lineHeight: 1.5 }}>
-        <strong>Why:</strong> {content.why}
-      </div>
-    )}
-    {content.steps?.length > 0 && (
-      <>
-        <div style={{ fontSize: 11, fontWeight: 800, color: '#8a8fa8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>How to</div>
-        <ol style={{ margin: '0 0 16px', paddingLeft: 18, color: '#4A4A6A', fontSize: 13.5, lineHeight: 1.6 }}>
-          {content.steps.map((s, i) => <li key={i} style={{ marginBottom: 4 }}>{s}</li>)}
-        </ol>
-      </>
-    )}
-    {content.tips?.length > 0 && (
-      <div style={{ background: '#f7f9f7', border: '1px solid #e3ece3', borderRadius: 10, padding: '12px 14px' }}>
-        <div style={{ fontSize: 11, fontWeight: 800, color: accent, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>💡 Tips</div>
-        <ul style={{ margin: 0, paddingLeft: 16, color: '#4A4A6A', fontSize: 13, lineHeight: 1.55 }}>
-          {content.tips.map((t, i) => <li key={i} style={{ marginBottom: 3 }}>{t}</li>)}
-        </ul>
-      </div>
-    )}
-  </div>
-);
 
 const TopicRow = ({ title, onClick }) => (
   <button
@@ -52,7 +25,7 @@ const TopicRow = ({ title, onClick }) => (
 // The header "?" — opens a right-side drawer with search, browse-by-topic,
 // help for the current page, and "Ask for Help". All answers are built-in
 // (searchArticles is local keyword matching — no AI/network).
-const HelpMenu = ({ pageId, module, role, schoolConfig, userEmail, onOpenChecklist }) => {
+const HelpMenu = ({ pageId, module, role, onOpenChecklist }) => {
   const [open, setOpen] = useState(false);
   const [asking, setAsking] = useState(false);
   const [query, setQuery] = useState('');
@@ -149,14 +122,14 @@ const HelpMenu = ({ pageId, module, role, schoolConfig, userEmail, onOpenCheckli
               {onOpenChecklist && role === 'admin' && (
                 <button onClick={() => { close(); onOpenChecklist(); }} style={{ padding: '11px', borderRadius: 9, border: '1.5px solid #cfe6d8', background: '#fff', color: accent, fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>🚀 Open Getting Started</button>
               )}
-              <button onClick={() => setAsking(true)} style={{ padding: '11px', borderRadius: 9, border: 'none', background: accent, color: '#fff', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>✉️ Ask for Help</button>
+              <button onClick={() => setAsking(true)} style={{ padding: '11px', borderRadius: 9, border: 'none', background: accent, color: '#fff', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>💬 Ask a question</button>
             </div>
           </aside>
         </>
       )}
 
       {asking && (
-        <AskForHelp schoolConfig={schoolConfig} role={role} module={module} pageId={pageId} userEmail={userEmail} onClose={() => setAsking(false)} />
+        <AskForHelp module={module} onClose={() => setAsking(false)} />
       )}
     </>
   );
