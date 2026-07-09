@@ -184,12 +184,9 @@ export function navForModule(moduleKey, role) {
         .map((s) => ({ ...s, items: s.items.filter((i) => i.roles && i.roles.includes(role)) }))
         .filter((s) => s.items.length > 0);
 
-  // Admins get the setup guide pinned first in every module.
-  const setupSection = role === 'admin'
-    ? [{ title: 'Setup', icon: '🚀', items: [GETTING_STARTED_ITEM] }]
-    : [];
-
-  return { dashboard: mod.dashboard, sections: [...setupSection, ...moduleSections, ...coreSections] };
+  // Getting Started is reachable via the floating setup button (see
+  // flatItemsForModule), not the sidebar, so it never crowds the menu.
+  return { dashboard: mod.dashboard, sections: [...moduleSections, ...coreSections] };
 }
 
 // Flat id -> item lookup across a module's nav (incl. dashboard), for routing.
@@ -197,5 +194,8 @@ export function flatItemsForModule(moduleKey, role) {
   const { dashboard, sections } = navForModule(moduleKey, role);
   const items = [dashboard];
   sections.forEach((s) => s.items.forEach((i) => items.push(i)));
+  // Routable but intentionally not in the sidebar — opened by the floating
+  // setup button.
+  if (role === 'admin') items.push(GETTING_STARTED_ITEM);
   return items;
 }

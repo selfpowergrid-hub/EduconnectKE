@@ -6,6 +6,7 @@ import Registration from './pages/Registration';
 import LoginPage from './pages/LoginPage';
 import ParentPortal from './pages/parent/ParentPortal';
 import OnboardingWidget from './components/help/OnboardingWidget';
+import FloatingSetupButton from './components/help/FloatingSetupButton';
 import PlanGate from './components/common/PlanGate';
 import { useAuth } from './contexts/AuthContext';
 import { supabase } from './lib/supabase';
@@ -417,6 +418,17 @@ function App() {
           </div>
         </main>
       </div>
+
+      {/* Floating setup guide — admin only, hidden in focus mode and on the
+          checklist page itself; auto-hides once setup is complete. */}
+      {role === 'admin' && (
+        <FloatingSetupButton
+          schoolConfig={schoolConfig}
+          activeModule={moduleKey}
+          onOpen={() => goToPage('getting-started')}
+          hidden={focusMode || activeTab === 'getting-started'}
+        />
+      )}
     </div>
   );
 }
