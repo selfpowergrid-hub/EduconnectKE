@@ -1,0 +1,15 @@
+{
+  "name": "LogiQ-Taaluma",
+  "short_name": "LogiQ-Taaluma",
+  "description": "School management for Kenyan schools — exams, fees and accounts.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f5f2eb",
+  "theme_color": "#1B6B3A",
+  "icons": [
+    { "src": "/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
