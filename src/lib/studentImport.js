@@ -16,7 +16,24 @@ const ALL_GRADE_NAMES = Object.values(LEVELS).flat();
 // row. Each returns { value, matched, changed } so the caller can note what it
 // interpreted. `matched: false` means we genuinely couldn't resolve it.
 
-// "G10" | "g 10" | "grade10" | "GR 10" | "10" | "pp1" | "PP 2" → a valid grade.
+// Roman numerals I–XII, so "Grade II", "GII", "Form IV", "Formiv" work.
+const ROMAN = { i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10, xi: 11, xii: 12 };
+
+// Pull the class number from a token — Arabic first (12, 07), then Roman.
+function classNumber(up) {
+  const ar = up.match(/\d{1,2}/);
+  if (ar) return parseInt(ar[0], 10);
+  const roman = up.replace(/[^IVX]/gi, '').toLowerCase();
+  return ROMAN[roman] || null;
+}
+
+// Accepts nearly any way people write a class:
+//   PP1 · "PP 2" · "Pre Primary 1"
+//   G1 · Grade1 · "Grade 1" · "GR 10" · "STD 4" · "Class 5" · bare "7"
+//   "Grade II" · GII · "Grade XII"
+//   F3 · Form4 · "Form 3" · "Form III" · Formiv · "F IV"
+// Resolved only through validGrades, so a class the school doesn't teach is
+// left unmatched for the caller to report as out-of-scope.
 export function normalizeGrade(raw, validGrades) {
   const s = String(raw ?? '').trim();
   if (!s) return { value: '', matched: false, changed: false };
@@ -24,37 +41,25 @@ export function normalizeGrade(raw, validGrades) {
   const exact = validGrades.find(g => g.toLowerCase() === s.toLowerCase());
   if (exact) return { value: exact, matched: true, changed: exact !== s };
 
-  const up = s.toUpperCase().replace(/[._-]/g, ' ');
+  const up = s.toUpperCase().replace(/[._-]/g, ' ').trim();
 
-  // Pre-primary: PP1, PP 1, P.P.2, PRE PRIMARY 1
-  const pp = up.match(/^P\s*P\s*0*(\d)/) || (/PRE/.test(up) && up.match(/(\d)/));
-  if (pp) {
-    const cand = 'PP' + pp[1];
+  let cand = null;
+  if (/^P\s*P/.test(up) || /PRE/.test(up)) {
+    const n = classNumber(up);
+    if (n) cand = 'PP' + n;
+  } else if (/FORM/.test(up) || /^F\s*0*\d/.test(up) || /^F\s*[IVX]/.test(up)) {
+    const n = classNumber(up);
+    if (n) cand = 'Form ' + n;
+  } else {
+    // Grade: G / GR / GRADE / STD / CLASS / bare number or roman.
+    const n = classNumber(up);
+    if (n) cand = 'Grade ' + n;
+  }
+
+  if (cand) {
     const hit = validGrades.find(g => g.toLowerCase() === cand.toLowerCase());
     if (hit) return { value: hit, matched: true, changed: true };
   }
-
-  // Form N (8-4-4): F3, F 4, FORM3, FORM 03 — resolved only through
-  // validGrades, so a Form the school does not teach is left unmatched for the
-  // caller to report as out-of-scope.
-  const fm = up.match(/^F(?:ORM)?\s*0*(\d{1,2})$/);
-  if (fm) {
-    const cand = 'Form ' + parseInt(fm[1], 10);
-    const hit = validGrades.find(g => g.toLowerCase() === cand.toLowerCase());
-    if (hit) return { value: hit, matched: true, changed: true };
-    return { value: s, matched: false, changed: false };
-  }
-
-  // Grade N / G N / GR N / STD N / plain N — but never "Form N" (ambiguous).
-  if (!/PP|PRE|FORM/.test(up)) {
-    const num = up.match(/(\d{1,2})/);
-    if (num) {
-      const cand = 'Grade ' + parseInt(num[1], 10);
-      const hit = validGrades.find(g => g.toLowerCase() === cand.toLowerCase());
-      if (hit) return { value: hit, matched: true, changed: true };
-    }
-  }
-
   return { value: s, matched: false, changed: false };
 }
 
@@ -206,22 +211,69 @@ export function downloadTemplate(opts) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// Column headings people actually use → our canonical field. Matching is done
+// on a normalized form (lowercase, alphanumerics only), so "ADM NO", "Adm.No",
+// "Admission Number" all resolve to the same field. Order matters: the first
+// canonical field whose alias matches wins.
+const HEADER_ALIASES = [
+  ['Adm No', ['admno', 'adm', 'admissionno', 'admissionnumber', 'admission', 'regno', 'reg', 'regnumber', 'indexno', 'upi', 'nemis']],
+  ['Full Name', ['fullname', 'name', 'names', 'studentname', 'studentnames', 'student', 'pupilname', 'pupil', 'learnername', 'learner']],
+  ['Stream', ['stream', 'streams', 'classstream', 'streamname']],
+  ['Grade', ['grade', 'gradeform', 'form', 'class', 'level', 'classform', 'gradelevel', 'standard']],
+  ['Gender', ['gender', 'sex']],
+  ['Parent Phone', ['parentphone', 'guardianphone', 'phone', 'phoneno', 'phonenumber', 'mobile', 'mobileno', 'contact', 'contactno', 'telephone', 'parentcontact', 'guardiancontact', 'parentno']],
+  ['Boarding', ['boarding', 'boarder', 'boardingstatus', 'residence', 'resident', 'dayboarder', 'dayorboarding', 'accommodation']],
+  ['Dorm', ['dorm', 'dormitory', 'house', 'hostel', 'cubicle']],
+];
+
+const normHeader = (h) => String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Resolve a spreadsheet heading to a canonical field (or null if unrecognised).
+function matchHeader(h) {
+  const n = normHeader(h);
+  if (!n) return null;
+  // Exact normalized match first.
+  for (const [canon, aliases] of HEADER_ALIASES) {
+    if (aliases.some(a => a === n)) return canon;
+  }
+  // Then a contains match, longest alias first to avoid greedy short hits.
+  for (const [canon, aliases] of HEADER_ALIASES) {
+    if ([...aliases].sort((a, b) => b.length - a.length).some(a => a.length >= 3 && (n.includes(a) || a.includes(n)))) return canon;
+  }
+  return null;
+}
+
 export async function parseExcelFile(file) {
   const buffer = await file.arrayBuffer();
   const wb = XLSX.read(buffer, { type: 'array' });
   const sheetName = wb.SheetNames.find(n => n.toLowerCase() === 'students') || wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
-  if (rows.length === 0) return { headers: [], rows: [] };
-  const headers = rows[0].map(h => String(h || '').trim());
+  if (rows.length === 0) return { headers: [], rows: [], mapping: {}, missing: [] };
+
+  const rawHeaders = rows[0].map(h => String(h || '').trim());
+  // Map each column index to a canonical field (first match wins per field).
+  const usedFields = new Set();
+  const colField = rawHeaders.map((h) => {
+    const f = matchHeader(h);
+    if (f && !usedFields.has(f)) { usedFields.add(f); return f; }
+    return null;
+  });
+
   const data = rows.slice(1)
     .map(r => {
       const obj = {};
-      headers.forEach((h, i) => { obj[h] = String(r[i] ?? '').trim(); });
+      colField.forEach((field, i) => { if (field) obj[field] = String(r[i] ?? '').trim(); });
       return obj;
     })
     .filter(r => Object.values(r).some(v => v !== ''));
-  return { headers, rows: data };
+
+  const mapping = {};
+  rawHeaders.forEach((h, i) => { if (colField[i]) mapping[h] = colField[i]; });
+  // Which of the compulsory columns we could NOT find a heading for.
+  const missing = ['Adm No', 'Full Name', 'Grade'].filter(f => !usedFields.has(f));
+
+  return { headers: [...usedFields], rows: data, mapping, missing };
 }
 
 export function validateRows(parsedRows, { validGrades, validStreams, validDorms = [], existingAdmNos }) {
@@ -271,24 +323,28 @@ export function validateRows(parsedRows, { validGrades, validStreams, validDorms
       }
     }
 
-    // Stream — case/spacing-insensitive against configured streams.
+    // Stream — compulsory when the school has streams; case/spacing-insensitive.
     let stream = '';
-    if (rawStream && validStreams.length) {
-      const st = normalizeName(rawStream, validStreams);
-      if (st.matched) {
-        stream = st.value;
-        if (st.changed) notes.push(`Stream read as "${stream}"`);
+    if (validStreams.length) {
+      if (!rawStream) {
+        errors.push('Stream is required');
       } else {
-        errors.push(`Stream "${rawStream}" is not valid (expected one of: ${validStreams.join(', ')})`);
+        const st = normalizeName(rawStream, validStreams);
+        if (st.matched) {
+          stream = st.value;
+          if (st.changed) notes.push(`Stream read as "${stream}"`);
+        } else {
+          errors.push(`Stream "${rawStream}" is not valid (expected one of: ${validStreams.join(', ')})`);
+        }
       }
     } else if (rawStream) {
       stream = rawStream;   // no streams configured — kept as text, ignored on insert
     }
 
-    // Gender — M/F from many spellings; blank defaults to M.
+    // Gender — M/F from many spellings; optional, blank defaults to M.
     let gender = 'M';
     if (!rawGender) {
-      warnings.push('Gender is blank — defaults to M');
+      notes.push('Gender blank — defaults to M');
     } else {
       const gd = normalizeGender(rawGender);
       if (gd.matched) {

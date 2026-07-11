@@ -80,7 +80,18 @@ const BulkImportWizard = ({ schoolConfig, streams, dorms, existingStudents, plan
     setParseError('');
     setParsedRows([]);
     try {
-      const { rows } = await parseExcelFile(f);
+      const { rows, mapping, missing } = await parseExcelFile(f);
+      if (missing && missing.length) {
+        // A compulsory column heading couldn't be recognised — tell the user
+        // exactly which, rather than flagging every row as "required".
+        const found = Object.entries(mapping).map(([h, f2]) => `"${h}"→${f2}`).join(', ') || 'none';
+        setParseError(
+          `Couldn't find a column for: ${missing.join(', ')}. ` +
+          `Detected columns: ${found}. Rename your heading(s) (e.g. Adm No, Full Name, Grade, Stream) or use the template.`
+        );
+        setParsedRows([]);
+        return;
+      }
       const validated = validateRows(rows, {
         validGrades,
         validStreams: validStreamNames,
