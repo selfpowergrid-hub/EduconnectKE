@@ -591,12 +591,13 @@ const Settings = ({ schoolConfig, initialTab }) => {
     lower_pri: { label: "Lower Primary",     grades: ["g1", "g2", "g3"] },
     upper_pri: { label: "Upper Primary",     grades: ["g4", "g5", "g6"] },
     jss:       { label: "Junior Secondary",  grades: ["g7", "g8", "g9"] },
-    sss:       { label: "Senior Secondary",  grades: ["g10", "g11", "g12"] },
+    sss:       { label: "Senior Secondary",  grades: ["g10", "g11", "g12", "f3", "f4"] },
   };
   const GRADE_LABELS = {
     pp1: "PP1", pp2: "PP2",
     g1: "Grade 1", g2: "Grade 2", g3: "Grade 3", g4: "Grade 4", g5: "Grade 5", g6: "Grade 6",
     g7: "Grade 7", g8: "Grade 8", g9: "Grade 9", g10: "Grade 10", g11: "Grade 11", g12: "Grade 12",
+    f3: "Form 3", f4: "Form 4",
   };
   const CATEGORY_ICON = { day: "☀", boarder: "🛏", special: "⭐" };
   const sheetKey = (grade, cat) => `${grade}|${cat || 'all'}`;

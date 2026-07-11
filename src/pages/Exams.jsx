@@ -57,7 +57,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
         "PP1": "pp1", "PP2": "pp2",
         "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
         "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-        "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
+        "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12", "Form 3": "f3", "Form 4": "f4"
       };
       const gid = gradeIdMap[filterGrade];
 
@@ -99,7 +99,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
       "PP1": "pp1", "PP2": "pp2",
       "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
       "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-      "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
+      "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12", "Form 3": "f3", "Form 4": "f4"
     };
     const targetGid = gradeIdMap[filterGrade];
     return examsList.filter(e => e.level_id === targetGid && e.term === filterTerm);
@@ -166,7 +166,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
       "pp1": "PP1", "pp2": "PP2",
       "g1": "Grade 1", "g2": "Grade 2", "g3": "Grade 3", "g4": "Grade 4", "g5": "Grade 5", "g6": "Grade 6",
       "g7": "Grade 7", "g8": "Grade 8", "g9": "Grade 9",
-      "g10": "Grade 10", "g11": "Grade 11", "g12": "Grade 12"
+      "g10": "Grade 10", "g11": "Grade 11", "g12": "Grade 12", "f3": "Form 3", "f4": "Form 4"
     };
     
     // Find the Level based on the Grade — use the full level map so an exam
@@ -202,7 +202,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
         "PP1": "pp1", "PP2": "pp2",
         "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
         "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-        "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
+        "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12", "Form 3": "f3", "Form 4": "f4"
       };
 
       const newLevelId = gradeIdMap[editingExam.grade];
@@ -311,7 +311,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
         "PP1": "pp1", "PP2": "pp2",
         "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
         "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-        "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
+        "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12", "Form 3": "f3", "Form 4": "f4"
       };
       const gid = gradeIdMap[filterGrade];
 
@@ -392,7 +392,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
         "PP1": "pp1", "PP2": "pp2",
         "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
         "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-        "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
+        "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12", "Form 3": "f3", "Form 4": "f4"
       };
       const gid = gradeIdMap[filterGrade];
       const targetGroup = gid || filterLevel;
@@ -570,7 +570,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                 "PP1": "pp1", "PP2": "pp2",
                 "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
                 "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
-                "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12"
+                "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12", "Form 3": "f3", "Form 4": "f4"
               };
               const scopeGid = gradeIdMap[filterGrade];
               const scopeCount = examsList.filter(e => e.level_id === scopeGid && e.term === filterTerm).length;
