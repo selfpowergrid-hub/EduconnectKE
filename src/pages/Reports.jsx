@@ -1,7 +1,18 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { getStudentPhotoUrl } from '../lib/imageProcessing';
-import { CLASSES } from '../data/mockData';
+import { getClassesByType } from '../data/mockData';
+import { LEVELS, GRADE_CODE_TO_NAME } from '../lib/schoolLevels';
+
+// The academic level ("Senior Secondary") a class id ("f3") belongs to — the
+// grading system stores its scales against the level name and/or the class.
+const levelNameForClass = (classId) => {
+  const name = GRADE_CODE_TO_NAME[classId];
+  for (const [lvl, grades] of Object.entries(LEVELS)) {
+    if (grades.includes(name)) return lvl;
+  }
+  return null;
+};
 
 const Reports = ({ schoolConfig, examsList }) => {
   const [students, setStudents] = useState([]);
@@ -12,12 +23,18 @@ const Reports = ({ schoolConfig, examsList }) => {
   const [schoolInfo, setSchoolInfo] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedStudentId, setSelectedStudentId] = useState(null);
-  const [selectedClass, setSelectedClass] = useState('g10');
+  // Classes scoped to what this school actually teaches (so a secondary school
+  // sees Grade 10-12 and Form 3/4, never primary grades).
+  const currentTypeClasses = useMemo(
+    () => getClassesByType(schoolConfig?.schoolType),
+    [schoolConfig?.schoolType]
+  );
+  const [selectedClass, setSelectedClass] = useState(
+    () => getClassesByType(schoolConfig?.schoolType)[0]?.id || 'g10'
+  );
   const [selectedStream, setSelectedStream] = useState('all');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedTerm, setSelectedTerm] = useState('Term 1');
-
-  const currentTypeClasses = useMemo(() => CLASSES, []);
 
   const selectedStudent = useMemo(
     () => students.find(s => s.id === selectedStudentId),
@@ -112,23 +129,36 @@ const Reports = ({ schoolConfig, examsList }) => {
     if (students.length > 0) fetchAllMarks();
   }, [selectedTerm, selectedYear, students]);
 
+  // Resolve a score to the school's own grading band. grading_systems stores
+  // scales against school_level ("Senior Secondary") and school_grade (a class
+  // id like "f3", or "All" for the whole level). Narrowest wins: the scale set
+  // for this exact class, else the level-wide one, else a CBC default.
   const getGrade = useCallback((score) => {
-    let scale = dbGrades.filter(g => g.level_group === selectedClass);
-    if (!scale.length) scale = dbGrades;
+    const levelName = levelNameForClass(selectedClass);
+
+    let scale = dbGrades.filter(g => g.school_grade === selectedClass);
+    if (!scale.length) {
+      scale = dbGrades.filter(g => g.school_level === levelName && (g.school_grade === 'All' || !g.school_grade));
+    }
+    if (!scale.length) scale = dbGrades.filter(g => g.school_level === levelName);
     if (!scale.length) {
       scale = [
-        { grade: 'EE', min_score: 80, label: 'Exceeding Expectations' },
-        { grade: 'ME', min_score: 50, label: 'Meeting Expectations' },
-        { grade: 'AE', min_score: 30, label: 'Approaching Expectations' },
-        { grade: 'BE', min_score: 0,  label: 'Below Expectations' },
+        { grade: 'EE', min_score: 80, description: 'Exceeding Expectations' },
+        { grade: 'ME', min_score: 50, description: 'Meeting Expectations' },
+        { grade: 'AE', min_score: 30, description: 'Approaching Expectations' },
+        { grade: 'BE', min_score: 0,  description: 'Below Expectations' },
       ];
     }
-    const sorted = [...scale].sort((a, b) => b.min_score - a.min_score);
+    const sorted = [...scale].sort((a, b) => (b.min_score || 0) - (a.min_score || 0));
     for (const g of sorted) {
-      if (score >= g.min_score) return g;
+      if (score >= (g.min_score || 0)) return g;
     }
-    return { grade: '-', label: '' };
+    return { grade: '-', description: '' };
   }, [dbGrades, selectedClass]);
+
+  // The comment the teacher configured against a grade (Grading System →
+  // Description / Label), shown as the remark for each subject.
+  const gradeComment = (g) => g?.description || g?.label || '';
 
   // Compute weighted score for a student + subject
   // Each raw mark is normalised to a 0-100 percentage using the exam's total_marks
@@ -272,7 +302,7 @@ const Reports = ({ schoolConfig, examsList }) => {
                 <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 700, background: '#e8f5ee' }}>{Math.round(score)}</td>
                 <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 700 }}>{grade.grade}</td>
                 <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', background: '#fff4e5', color: '#BF6A02', fontWeight: 700 }}>{Math.round(best)}</td>
-                <td style={{ border: '1px solid #000', padding: '6px 8px', color: '#555', fontSize: 11 }}>{grade.label || grade.remarks || ''}</td>
+                <td style={{ border: '1px solid #000', padding: '6px 8px', color: '#555', fontSize: 11 }}>{gradeComment(grade)}</td>
               </tr>
             ))}
           </tbody>
@@ -283,15 +313,15 @@ const Reports = ({ schoolConfig, examsList }) => {
               <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 900 }}>{Math.round(total)}</td>
               <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 900 }}>{overallGrade.grade}</td>
               <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center' }}>AVG: {Math.round(average)}%</td>
-              <td style={{ border: '1px solid #000', padding: '6px 8px' }}>{overallGrade.label}</td>
+              <td style={{ border: '1px solid #000', padding: '6px 8px' }}>{gradeComment(overallGrade)}</td>
             </tr>
           </tfoot>
         </table>
 
-        {/* Remarks */}
+        {/* Remarks — the comment configured against the student's overall grade */}
         <div style={{ border: '1px solid #000', padding: '10px', marginBottom: 20 }}>
           <div style={{ fontWeight: 700, marginBottom: 5 }}>TEACHER'S REMARKS:</div>
-          <div style={{ minHeight: 28, background: '#F9F9F9' }}>A very disciplined and hardworking student. Maintain the consistency.</div>
+          <div style={{ minHeight: 28, background: '#F9F9F9' }}>{gradeComment(overallGrade)}</div>
         </div>
 
         {/* Signatures */}
@@ -390,7 +420,7 @@ const Reports = ({ schoolConfig, examsList }) => {
                 <td style="text-align:center;font-weight:700;background:#e8f5ee">${Math.round(score)}</td>
                 <td style="text-align:center;font-weight:700">${grade.grade}</td>
                 <td style="text-align:center;background:#fff4e5;font-weight:700">${Math.round(best)}</td>
-                <td style="font-size:11px;color:#555">${grade.label || ''}</td>
+                <td style="font-size:11px;color:#555">${gradeComment(grade)}</td>
               </tr>`).join('')}
           </tbody>
           <tfoot>
@@ -400,11 +430,11 @@ const Reports = ({ schoolConfig, examsList }) => {
               <td style="text-align:center;font-weight:900">${Math.round(total)}</td>
               <td style="text-align:center;font-weight:900">${overallGrade.grade}</td>
               <td style="text-align:center">AVG: ${Math.round(average)}%</td>
-              <td>${overallGrade.label || ''}</td>
+              <td>${gradeComment(overallGrade)}</td>
             </tr>
           </tfoot>
         </table>
-        <div class="remarks"><b>TEACHER'S REMARKS:</b><div style="min-height:28px;background:#F9F9F9">A very disciplined and hardworking student. Maintain the consistency.</div></div>
+        <div class="remarks"><b>TEACHER'S REMARKS:</b><div style="min-height:28px;background:#F9F9F9">${gradeComment(overallGrade)}</div></div>
         <div class="sigs">
           <div><div class="sig">Class Teacher</div></div>
           <div><div class="sig">Headteacher</div></div>

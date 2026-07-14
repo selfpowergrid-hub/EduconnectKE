@@ -2136,8 +2136,8 @@ const Settings = ({ schoolConfig, initialTab }) => {
                 </div>
                 
                 <div style={{ flex: 2, minWidth: 200 }}>
-                  <label style={labelStyle}>Description / Label</label>
-                  <input type="text" placeholder="e.g. Excellent" value={newGrade.description} onChange={(e) => setNewGrade({ ...newGrade, description: e.target.value })} style={{ ...inputStyle, paddingLeft: 14 }} />
+                  <label style={labelStyle}>Comment / Label 💬</label>
+                  <input type="text" placeholder="e.g. Excellent — appears on the report card" title="This comment appears against every subject a student scores this grade in, and as the teacher's remark on the report card." value={newGrade.description} onChange={(e) => setNewGrade({ ...newGrade, description: e.target.value })} style={{ ...inputStyle, paddingLeft: 14 }} />
                 </div>
 
                 <div style={{ width: 80 }}>
@@ -2196,7 +2196,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                       <thead>
                         <tr style={{ background: "#f5f2eb" }}>
                           <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 80 }}>Grade</th>
-                          {gradingLevel !== "pp_g3" && <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>Label</th>}
+                          {gradingLevel !== "pp_g3" && <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>Comment / Label</th>}
                           {gradingLevel === "pp_g3" && <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>Rubric Notes</th>}
                           {gradingLevel !== "pp_g3" && <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 90 }}>Range %</th>}
                           {(gradingLevel === "g7_g9" || gradingLevel === "g10_g12") && <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 80 }}>Points</th>}
