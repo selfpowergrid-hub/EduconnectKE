@@ -21,6 +21,7 @@ const TeacherAllocations = ({ schoolConfig }) => {
   const [subjects, setSubjects] = useState([]);
   const [streams, setStreams] = useState([]);
   const [assignments, setAssignments] = useState([]);
+  const [classTeachers, setClassTeachers] = useState([]); // class_teachers rows
   const [isLoading, setIsLoading] = useState(true);
   const [selectedTeacher, setSelectedTeacher] = useState(null);
 
@@ -31,16 +32,18 @@ const TeacherAllocations = ({ schoolConfig }) => {
   const fetchAll = async () => {
     setIsLoading(true);
     try {
-      const [t, s, st, a] = await Promise.all([
+      const [t, s, st, a, ct] = await Promise.all([
         supabase.from('staff').select('*').eq('school_id', schoolConfig.id).order('full_name'),
         supabase.from('subjects').select('*').eq('school_id', schoolConfig.id),
         supabase.from('streams').select('*').eq('school_id', schoolConfig.id),
         supabase.from('teacher_assignments').select('*').eq('school_id', schoolConfig.id),
+        supabase.from('class_teachers').select('*').eq('school_id', schoolConfig.id),
       ]);
       setTeachers(t.data || []);
       setSubjects(s.data || []);
       setStreams(st.data || []);
       setAssignments(a.data || []);
+      setClassTeachers(ct.data || []);
     } catch (err) {
       console.error('Failed to load teacher allocations:', err);
     } finally {
@@ -50,6 +53,49 @@ const TeacherAllocations = ({ schoolConfig }) => {
 
   const subjectById = useMemo(() => Object.fromEntries(subjects.map(s => [s.id, s])), [subjects]);
   const streamById = useMemo(() => Object.fromEntries(streams.map(s => [s.id, s])), [streams]);
+
+  // --- Class teachers: one per class (grade), or per stream where streams exist.
+  // The chosen teacher's name signs the CLASS TEACHER'S REMARKS on report cards.
+  const classScopes = useMemo(() => {
+    const gradeNames = Object.values(gradesByLevelForSchool(schoolConfig?.schoolType)).flat();
+    const scopes = [];
+    gradeNames.forEach(name => {
+      const code = GRADE_NAME_TO_CODE[name];
+      const gradeStreams = streams.filter(s => s.level_id === code);
+      if (gradeStreams.length) {
+        gradeStreams.forEach(st => scopes.push({ key: `${code}|${st.id}`, code, streamId: st.id, label: `${name} · ${st.name}` }));
+      } else {
+        scopes.push({ key: `${code}|`, code, streamId: null, label: name });
+      }
+    });
+    return scopes;
+  }, [schoolConfig?.schoolType, streams]);
+
+  const classTeacherFor = (code, streamId) =>
+    classTeachers.find(r => r.level_id === code && (r.stream_id || null) === (streamId || null))?.staff_id || '';
+
+  const saveClassTeacher = async (code, streamId, staffId) => {
+    try {
+      // Clean replace for this scope (expression-index uniqueness).
+      let del = supabase.from('class_teachers').delete()
+        .eq('school_id', schoolConfig.id).eq('level_id', code);
+      del = streamId ? del.eq('stream_id', streamId) : del.is('stream_id', null);
+      const { error: delErr } = await del;
+      if (delErr) throw delErr;
+
+      if (staffId) {
+        const { data, error } = await supabase.from('class_teachers')
+          .insert([{ school_id: schoolConfig.id, level_id: code, stream_id: streamId, staff_id: staffId }])
+          .select();
+        if (error) throw error;
+        if (!data?.length) throw new Error('Save was not persisted.');
+      }
+      const { data: fresh } = await supabase.from('class_teachers').select('*').eq('school_id', schoolConfig.id);
+      setClassTeachers(fresh || []);
+    } catch (err) {
+      alert('Failed to save class teacher: ' + err.message);
+    }
+  };
   const assignmentsByTeacher = useMemo(() => {
     const map = {};
     assignments.forEach(a => {
@@ -140,6 +186,35 @@ const TeacherAllocations = ({ schoolConfig }) => {
           </table>
         )}
       </div>
+
+      {/* Class Teachers — signs the report card for their class/stream */}
+      {!isLoading && teachers.length > 0 && (
+        <div style={{ background: "#fff", border: "1px solid #e6dfd8", borderRadius: 12, marginTop: 24, overflow: "hidden" }}>
+          <div style={{ padding: "16px 24px", borderBottom: "1px solid #F0F2F5" }}>
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: "#1A1A2E" }}>🖊️ Class Teachers</h3>
+            <p style={{ margin: "6px 0 0", fontSize: 12.5, color: "#8A8FA8", lineHeight: 1.5 }}>
+              The class teacher's name is printed on the signature line of every report card for that class. Changes save automatically.
+            </p>
+          </div>
+          <div style={{ padding: "14px 24px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
+            {classScopes.map(scope => (
+              <div key={scope.key}>
+                <label style={labelStyle}>{scope.label}</label>
+                <select
+                  value={classTeacherFor(scope.code, scope.streamId)}
+                  onChange={(e) => saveClassTeacher(scope.code, scope.streamId, e.target.value || null)}
+                  style={{ ...inputStyle, cursor: "pointer" }}
+                >
+                  <option value="">— No class teacher set —</option>
+                  {teachers.filter(t => !FINANCE_ROLES.includes(t.app_role)).map(t => (
+                    <option key={t.id} value={t.id}>{t.full_name}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {selectedTeacher && (
         <TeacherModal

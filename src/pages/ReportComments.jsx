@@ -176,12 +176,12 @@ const ReportComments = ({ schoolConfig }) => {
         <button onClick={handleSave} disabled={isSaving} style={{ padding: '10px 20px', background: isSaving ? '#8a8fa8' : '#1A5F9C', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: isSaving ? 'not-allowed' : 'pointer', height: 40, whiteSpace: 'nowrap' }}>{isSaving ? '⌛ Saving…' : '💾 Save Comments'}</button>
       </div>
 
-      {/* Token legend */}
-      <div style={{ background: '#EBF3FB', border: '1px solid #D1E3F8', borderRadius: 12, padding: '10px 16px', marginBottom: 14, display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-        <span style={{ fontSize: 11, fontWeight: 800, color: '#1A5F9C', textTransform: 'uppercase' }}>💡 Personalisation tokens</span>
+      {/* Token legend — optional power feature, kept low-key */}
+      <div style={{ background: '#faf8f5', border: '1px solid #e6dfd8', borderRadius: 12, padding: '9px 16px', marginBottom: 14, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#8a8fa8' }}>Optional: type any of these into a comment and each student's report card fills it in automatically —</span>
         {COMMENT_TOKENS.map(([tok, desc]) => (
-          <span key={tok} style={{ fontSize: 11.5, color: '#1A5F9C' }}>
-            <code style={{ background: '#fff', padding: '2px 7px', borderRadius: 6, fontWeight: 700, border: '1px solid #D1E3F8' }}>{tok}</code> {desc}
+          <span key={tok} style={{ fontSize: 11, color: '#8a8fa8' }} title={desc}>
+            <code style={{ background: '#fff', padding: '1px 6px', borderRadius: 5, fontWeight: 700, border: '1px solid #e6dfd8', color: '#4A4A6A' }}>{tok}</code>
           </span>
         ))}
       </div>

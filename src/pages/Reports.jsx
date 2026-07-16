@@ -22,6 +22,7 @@ const Reports = ({ schoolConfig, examsList }) => {
   const [dbGrades, setDbGrades] = useState([]);
   const [aggPolicy, setAggPolicy] = useState(null); // totalling policy row; null = count all
   const [dbComments, setDbComments] = useState([]); // report_comments rows (general + overrides)
+  const [classTeachers, setClassTeachers] = useState([]); // class_teachers rows with staff name
   const [dbStreams, setDbStreams] = useState([]);
   const [allMarks, setAllMarks] = useState([]); // marks for ALL students in grade
   const [schoolInfo, setSchoolInfo] = useState(null);
@@ -120,6 +121,7 @@ const Reports = ({ schoolConfig, examsList }) => {
       fetchStudents();
       fetchAggPolicy();
       fetchComments();
+      fetchClassTeachers();
     }
   }, [schoolConfig?.id, selectedClass]);
 
@@ -167,6 +169,22 @@ const Reports = ({ schoolConfig, examsList }) => {
       .eq('school_id', schoolConfig.id);
     setDbComments(data || []);
   };
+
+  // Class teachers (joined with the staff name) — signs the report card.
+  const fetchClassTeachers = async () => {
+    const { data } = await supabase
+      .from('class_teachers')
+      .select('*, staff(full_name)')
+      .eq('school_id', schoolConfig.id);
+    setClassTeachers(data || []);
+  };
+
+  // The signing class teacher for a student: stream-specific beats grade-wide.
+  const classTeacherName = useCallback((student) => {
+    const rows = classTeachers.filter(r => r.level_id === student.level_id);
+    const hit = rows.find(r => r.stream_id && r.stream_id === student.stream_id) || rows.find(r => !r.stream_id);
+    return hit?.staff?.full_name || '';
+  }, [classTeachers]);
 
   const fetchStreams = async () => {
     const { data } = await supabase.from('streams').select('*').eq('school_id', schoolConfig.id);
@@ -474,7 +492,7 @@ const Reports = ({ schoolConfig, examsList }) => {
               <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 900 }}>{belowMinimum ? '—' : Math.round(total)}</td>
               <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 900 }}>{belowMinimum ? '—' : overallGrade.grade}</td>
               <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center' }}>AVG: {belowMinimum ? '—' : `${Math.round(average)}%`}</td>
-              <td style={{ border: '1px solid #000', padding: '6px 8px' }}>{remark}</td>
+              <td style={{ border: '1px solid #000', padding: '6px 8px' }}>{belowMinimum ? remark : gradeComment(overallGrade)}</td>
             </tr>
           </tfoot>
         </table>
@@ -485,7 +503,7 @@ const Reports = ({ schoolConfig, examsList }) => {
           <div style={{ fontWeight: 700, marginBottom: 5 }}>CLASS TEACHER'S REMARKS:</div>
           <div style={{ minHeight: 34, background: '#F9F9F9' }}>{remark}</div>
           <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-            <span>Name/Sign: <u style={{ display: 'inline-block', minWidth: 160 }}>&nbsp;</u></span>
+            <span>Name: <u style={{ display: 'inline-block', minWidth: 150 }}>{classTeacherName(student) || ' '}</u> &nbsp; Sign: <u style={{ display: 'inline-block', minWidth: 70 }}>&nbsp;</u></span>
             <span>Date: <u style={{ display: 'inline-block', minWidth: 90 }}>&nbsp;</u></span>
           </div>
         </div>
@@ -495,7 +513,7 @@ const Reports = ({ schoolConfig, examsList }) => {
           <div style={{ fontWeight: 700, marginBottom: 5 }}>PRINCIPAL'S REMARKS:</div>
           <div style={{ minHeight: 34, background: '#F9F9F9' }}>{principalRemark || ' '}</div>
           <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-            <span>Name/Sign: <u style={{ display: 'inline-block', minWidth: 160 }}>&nbsp;</u></span>
+            <span>Name: <u style={{ display: 'inline-block', minWidth: 150 }}>{schoolInfo?.principal_name || ' '}</u> &nbsp; Sign: <u style={{ display: 'inline-block', minWidth: 70 }}>&nbsp;</u></span>
             <span>Date: <u style={{ display: 'inline-block', minWidth: 90 }}>&nbsp;</u></span>
           </div>
         </div>
@@ -614,19 +632,19 @@ const Reports = ({ schoolConfig, examsList }) => {
               <td style="text-align:center;font-weight:900">${belowMinimum ? '—' : Math.round(total)}</td>
               <td style="text-align:center;font-weight:900">${belowMinimum ? '—' : overallGrade.grade}</td>
               <td style="text-align:center">AVG: ${belowMinimum ? '—' : `${Math.round(average)}%`}</td>
-              <td>${remark}</td>
+              <td>${belowMinimum ? remark : gradeComment(overallGrade)}</td>
             </tr>
           </tfoot>
         </table>
         <div class="remarks">
           <b>CLASS TEACHER'S REMARKS:</b>
           <div style="min-height:34px;background:#F9F9F9">${remark}</div>
-          <div class="rem-sign"><span>Name/Sign: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span><span>Date: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span></div>
+          <div class="rem-sign"><span>Name: <u>&nbsp;&nbsp;${classTeacherName(student) || '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'}&nbsp;&nbsp;</u> &nbsp; Sign: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span><span>Date: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span></div>
         </div>
         <div class="remarks">
           <b>PRINCIPAL'S REMARKS:</b>
           <div style="min-height:34px;background:#F9F9F9">${principalRemark || '&nbsp;'}</div>
-          <div class="rem-sign"><span>Name/Sign: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span><span>Date: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span></div>
+          <div class="rem-sign"><span>Name: <u>&nbsp;&nbsp;${schoolInfo?.principal_name || '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'}&nbsp;&nbsp;</u> &nbsp; Sign: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span><span>Date: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span></div>
         </div>
       </div>`);
     });

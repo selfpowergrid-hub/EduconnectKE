@@ -16,55 +16,57 @@ export const COMMENT_TOKENS = [
 
 // Default wording by performance tier (0 = top band … 4 = bottom band).
 // Two variations per role per tier — same meaning, different words.
+// Deliberately plain English with NO tokens: ready to save untouched.
+// (Tokens still work — a school can type {name} etc. into any comment.)
 const TIER_DEFAULTS = [
   {
     class_teacher: [
-      'Excellent work, {name}! An outstanding mean of {mean}% with {best_subject} leading the way. Keep this momentum.',
-      '{name} has delivered a superb performance across the board. {best_subject} is exceptional — maintain the standard.',
+      'An excellent all-round performance. Keep up this momentum.',
+      'Outstanding work across the subjects — maintain this high standard.',
     ],
     principal: [
-      'Outstanding results. {name} is a role model to the class — keep aiming even higher.',
-      'A truly impressive grade {grade}. The school is proud of you, {name}.',
+      'Outstanding results. A role model to the class — keep aiming even higher.',
+      'A truly impressive performance. The school is proud of you.',
     ],
   },
   {
     class_teacher: [
-      'A strong performance, {name}. With more focus on {weak_subject}, the top grade is within reach.',
-      '{name} has performed very well, especially in {best_subject}. Push {weak_subject} to climb higher.',
+      'A strong performance. With a little more consistency, the top grade is within reach.',
+      'Very good work, especially in the stronger subjects. Keep pushing higher.',
     ],
     principal: [
-      'Very good work, {name}. Consistency will take you to the very top.',
-      'Commendable results, {name}. Keep working hard — excellence is near.',
+      'Very good work. Consistency will take you to the very top.',
+      'Commendable results. Keep working hard — excellence is near.',
     ],
   },
   {
     class_teacher: [
-      'A fair effort, {name}. {best_subject} shows your ability — apply the same energy to {weak_subject}.',
-      '{name} is making progress. Steady daily revision, particularly in {weak_subject}, will raise the mean of {mean}%.',
+      'A fair effort. Steady daily revision will raise the mean score.',
+      'Average performance with clear ability. Apply the same energy to every subject.',
     ],
     principal: [
-      'Average performance with clear potential. Aim higher next term, {name}.',
-      'You can do better than grade {grade}, {name}. Set a higher target and pursue it.',
+      'Average performance with clear potential. Aim higher next term.',
+      'You can do better than this. Set a higher target and pursue it.',
     ],
   },
   {
     class_teacher: [
-      '{name} needs to put in more effort. Extra attention to {weak_subject} and guided revision are required.',
-      'Below expectation this term. {name}, use {best_subject} as proof of your ability — apply yourself everywhere.',
+      'More effort is required. Guided revision and closer attention to the weaker subjects are needed.',
+      'Below expectation this term. Greater commitment will turn this around.',
     ],
     principal: [
-      'This performance calls for serious improvement. Let us see a change next term, {name}.',
-      '{name}, much more is expected of you. Work closely with your teachers to improve.',
+      'This performance calls for serious improvement. Let us see a change next term.',
+      'Much more is expected. Work closely with your teachers to improve.',
     ],
   },
   {
     class_teacher: [
-      'A very weak performance. {name} requires close monitoring, remedial support and supervised daily study.',
-      '{name} must change approach completely — attend remedial classes and seek help in {weak_subject} and beyond.',
+      'A very weak performance. Close monitoring, remedial support and supervised study are required.',
+      'A complete change of approach is needed — attend remedial classes and seek help early.',
     ],
     principal: [
-      'Unsatisfactory results. Parents and teachers must work together to turn this around for {name}.',
-      '{name}, this level of performance cannot continue. A serious commitment to study is required immediately.',
+      'Unsatisfactory results. Parents and teachers must work together to turn this around.',
+      'This level of performance cannot continue. A serious commitment to study is required immediately.',
     ],
   },
 ];
