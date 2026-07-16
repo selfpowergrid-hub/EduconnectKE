@@ -773,6 +773,25 @@ const Settings = ({ schoolConfig, initialTab }) => {
   const CATEGORY_ICON = { day: "☀", boarder: "🛏", special: "⭐" };
   const sheetKey = (grade, cat) => `${grade}|${cat || 'all'}`;
 
+  // fee_structures rows -> the { "grade|category": [items] } shape the pricing
+  // grid reads. Shared by the initial fetch and the "Copy To Other Classes" refresh.
+  const buildFeeSheets = (rows) => {
+    const bySheet = {};
+    (rows || []).forEach(row => {
+      const k = sheetKey(row.fee_level, row.category_id);
+      (bySheet[k] = bySheet[k] || []).push({
+        id: row.id,
+        voteheadId: row.votehead_id,
+        categoryId: row.category_id || null,
+        t1: Number(row.t1),
+        t2: Number(row.t2),
+        t3: Number(row.t3),
+        status: row.status || 'published',
+      });
+    });
+    return bySheet;
+  };
+
   const fetchVoteheads = async () => {
     try {
       const { data, error } = await supabase
@@ -819,20 +838,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
           .eq('school_id', schoolConfig.id)
           .eq('year', feeYear);
         if (error) throw error;
-        const bySheet = {};
-        (data || []).forEach(row => {
-          const k = sheetKey(row.fee_level, row.category_id);
-          (bySheet[k] = bySheet[k] || []).push({
-            id: row.id,
-            voteheadId: row.votehead_id,
-            categoryId: row.category_id || null,
-            t1: Number(row.t1),
-            t2: Number(row.t2),
-            t3: Number(row.t3),
-            status: row.status || 'published',
-          });
-        });
-        setFeeStructures(bySheet);
+        setFeeStructures(buildFeeSheets(data));
       } catch (err) {
         console.error('Error fetching fee structures:', err);
       }
@@ -989,6 +995,79 @@ const Settings = ({ schoolConfig, initialTab }) => {
       });
     } catch (err) {
       alert('Failed to change publish state: ' + err.message);
+    }
+  };
+
+  // --- Copy this grade's entire fee structure (all categories) to other grades ---
+  const [showCopyStructure, setShowCopyStructure] = useState(false);
+  const [copyTargets, setCopyTargets] = useState([]); // grade codes
+  const [isCopyingStructure, setIsCopyingStructure] = useState(false);
+
+  const sourceStructureRows = Object.entries(feeStructures)
+    .filter(([k]) => k.startsWith(`${activeGrade}|`))
+    .flatMap(([, items]) => items);
+
+  const toggleCopyTarget = (grade) => setCopyTargets(prev =>
+    prev.includes(grade) ? prev.filter(g => g !== grade) : [...prev, grade]);
+
+  const handleCopyStructure = async () => {
+    if (!copyTargets.length) return;
+    if (sourceStructureRows.length === 0) {
+      alert(`${GRADE_LABELS[activeGrade]} has no fee structure yet — nothing to copy.`);
+      return;
+    }
+    const targetLabels = copyTargets.map(g => GRADE_LABELS[g]).join(', ');
+    const ok = window.confirm(
+      `Copy the ${GRADE_LABELS[activeGrade]} fee structure (${sourceStructureRows.length} item${sourceStructureRows.length === 1 ? '' : 's'}, all categories, year ${feeYear}) to: ${targetLabels}?\n\n` +
+      `⚠️ WARNING: any existing ${feeYear} fee structure already set for ${targetLabels} will be REPLACED.`
+    );
+    if (!ok) return;
+
+    setIsCopyingStructure(true);
+    try {
+      for (const target of copyTargets) {
+        // Clean replace so the target ends up an exact copy (same unique
+        // constraint as the manual editor: school+level+category+votehead+year).
+        const { error: delErr } = await supabase
+          .from('fee_structures')
+          .delete()
+          .eq('school_id', schoolConfig.id)
+          .eq('fee_level', target)
+          .eq('year', feeYear);
+        if (delErr) throw delErr;
+
+        const payload = sourceStructureRows.map(r => ({
+          school_id: schoolConfig.id,
+          fee_level: target,
+          category_id: r.categoryId,
+          votehead_id: r.voteheadId,
+          year: feeYear,
+          t1: r.t1, t2: r.t2, t3: r.t3,
+          status: r.status,
+        }));
+        const { data, error } = await supabase.from('fee_structures').insert(payload).select();
+        if (error) throw error;
+        if (!data || data.length !== payload.length) {
+          throw new Error(`Copy to ${GRADE_LABELS[target]} was not fully persisted (expected ${payload.length}, stored ${data?.length || 0}).`);
+        }
+      }
+
+      // Re-read everything for this year so the grid reflects the true saved state.
+      const { data: fresh, error: freshErr } = await supabase
+        .from('fee_structures')
+        .select('*')
+        .eq('school_id', schoolConfig.id)
+        .eq('year', feeYear);
+      if (freshErr) throw freshErr;
+      setFeeStructures(buildFeeSheets(fresh));
+
+      alert(`✓ Fee structure copied to ${targetLabels}.`);
+      setShowCopyStructure(false);
+      setCopyTargets([]);
+    } catch (err) {
+      alert('Failed to copy fee structure: ' + err.message);
+    } finally {
+      setIsCopyingStructure(false);
     }
   };
 
@@ -2632,6 +2711,16 @@ const Settings = ({ schoolConfig, initialTab }) => {
                      {levelIsDraft ? '✎ DRAFT — click to publish' : '✓ PUBLISHED'}
                    </button>
                  )}
+                 <button
+                   onClick={() => { setCopyTargets([]); setShowCopyStructure(true); }}
+                   disabled={sourceStructureRows.length === 0}
+                   title={sourceStructureRows.length === 0 ? 'This grade has no fee structure yet' : `Copy the ${GRADE_LABELS[activeGrade]} fee structure to other classes`}
+                   style={{
+                     padding: "5px 12px", borderRadius: 999, fontSize: 11.5, fontWeight: 800,
+                     cursor: sourceStructureRows.length === 0 ? "not-allowed" : "pointer",
+                     border: "1.5px solid #F0D9B5", background: "#fff", color: sourceStructureRows.length === 0 ? "#c9c4bd" : "#B45309",
+                   }}
+                 >📋 Copy To Other Classes</button>
                </div>
                {/* Level report: every grade in the chosen level, ALL categories
                    (All Students / Boarder / Day Scholar / specials), labelled. */}
@@ -2912,6 +3001,54 @@ const Settings = ({ schoolConfig, initialTab }) => {
                 </table>
               </div>
             </section>
+            )}
+
+            {/* Copy Fee Structure modal */}
+            {showCopyStructure && (
+              <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(42, 36, 33, 0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 }}>
+                <div style={{ background: "#fff", width: "90%", maxWidth: 480, borderRadius: 16, boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.15)", overflow: "hidden" }}>
+                  <div style={{ padding: "20px 24px", borderBottom: "1px solid #E8EAF0", background: "#f5f2eb" }}>
+                    <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: "#2a2421" }}>📋 Copy Fee Structure</h3>
+                    <p style={{ margin: "6px 0 0", fontSize: 12.5, color: "#8a8fa8", lineHeight: 1.5 }}>
+                      Copy the <strong>{GRADE_LABELS[activeGrade]}</strong> fee structure ({sourceStructureRows.length} item{sourceStructureRows.length === 1 ? "" : "s"}, all categories, year {feeYear}) to the classes you select below.
+                    </p>
+                  </div>
+                  <div style={{ padding: "20px 24px", maxHeight: 320, overflowY: "auto" }}>
+                    {Object.entries(PRICING_BANDS).map(([bandKey, band]) => {
+                      const options = band.grades.filter(g => g !== activeGrade);
+                      if (!options.length) return null;
+                      return (
+                        <div key={bandKey} style={{ marginBottom: 14 }}>
+                          <div style={{ fontSize: 10.5, fontWeight: 800, color: "#8a8fa8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>{band.label}</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                            {options.map(g => (
+                              <label key={g} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid #e6dfd8", cursor: "pointer", background: copyTargets.includes(g) ? "#FEF6E7" : "#fff" }}>
+                                <input type="checkbox" checked={copyTargets.includes(g)} onChange={() => toggleCopyTarget(g)} style={{ width: 15, height: 15, accentColor: "#B45309", cursor: "pointer" }} />
+                                <span style={{ fontSize: 13, fontWeight: 600, color: "#2a2421" }}>{GRADE_LABELS[g]}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ padding: "16px 24px", borderTop: "1px solid #E8EAF0", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                    <button
+                      onClick={() => { setShowCopyStructure(false); setCopyTargets([]); }}
+                      style={{ padding: "10px 18px", background: "#fff", color: "#4A4A6A", border: "1px solid #e6dfd8", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                    >Cancel</button>
+                    <button
+                      onClick={handleCopyStructure}
+                      disabled={!copyTargets.length || isCopyingStructure}
+                      style={{
+                        padding: "10px 22px", borderRadius: 8, fontSize: 13, fontWeight: 700, border: "none",
+                        background: (!copyTargets.length || isCopyingStructure) ? "#8a8fa8" : "#1B6B3A", color: "#fff",
+                        cursor: (!copyTargets.length || isCopyingStructure) ? "not-allowed" : "pointer",
+                      }}
+                    >{isCopyingStructure ? "⌛ Copying…" : `📋 Copy to ${copyTargets.length || 0} class${copyTargets.length === 1 ? "" : "es"}`}</button>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         )}

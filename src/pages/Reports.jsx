@@ -270,7 +270,6 @@ const Reports = ({ schoolConfig, examsList }) => {
   }, [students, filteredStudents, selectedStream, getStudentSubjectScore]);
 
   // Form 3 / Form 4 (8-4-4) report cards omit subjects the student didn't sit.
-  const isForm = selectedClass === 'f3' || selectedClass === 'f4';
 
   // Build full report data for a student
   const buildReportData = useCallback((student) => {
@@ -287,11 +286,11 @@ const Reports = ({ schoolConfig, examsList }) => {
     });
   }, [gradeSubjects, gradeExams, allMarks, getStudentSubjectScore, getBestInGrade, getGrade]);
 
-  // Which rows to print: for Form 3/4, drop subjects with no marks entered.
+  // Report cards only show subjects the student actually has marks in —
+  // untouched subjects never print (applies to every class, CBC and 8-4-4).
   const reportRowsFor = useCallback((student) => {
-    const rows = buildReportData(student);
-    return isForm ? rows.filter(r => r.hasMark) : rows;
-  }, [buildReportData, isForm]);
+    return buildReportData(student).filter(r => r.hasMark);
+  }, [buildReportData]);
 
   // Overall total/average per the class's totalling policy. Without a policy
   // (or with count_all) every sat subject counts — identical to the old math.

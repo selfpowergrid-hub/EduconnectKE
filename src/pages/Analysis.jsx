@@ -148,7 +148,12 @@ const Analysis = ({ schoolConfig, examsList }) => {
     () => selectedStream === 'all' ? students : students.filter(s => s.stream_id === selectedStream),
     [students, selectedStream]
   );
-  const classStreams = useMemo(() => dbStreams.filter(s => s.level_id === selectedClass), [dbStreams, selectedClass]);
+  // Streams are school-wide (no grade column); a stream belongs to this class
+  // only if one of its students is actually assigned to it.
+  const classStreams = useMemo(() => {
+    const ids = new Set(students.map(s => s.stream_id).filter(Boolean));
+    return dbStreams.filter(s => ids.has(s.id));
+  }, [dbStreams, students]);
   const staffById = useMemo(() => Object.fromEntries(staff.map(s => [s.id, s.full_name])), [staff]);
   const subjectById = useMemo(() => Object.fromEntries(dbSubjects.map(s => [s.id, s])), [dbSubjects]);
   const streamById = useMemo(() => Object.fromEntries(dbStreams.map(s => [s.id, s.name])), [dbStreams]);

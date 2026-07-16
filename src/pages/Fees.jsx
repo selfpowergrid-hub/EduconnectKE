@@ -103,6 +103,7 @@ const Fees = ({ schoolConfig }) => {
   const [termDefaultSetting, setTermDefaultSetting] = useState(""); // '' = by calendar
   const appliedWorkingYear = useRef(false); // apply the school's working year once
   const [feeCats, setFeeCats] = useState([]);              // Day/Boarder + special categories
+  const [studentFeeCats, setStudentFeeCats] = useState([]); // per-year, per-term special category assignments
   const [isLoading, setIsLoading] = useState(true);
 
   // Fee Balances term filter + per-student drill-down
@@ -228,7 +229,7 @@ const Fees = ({ schoolConfig }) => {
   const loadAll = async () => {
     setIsLoading(true);
     try {
-      const [students, structures, vhs, pays, invs, strms, spons, adjs, burs, allocs, settings, cats, scharges] = await Promise.all([
+      const [students, structures, vhs, pays, invs, strms, spons, adjs, burs, allocs, settings, cats, scharges, sfcats] = await Promise.all([
         supabase.from('students').select('id, adm_no, first_name, last_name, level_id, stream_id, dorm_id, boarding_status, fee_category_id')
           .eq('school_id', schoolConfig.id),
         supabase.from('fee_structures').select('fee_level, votehead_id, category_id, t1, t2, t3, status')
@@ -263,6 +264,8 @@ const Fees = ({ schoolConfig }) => {
           .eq('school_id', schoolConfig.id),
         supabase.from('student_votehead_charges').select('*')
           .eq('school_id', schoolConfig.id).eq('year', year),
+        supabase.from('student_fee_categories').select('*')
+          .eq('school_id', schoolConfig.id).eq('year', year),
       ]);
 
       if (students.error) throw students.error;
@@ -293,6 +296,7 @@ const Fees = ({ schoolConfig }) => {
       }
       setFeeCats(cats.data || []);
       setStudentCharges(scharges.data || []);
+      setStudentFeeCats(sfcats.data || []);
 
       // Receipts (separate query: table may hold many years; key by payment)
       const paymentIds = (pays.data || []).map(p => p.id);
@@ -330,7 +334,132 @@ const Fees = ({ schoolConfig }) => {
   // "All students" sheet. Category pricing applies only via explicit
   // assignment, or the Boarder admission toggle (an explicit specification —
   // 'day' is merely the default and implies nothing).
+  // A student's effective fee category FOR A GIVEN TERM. A special-category
+  // assignment (student_fee_categories) applies only in the terms it covers
+  // (t1/t2/t3), so a term-only special structure stops billing after that term.
+  // Outside those terms — and for students with no assignment — we fall back to
+  // the legacy standing field, then the boarder/day default.
+  const categoryForTerm = (s, term) => {
+    const sfc = studentFeeCats.find(x => x.student_id === s.id && x[`t${term}`]);
+    if (sfc) return sfc.category_id;
+    if (s.fee_category_id) return s.fee_category_id;
+    if (isBoarder(s)) return feeCats.find(c => c.kind === 'boarder')?.id || null;
+    return null;
+  };
+
+  // --- Fee Categories tab: per-student structure assignment -----------------
+  const [isAssigning, setIsAssigning] = useState(false);
+  const [setAllCatId, setSetAllCatId] = useState("");
+
+  // Which terms a category's structure charges this year — a term is covered if
+  // any of the category's fee_structures rows has a non-zero amount in it. This
+  // is what makes the assignment intelligently year- or term-scoped.
+  const termsChargedByCategory = (catId) => {
+    const rows = structureRows.filter(r => r.category_id === catId);
+    return { t1: rows.some(r => Number(r.t1) > 0), t2: rows.some(r => Number(r.t2) > 0), t3: rows.some(r => Number(r.t3) > 0), any: rows.length > 0 };
+  };
+  const termsLabel = (t) => {
+    const names = [t.t1 && 'Term 1', t.t2 && 'Term 2', t.t3 && 'Term 3'].filter(Boolean);
+    if (names.length === 3) return 'the whole year (Terms 1–3)';
+    return names.join(' & ') || 'no terms';
+  };
+  const catScopeSuffix = (catId) => {
+    const t = termsChargedByCategory(catId);
+    if (!t.any) return 'not priced';
+    return t.t1 && t.t2 && t.t3 ? 'whole year' : [t.t1 && 'T1', t.t2 && 'T2', t.t3 && 'T3'].filter(Boolean).join('/');
+  };
+
+  // Core writer: assign catId (or null = revert to default) to student ids.
+  // Verified write + local refresh; confirms are the callers' job.
+  const writeCategoryAssignment = async (ids, catId) => {
+    setIsAssigning(true);
+    try {
+      // One special assignment per student per year: clear existing first.
+      const { error: delErr } = await supabase
+        .from('student_fee_categories')
+        .delete().eq('school_id', schoolConfig.id).eq('year', year)
+        .in('student_id', ids);
+      if (delErr) throw delErr;
+
+      if (catId) {
+        const terms = termsChargedByCategory(catId);
+        const payload = ids.map(sid => ({
+          school_id: schoolConfig.id, student_id: sid, category_id: catId,
+          year, t1: terms.t1, t2: terms.t2, t3: terms.t3,
+        }));
+        const { data, error } = await supabase.from('student_fee_categories').insert(payload).select();
+        if (error) throw error;
+        if (!data || data.length !== payload.length) throw new Error(`Save not fully persisted (expected ${payload.length}, stored ${data?.length || 0}).`);
+      } else {
+        // Reverting to default also clears the legacy standing field so the
+        // boarder/day automatic default genuinely takes over.
+        const { error: legErr } = await supabase
+          .from('students').update({ fee_category_id: null })
+          .eq('school_id', schoolConfig.id).in('id', ids);
+        if (legErr) throw legErr;
+        setStudentsList(prev => prev.map(s => ids.includes(s.id) ? { ...s, fee_category_id: null } : s));
+      }
+
+      const { data: fresh } = await supabase.from('student_fee_categories')
+        .select('*').eq('school_id', schoolConfig.id).eq('year', year);
+      setStudentFeeCats(fresh || []);
+      return true;
+    } catch (err) {
+      alert('Failed to update fee category: ' + err.message);
+      return false;
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
+  // Per-student dropdown change (Fee Categories tab).
+  const assignStudentCategory = async (s, catId) => {
+    const name = `${s.first_name || ''} ${s.last_name || ''}`.trim();
+    if (!catId) {
+      if (!window.confirm(`Revert ${name} to the normal (grade / boarder-day) fees for ${year}?`)) return;
+      await writeCategoryAssignment([s.id], null);
+      return;
+    }
+    const cat = feeCats.find(c => c.id === catId);
+    const terms = termsChargedByCategory(catId);
+    if (!terms.any) {
+      alert(`"${cat?.name}" has no fee structure priced for ${year}. Price its structure first (Fee Structure → select the category), then assign students.`);
+      return;
+    }
+    if (!window.confirm(
+      `Move ${name} to "${cat?.name}" for ${year}?\n\n` +
+      `This structure charges ${termsLabel(terms)} — the assignment applies to those terms only; normal fees apply outside them.`
+    )) return;
+    await writeCategoryAssignment([s.id], catId);
+  };
+
+  // Toolbar: apply one category to everyone matching the current filter.
+  const handleSetAllShown = async (list) => {
+    if (!setAllCatId || !list.length) return;
+    const clearing = setAllCatId === '__clear__';
+    const cat = feeCats.find(c => c.id === setAllCatId);
+    if (!clearing) {
+      const terms = termsChargedByCategory(setAllCatId);
+      if (!terms.any) {
+        alert(`"${cat?.name}" has no fee structure priced for ${year}. Price its structure first, then assign students.`);
+        return;
+      }
+      if (!window.confirm(
+        `Set ALL ${list.length} students shown to "${cat?.name}" for ${year}?\n\n` +
+        `This structure charges ${termsLabel(terms)} — the assignment applies to those terms only.`
+      )) return;
+    } else {
+      if (!window.confirm(`Revert ALL ${list.length} students shown to their normal (grade / boarder-day) fees for ${year}?`)) return;
+    }
+    const ok = await writeCategoryAssignment(list.map(s => s.id), clearing ? null : setAllCatId);
+    if (ok) setSetAllCatId("");
+  };
+
+  // Whole-year category for display badges: the special assignment (any term)
+  // wins, else the legacy/standing/boarder default.
   const categoryFor = (s) => {
+    const sfc = studentFeeCats.find(x => x.student_id === s.id && (x.t1 || x.t2 || x.t3));
+    if (sfc) return sfc.category_id;
     if (s.fee_category_id) return s.fee_category_id;
     if (isBoarder(s)) return feeCats.find(c => c.kind === 'boarder')?.id || null;
     return null;
@@ -353,40 +482,57 @@ const Fees = ({ schoolConfig }) => {
   // Effective price sheet for a student: their grade's published rows where
   // the votehead is active and in scope, with a category-specific row
   // REPLACING the "All students" row for the same votehead.
-  const effectiveRowsFor = (s) => {
-    const cat = categoryFor(s);
-    const merged = new Map();
-    // shared first, then category rows override
-    [false, true].forEach(specificPass => {
-      structureRows.forEach(r => {
-        if (r.fee_level !== s.level_id) return;
-        const isSpecific = !!r.category_id;
-        if (isSpecific !== specificPass) return;
-        if (isSpecific && r.category_id !== cat) return;
-        const vh = voteheadsById[r.votehead_id];
-        if (vh) {
-          if (vh.is_active === false) return;
-          const scope = vh.applies_to || 'all';
-          if (scope === 'boarders' && !isBoarder(s)) return;
-          if (scope === 'day' && isBoarder(s)) return;
-        }
-        merged.set(r.votehead_id, r);
+  // The student's effective price sheet. Each votehead's t1/t2/t3 are resolved
+  // INDEPENDENTLY per term against that term's category (categoryForTerm), so a
+  // special structure that only charges e.g. Term 2 adds its amount to t2 only
+  // and leaves t1/t3 on the student's normal category. For a student with no
+  // special assignment this collapses to exactly the previous behaviour.
+  // Class price sheet (shared + per-term category, scope-filtered) WITHOUT the
+  // student's personal charges — term-aware baseline used by both the balance
+  // math and the personal-charges modal.
+  const baseRowsFor = (s) => {
+    const merged = new Map(); // voteheadId -> { votehead_id, t1, t2, t3 }
+    const ensure = (vhId) => {
+      if (!merged.has(vhId)) merged.set(vhId, { votehead_id: vhId, t1: 0, t2: 0, t3: 0 });
+      return merged.get(vhId);
+    };
+    [1, 2, 3].forEach(term => {
+      const cat = categoryForTerm(s, term);
+      // shared ("All students") first, then this term's category rows override.
+      [false, true].forEach(specificPass => {
+        structureRows.forEach(r => {
+          if (r.fee_level !== s.level_id) return;
+          const isSpecific = !!r.category_id;
+          if (isSpecific !== specificPass) return;
+          if (isSpecific && r.category_id !== cat) return;
+          const vh = voteheadsById[r.votehead_id];
+          if (vh) {
+            if (vh.is_active === false) return;
+            const scope = vh.applies_to || 'all';
+            if (scope === 'boarders' && !isBoarder(s)) return;
+            if (scope === 'day' && isBoarder(s)) return;
+          }
+          ensure(r.votehead_id)[`t${term}`] = Number(r[`t${term}`]) || 0;
+        });
       });
     });
+    return merged;
+  };
 
-    // student-specific overrides
+  const effectiveRowsFor = (s) => {
+    const merged = baseRowsFor(s);
+    // student-specific overrides apply across all terms (personal charges).
     studentCharges.forEach(r => {
       if (r.student_id !== s.id) return;
       const vh = voteheadsById[r.votehead_id];
       if (vh && vh.is_active !== false) {
         merged.set(r.votehead_id, {
-          ...r,
+          votehead_id: r.votehead_id,
+          t1: Number(r.t1) || 0, t2: Number(r.t2) || 0, t3: Number(r.t3) || 0,
           fee_level: s.level_id,
-          category_id: cat,
         });
       }
     });
-
     return [...merged.values()];
   };
 
@@ -529,11 +675,28 @@ const Fees = ({ schoolConfig }) => {
     return { billed: b.owed, paid: b.paid, balance: b.balance };
   };
 
+  // Column sorting for the student lists. Default = ADM No ascending, a STABLE
+  // key: money changes (e.g. switching a fee category) never move a row.
+  const [sortKey, setSortKey] = useState('adm');   // 'adm' | 'name' | 'balance'
+  const [sortDir, setSortDir] = useState('asc');   // 'asc' | 'desc'
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir(key === 'balance' ? 'desc' : 'asc'); }
+  };
+  const sortArrow = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ' ⇅';
+  // ADM numbers sort numerically when both are numbers ("6296" > "700"),
+  // falling back to text for mixed formats like "2026/001".
+  const cmpAdm = (a, b) => {
+    const na = Number(a), nb = Number(b);
+    if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+    return String(a || '').localeCompare(String(b || ''), undefined, { numeric: true });
+  };
+
   const filteredStudents = useMemo(() => {
     const targetGradeId = selectedGrade === "all" ? null : GRADE_NAME_TO_CODE[selectedGrade];
     const levelGrades = (GRADES_BY_LEVEL[selectedLevel] || []).map(name => GRADE_NAME_TO_CODE[name]);
 
-    return studentsList
+    const rows = studentsList
       .filter(s => {
         const q = searchTerm.toLowerCase();
         const matchesSearch = studentName(s).toLowerCase().includes(q) || (s.adm_no || "").toLowerCase().includes(q);
@@ -542,9 +705,16 @@ const Fees = ({ schoolConfig }) => {
         const matchesStream = selectedStream === "all" ? true : s.stream_id === selectedStream;
         return matchesSearch && matchesLevel && matchesGrade && matchesStream;
       })
-      .map(s => ({ ...s, concession: concessionFor(s), ...listMetricsFor(s) }))
-      .sort((a, b) => b.balance - a.balance);
-  }, [studentsList, structureRows, studentCharges, voteheadsById, feeCats, paidByStudent, concessionByStudent, realByStudent, allocModeDefault, termFilter, searchTerm, selectedLevel, selectedGrade, selectedStream]);
+      .map(s => ({ ...s, concession: concessionFor(s), ...listMetricsFor(s) }));
+
+    const dir = sortDir === 'asc' ? 1 : -1;
+    rows.sort((a, b) => {
+      if (sortKey === 'name') return dir * studentName(a).localeCompare(studentName(b));
+      if (sortKey === 'balance') return dir * (a.balance - b.balance);
+      return dir * cmpAdm(a.adm_no, b.adm_no);
+    });
+    return rows;
+  }, [studentsList, structureRows, studentCharges, studentFeeCats, voteheadsById, feeCats, paidByStudent, concessionByStudent, realByStudent, allocModeDefault, termFilter, searchTerm, selectedLevel, selectedGrade, selectedStream, sortKey, sortDir]);
 
   const studentById = useMemo(() => {
     const m = {};
@@ -1192,6 +1362,7 @@ const Fees = ({ schoolConfig }) => {
         <div onClick={() => setActiveTab("transactions")} style={tabStyle(activeTab === "transactions")}>Payments</div>
         <div onClick={() => setActiveTab("concessions")} style={tabStyle(activeTab === "concessions")}>Discounts &amp; Bursaries</div>
         <div onClick={() => setActiveTab("student_charges")} style={tabStyle(activeTab === "student_charges")}>Student Charges</div>
+        <div onClick={() => setActiveTab("categories")} style={tabStyle(activeTab === "categories")}>⭐ Fee Categories</div>
       </div>
 
       <div className="grid-1" style={{ marginBottom: 16, display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center" }}>
@@ -1200,7 +1371,7 @@ const Fees = ({ schoolConfig }) => {
             <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13 }}>🔍</span>
             <input
               type="text"
-              placeholder={activeTab === "balances" || activeTab === "student_charges" ? "Search student..." : activeTab === "invoices" ? "Search invoice or student..." : "Search payment..."}
+              placeholder={activeTab === "balances" || activeTab === "student_charges" || activeTab === "categories" ? "Search student..." : activeTab === "invoices" ? "Search invoice or student..." : "Search payment..."}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{ width: "100%", padding: "10px 12px 10px 32px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, outline: "none", boxSizing: "border-box" }}
@@ -1229,7 +1400,7 @@ const Fees = ({ schoolConfig }) => {
             </div>
           )}
 
-          {(activeTab === "balances" || activeTab === "student_charges") && (
+          {(activeTab === "balances" || activeTab === "student_charges" || activeTab === "categories") && (
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>LEVEL:</span>
@@ -1302,12 +1473,12 @@ const Fees = ({ schoolConfig }) => {
           <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
             <thead style={{ background: "#FAFBFC", borderBottom: "1px solid #E8EAF0" }}>
               <tr>
-                <th style={thStyle}>ADM No.</th>
-                <th style={thStyle}>Student Name</th>
+                <th style={{ ...thStyle, cursor: "pointer", userSelect: "none" }} onClick={() => toggleSort('adm')} title="Sort by admission number">ADM No.{sortArrow('adm')}</th>
+                <th style={{ ...thStyle, cursor: "pointer", userSelect: "none" }} onClick={() => toggleSort('name')} title="Sort by name">Student Name{sortArrow('name')}</th>
                 <th className="hide-mobile" style={thStyle}>Category</th>
                 <th className="hide-mobile" style={thStyle}>{termFilter === "all" ? "Billed" : `Term ${termFilter} Billed`}</th>
                 <th className="hide-mobile" style={thStyle}>Paid</th>
-                <th style={thStyle}>{termFilter === "all" ? "Balance" : `Term ${termFilter} Balance`}</th>
+                <th style={{ ...thStyle, cursor: "pointer", userSelect: "none" }} onClick={() => toggleSort('balance')} title="Sort by balance">{termFilter === "all" ? "Balance" : `Term ${termFilter} Balance`}{sortArrow('balance')}</th>
                 <th className="hide-mobile" style={thStyle}>Action</th>
               </tr>
             </thead>
@@ -1354,6 +1525,93 @@ const Fees = ({ schoolConfig }) => {
               })}
             </tbody>
           </table>
+        ) : activeTab === "categories" ? (
+          <>
+          {/* Toolbar: apply one category to the whole current filter */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "12px 18px", background: "#FAFBFC", borderBottom: "1px solid #E8EAF0" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: "#4A4A6A" }}>Set everyone shown ({filteredStudents.length}) to:</span>
+            <select
+              value={setAllCatId}
+              onChange={(e) => setSetAllCatId(e.target.value)}
+              style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, fontWeight: 600, background: "#fff", cursor: "pointer" }}
+            >
+              <option value="">— choose a fee structure —</option>
+              {feeCats.filter(c => c.kind === 'special').map(c => (
+                <option key={c.id} value={c.id}>⭐ {c.name} ({catScopeSuffix(c.id)})</option>
+              ))}
+              <option value="__clear__">↩ Default (boarder / day scholar)</option>
+            </select>
+            <button
+              onClick={() => handleSetAllShown(filteredStudents)}
+              disabled={!setAllCatId || isAssigning || !filteredStudents.length}
+              style={{ padding: "8px 18px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 700, color: "#fff", background: (!setAllCatId || isAssigning) ? "#8A8FA8" : "#1A5F9C", cursor: (!setAllCatId || isAssigning) ? "not-allowed" : "pointer" }}
+            >{isAssigning ? "⌛ Applying…" : "Apply to all shown"}</button>
+            {feeCats.filter(c => c.kind === 'special').length === 0 && (
+              <span style={{ fontSize: 11.5, color: "#8A6A1F" }}>💡 No special fee structures yet — create a category and price it under Fee Structure first.</span>
+            )}
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
+            <thead style={{ background: "#FAFBFC", borderBottom: "1px solid #E8EAF0" }}>
+              <tr>
+                <th style={{ ...thStyle, cursor: "pointer", userSelect: "none" }} onClick={() => toggleSort('adm')} title="Sort by admission number">ADM No.{sortArrow('adm')}</th>
+                <th style={{ ...thStyle, cursor: "pointer", userSelect: "none" }} onClick={() => toggleSort('name')} title="Sort by name">Student Name{sortArrow('name')}</th>
+                <th className="hide-mobile" style={thStyle}>Class · Stream</th>
+                <th style={thStyle}>Current Fee Structure</th>
+                <th className="hide-mobile" style={thStyle}>Billed ({year})</th>
+                <th style={thStyle}>Change To</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredStudents.length === 0 ? (
+                <tr><td colSpan="6" style={{ textAlign: "center", padding: 30, color: "#8A8FA8" }}>No students match this filter.</td></tr>
+              ) : filteredStudents.slice(0, 100).map((s, idx) => {
+                const sfc = studentFeeCats.find(x => x.student_id === s.id && (x.t1 || x.t2 || x.t3));
+                const sfcCat = sfc ? feeCats.find(c => c.id === sfc.category_id) : null;
+                const legacyCat = !sfc && s.fee_category_id ? feeCats.find(c => c.id === s.fee_category_id) : null;
+                const defBadge = categoryLabelFor(s);
+                const streamName = streamsList.find(x => x.id === s.stream_id)?.name;
+                return (
+                  <tr key={s.id} style={{ borderBottom: "1px solid #F7F8FA", background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
+                    <td style={{ padding: "12px 18px", fontWeight: 600, color: "#1A5F9C" }}>{s.adm_no}</td>
+                    <td style={{ padding: "12px 18px", fontWeight: 700, color: "#1A1A2E" }}>{studentName(s)}</td>
+                    <td className="hide-mobile" style={{ padding: "12px 18px", color: "#4A4A6A" }}>
+                      {GRADE_CODE_TO_NAME[s.level_id] || s.level_id}{streamName ? ` · ${streamName}` : ''}
+                    </td>
+                    <td style={{ padding: "12px 18px" }}>
+                      {sfcCat ? (
+                        <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: "#F5EEF8", color: "#6C3483", whiteSpace: "nowrap" }}>
+                          ⭐ {sfcCat.name} — {[sfc.t1 && 'T1', sfc.t2 && 'T2', sfc.t3 && 'T3'].filter(Boolean).join(' · ')}
+                        </span>
+                      ) : legacyCat ? (
+                        <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: "#F5EEF8", color: "#6C3483", whiteSpace: "nowrap" }}>
+                          ⭐ {legacyCat.name} <span style={{ fontWeight: 500 }}>(standing)</span>
+                        </span>
+                      ) : (
+                        <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: defBadge.bg, color: defBadge.fg, whiteSpace: "nowrap" }}>
+                          {defBadge.icon} {defBadge.name} <span style={{ fontWeight: 500 }}>(default)</span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="hide-mobile" style={{ padding: "12px 18px", fontFamily: "monospace", fontWeight: 700, color: "#4A4A6A" }}>KES {s.billed.toLocaleString()}</td>
+                    <td style={{ padding: "12px 18px" }}>
+                      <select
+                        value={sfc?.category_id || ""}
+                        disabled={isAssigning}
+                        onChange={(e) => assignStudentCategory(s, e.target.value || null)}
+                        style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 12.5, fontWeight: 600, background: "#fff", cursor: "pointer", maxWidth: 240 }}
+                      >
+                        <option value="">Default (boarder / day)</option>
+                        {feeCats.filter(c => c.kind === 'special').map(c => (
+                          <option key={c.id} value={c.id}>⭐ {c.name} ({catScopeSuffix(c.id)})</option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          </>
         ) : activeTab === "invoices" ? (
           <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
             <thead style={{ background: "#FAFBFC", borderBottom: "1px solid #E8EAF0" }}>
@@ -1397,8 +1655,8 @@ const Fees = ({ schoolConfig }) => {
           <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
             <thead style={{ background: "#FAFBFC", borderBottom: "1px solid #E8EAF0" }}>
               <tr>
-                <th style={thStyle}>ADM No.</th>
-                <th style={thStyle}>Student Name</th>
+                <th style={{ ...thStyle, cursor: "pointer", userSelect: "none" }} onClick={() => toggleSort('adm')} title="Sort by admission number">ADM No.{sortArrow('adm')}</th>
+                <th style={{ ...thStyle, cursor: "pointer", userSelect: "none" }} onClick={() => toggleSort('name')} title="Sort by name">Student Name{sortArrow('name')}</th>
                 <th style={thStyle}>Category</th>
                 <th style={thStyle}>Custom Charges</th>
                 <th style={thStyle}>Action</th>
@@ -2177,26 +2435,9 @@ const Fees = ({ schoolConfig }) => {
           .filter(v => v.is_active !== false)
           .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999) || (a.display_order ?? 0) - (b.display_order ?? 0));
 
-        // The student's CLASS sheet (shared + category, scope-filtered) WITHOUT
-        // personal charges — the baseline these rows override or add to.
-        const cat = categoryFor(student);
-        const baseByVh = new Map();
-        [false, true].forEach(specificPass => {
-          structureRows.forEach(r => {
-            if (r.fee_level !== student.level_id) return;
-            const isSpecific = !!r.category_id;
-            if (isSpecific !== specificPass) return;
-            if (isSpecific && r.category_id !== cat) return;
-            const vh = voteheadsById[r.votehead_id];
-            if (vh) {
-              if (vh.is_active === false) return;
-              const scope = vh.applies_to || 'all';
-              if (scope === 'boarders' && !isBoarder(student)) return;
-              if (scope === 'day' && isBoarder(student)) return;
-            }
-            baseByVh.set(r.votehead_id, { t1: Number(r.t1), t2: Number(r.t2), t3: Number(r.t3) });
-          });
-        });
+        // The student's CLASS sheet (shared + per-term category, scope-filtered)
+        // WITHOUT personal charges — the baseline these rows override or add to.
+        const baseByVh = baseRowsFor(student);
         const baseTotal = [...baseByVh.values()].reduce((s, b) => s + b.t1 + b.t2 + b.t3, 0);
 
         // Live final bill: baseline, minus overridden base rows, plus form rows.

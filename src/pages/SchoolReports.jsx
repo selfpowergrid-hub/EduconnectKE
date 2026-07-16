@@ -76,20 +76,41 @@ const SchoolReports = ({ schoolConfig }) => {
     return allClassCodes;
   }, [selectedClass, selectedLevel, gradesByLevel, allClassCodes]);
 
-  // Students in scope, sorted by class then name.
+  // Sorting for the student-based reports: class order first, then the chosen
+  // column. ADM sorts numerically where possible.
+  const [sortKey, setSortKey] = useState('name'); // 'name' | 'adm'
+  const [sortDir, setSortDir] = useState('asc');
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+  const sortArrow = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ' ⇅';
+
+  // Students in scope, sorted by class then the chosen column.
   const scoped = useMemo(() => {
     let pool = students.filter(s => scopeCodes.includes(s.level_id));
     if (selectedStream !== 'all') pool = pool.filter(s => s.stream_id === selectedStream);
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const cmpAdm = (a, b) => {
+      const na = Number(a), nb = Number(b);
+      if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+      return String(a || '').localeCompare(String(b || ''), undefined, { numeric: true });
+    };
     return [...pool].sort((a, b) =>
       allClassCodes.indexOf(a.level_id) - allClassCodes.indexOf(b.level_id) ||
-      (a.first_name || '').localeCompare(b.first_name || ''));
-  }, [students, scopeCodes, selectedStream, allClassCodes]);
+      (sortKey === 'adm'
+        ? dir * cmpAdm(a.adm_no, b.adm_no)
+        : dir * (a.first_name || '').localeCompare(b.first_name || '')));
+  }, [students, scopeCodes, selectedStream, allClassCodes, sortKey, sortDir]);
 
-  // Streams offered for the current class scope (streams are per class).
-  const streamsForScope = useMemo(
-    () => selectedClass === 'all' ? [] : dbStreams.filter(s => s.level_id === selectedClass),
-    [dbStreams, selectedClass]
-  );
+  // Streams offered for the current class scope. Streams are school-wide (no
+  // grade column); a stream belongs to this class only if one of its students
+  // is actually assigned to it.
+  const streamsForScope = useMemo(() => {
+    if (selectedClass === 'all') return [];
+    const ids = new Set(students.filter(s => s.level_id === selectedClass).map(s => s.stream_id).filter(Boolean));
+    return dbStreams.filter(s => ids.has(s.id));
+  }, [dbStreams, students, selectedClass]);
 
   // Effective title: the user's custom text, else the report's default name.
   const defaultTitle = REPORTS.find(r => r.id === reportType)?.label.replace(/^[^ ]+ /, '') || 'Report';
@@ -174,7 +195,7 @@ const SchoolReports = ({ schoolConfig }) => {
       <div style={sectionTitle}>{effectiveTitle} ({scoped.length} students)</div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr><th style={{ ...th, width: 40 }}>#</th><th style={th}>ADM No</th><th style={th}>Student Name</th><th style={{ ...th, textAlign: 'center' }}>Gender</th><th style={th}>Class</th><th style={th}>Stream</th><th style={th}>Boarding</th></tr></thead>
+          <thead><tr><th style={{ ...th, width: 40 }}>#</th><th onClick={() => toggleSort('adm')} title="Sort by admission number" style={{ ...th, cursor: 'pointer', userSelect: 'none' }}>ADM No{sortArrow('adm')}</th><th onClick={() => toggleSort('name')} title="Sort by name" style={{ ...th, cursor: 'pointer', userSelect: 'none' }}>Student Name{sortArrow('name')}</th><th style={{ ...th, textAlign: 'center' }}>Gender</th><th style={th}>Class</th><th style={th}>Stream</th><th style={th}>Boarding</th></tr></thead>
           <tbody>
             {scoped.map((s, i) => (
               <tr key={s.id} style={{ background: i % 2 ? '#fafafa' : '#fff' }}>

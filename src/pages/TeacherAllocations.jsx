@@ -22,6 +22,7 @@ const TeacherAllocations = ({ schoolConfig }) => {
   const [streams, setStreams] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [classTeachers, setClassTeachers] = useState([]); // class_teachers rows
+  const [students, setStudents] = useState([]); // used only to find which streams actually have students per grade
   const [isLoading, setIsLoading] = useState(true);
   const [selectedTeacher, setSelectedTeacher] = useState(null);
 
@@ -32,18 +33,20 @@ const TeacherAllocations = ({ schoolConfig }) => {
   const fetchAll = async () => {
     setIsLoading(true);
     try {
-      const [t, s, st, a, ct] = await Promise.all([
+      const [t, s, st, a, ct, stu] = await Promise.all([
         supabase.from('staff').select('*').eq('school_id', schoolConfig.id).order('full_name'),
         supabase.from('subjects').select('*').eq('school_id', schoolConfig.id),
         supabase.from('streams').select('*').eq('school_id', schoolConfig.id),
         supabase.from('teacher_assignments').select('*').eq('school_id', schoolConfig.id),
         supabase.from('class_teachers').select('*').eq('school_id', schoolConfig.id),
+        supabase.from('students').select('id, level_id, stream_id').eq('school_id', schoolConfig.id),
       ]);
       setTeachers(t.data || []);
       setSubjects(s.data || []);
       setStreams(st.data || []);
       setAssignments(a.data || []);
       setClassTeachers(ct.data || []);
+      setStudents(stu.data || []);
     } catch (err) {
       console.error('Failed to load teacher allocations:', err);
     } finally {
@@ -54,22 +57,31 @@ const TeacherAllocations = ({ schoolConfig }) => {
   const subjectById = useMemo(() => Object.fromEntries(subjects.map(s => [s.id, s])), [subjects]);
   const streamById = useMemo(() => Object.fromEntries(streams.map(s => [s.id, s])), [streams]);
 
-  // --- Class teachers: one per class (grade), or per stream where streams exist.
-  // The chosen teacher's name signs the CLASS TEACHER'S REMARKS on report cards.
+  // --- Class teachers: one per class (grade), split into one row per stream
+  // for any grade where students actually have streams assigned. Streams are
+  // school-wide (the `streams` table has no grade column), so "does this grade
+  // have streams" is answered by looking at its students' stream_id values,
+  // not by a stream-to-grade link that doesn't exist.
   const classScopes = useMemo(() => {
     const gradeNames = Object.values(gradesByLevelForSchool(schoolConfig?.schoolType)).flat();
+    const streamById = Object.fromEntries(streams.map(s => [s.id, s]));
     const scopes = [];
     gradeNames.forEach(name => {
       const code = GRADE_NAME_TO_CODE[name];
-      const gradeStreams = streams.filter(s => s.level_id === code);
-      if (gradeStreams.length) {
-        gradeStreams.forEach(st => scopes.push({ key: `${code}|${st.id}`, code, streamId: st.id, label: `${name} · ${st.name}` }));
+      const gradeStudents = students.filter(s => s.level_id === code);
+      const streamIds = [...new Set(gradeStudents.map(s => s.stream_id).filter(Boolean))]
+        .filter(id => streamById[id])
+        .sort((a, b) => streamById[a].name.localeCompare(streamById[b].name));
+      const hasUnstreamed = gradeStudents.some(s => !s.stream_id);
+      if (streamIds.length) {
+        streamIds.forEach(id => scopes.push({ key: `${code}|${id}`, code, streamId: id, label: `${name} · ${streamById[id].name}` }));
+        if (hasUnstreamed) scopes.push({ key: `${code}|`, code, streamId: null, label: `${name} · No Stream` });
       } else {
         scopes.push({ key: `${code}|`, code, streamId: null, label: name });
       }
     });
     return scopes;
-  }, [schoolConfig?.schoolType, streams]);
+  }, [schoolConfig?.schoolType, streams, students]);
 
   const classTeacherFor = (code, streamId) =>
     classTeachers.find(r => r.level_id === code && (r.stream_id || null) === (streamId || null))?.staff_id || '';

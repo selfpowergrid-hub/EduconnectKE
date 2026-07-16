@@ -88,11 +88,20 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
     return getClassesByType(schoolConfig?.schoolType || "Primary");
   }, [schoolConfig]);
 
+  // Column sorting: ADM No (numeric-aware) or Name, default ADM ascending.
+  const [sortKey, setSortKey] = useState('adm');
+  const [sortDir, setSortDir] = useState('asc');
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+  const sortArrow = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ' ⇅';
+
   const filteredStudents = useMemo(() => {
     const targetGradeId = selectedGrade === "all" ? null : GRADE_NAME_TO_CODE[selectedGrade];
     const levelGrades = (GRADES_BY_LEVEL[selectedLevel] || []).map(name => GRADE_NAME_TO_CODE[name]);
 
-    return studentsList.filter(s => {
+    const rows = studentsList.filter(s => {
       const nameMatch = s.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
       const admMatch = s.adm_no?.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesSearch = nameMatch || admMatch;
@@ -104,7 +113,18 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
 
       return matchesSearch && matchesLevel && matchesGrade && matchesBoarding && matchesStream;
     });
-  }, [searchTerm, selectedLevel, selectedGrade, boardingFilter, selectedStream, studentsList]);
+
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const cmpAdm = (a, b) => {
+      const na = Number(a), nb = Number(b);
+      if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+      return String(a || '').localeCompare(String(b || ''), undefined, { numeric: true });
+    };
+    rows.sort((a, b) => sortKey === 'name'
+      ? dir * (a.full_name || '').localeCompare(b.full_name || '')
+      : dir * cmpAdm(a.adm_no, b.adm_no));
+    return rows;
+  }, [searchTerm, selectedLevel, selectedGrade, boardingFilter, selectedStream, studentsList, sortKey, sortDir]);
 
   // Sync selectedGrade when selectedLevel changes
   useEffect(() => {
@@ -626,8 +646,8 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
             <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
               <thead style={{ background: "#FAFBFC", borderBottom: "1px solid #E8EAF0" }}>
                 <tr>
-                  <th style={{ padding: "12px 18px", fontWeight: 700, color: "#8A8FA8", fontSize: 11, textTransform: "uppercase" }}>ADM No.</th>
-                  <th style={{ padding: "12px 18px", fontWeight: 700, color: "#8A8FA8", fontSize: 11, textTransform: "uppercase" }}>Student Name</th>
+                  <th onClick={() => toggleSort('adm')} title="Sort by admission number" style={{ padding: "12px 18px", fontWeight: 700, color: "#8A8FA8", fontSize: 11, textTransform: "uppercase", cursor: "pointer", userSelect: "none" }}>ADM No.{sortArrow('adm')}</th>
+                  <th onClick={() => toggleSort('name')} title="Sort by name" style={{ padding: "12px 18px", fontWeight: 700, color: "#8A8FA8", fontSize: 11, textTransform: "uppercase", cursor: "pointer", userSelect: "none" }}>Student Name{sortArrow('name')}</th>
                   <th className="hide-mobile" style={{ padding: "12px 18px", fontWeight: 700, color: "#8A8FA8", fontSize: 11, textTransform: "uppercase" }}>Grade</th>
                   <th className="hide-mobile" style={{ padding: "12px 18px", fontWeight: 700, color: "#8A8FA8", fontSize: 11, textTransform: "uppercase" }}>Stream</th>
                   <th style={{ padding: "12px 18px", fontWeight: 700, color: "#8A8FA8", fontSize: 11, textTransform: "uppercase" }}>Status</th>

@@ -96,7 +96,12 @@ const Attendance = ({ schoolConfig, userEmail }) => {
       .sort((a, b) => (a.first_name || '').localeCompare(b.first_name || '')),
     [students, selectedStream]
   );
-  const classStreams = useMemo(() => dbStreams.filter(s => s.level_id === selectedClass), [dbStreams, selectedClass]);
+  // Streams are school-wide (no grade column); a stream belongs to this class
+  // only if one of its students is actually assigned to it.
+  const classStreams = useMemo(() => {
+    const ids = new Set(students.map(s => s.stream_id).filter(Boolean));
+    return dbStreams.filter(s => ids.has(s.id));
+  }, [dbStreams, students]);
 
   const setStatus = (studentId, status) => setDayRecords(prev => ({ ...prev, [studentId]: status }));
   const markAll = (status) => {
