@@ -19,6 +19,7 @@ import Reports from '../pages/Reports';
 import Marksheets from '../pages/Marksheets';
 import Analysis from '../pages/Analysis';
 import SchoolReports from '../pages/SchoolReports';
+import ReportComments from '../pages/ReportComments';
 import Attendance from '../pages/Attendance';
 import TeacherAllocations from '../pages/TeacherAllocations';
 import Fees from '../pages/Fees';
@@ -79,6 +80,7 @@ export const MODULES = {
           { id: 'attendance', label: 'Attendance', icon: '📅', component: Attendance, roles: ['admin', 'teacher'] },
           { id: 'subjects', label: 'Subjects', icon: '📖', component: Settings, tab: 'subjects' },
           { id: 'grading', label: 'Grading System', icon: '📈', component: Settings, tab: 'grading' },
+          { id: 'report-comments', label: 'Report Comments', icon: '💬', component: ReportComments },
           { id: 'teacher-allocations', label: 'Teacher Allocations', icon: '🧑‍🏫', component: TeacherAllocations },
         ],
       },

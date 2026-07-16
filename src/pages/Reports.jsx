@@ -4,6 +4,7 @@ import { getStudentPhotoUrl } from '../lib/imageProcessing';
 import { getClassesByType, defaultGradesFor } from '../data/mockData';
 import { LEVELS, GRADE_CODE_TO_NAME, GRADE_NAME_TO_CODE, gradesByLevelForSchool } from '../lib/schoolLevels';
 import { applyAggregationPolicy } from '../lib/aggregation';
+import { resolveComment, renderCommentTokens } from '../lib/reportComments';
 
 // The academic level ("Senior Secondary") a class id ("f3") belongs to — the
 // grading system stores its scales against the level name and/or the class.
@@ -20,6 +21,7 @@ const Reports = ({ schoolConfig, examsList }) => {
   const [dbSubjects, setDbSubjects] = useState([]);
   const [dbGrades, setDbGrades] = useState([]);
   const [aggPolicy, setAggPolicy] = useState(null); // totalling policy row; null = count all
+  const [dbComments, setDbComments] = useState([]); // report_comments rows (general + overrides)
   const [dbStreams, setDbStreams] = useState([]);
   const [allMarks, setAllMarks] = useState([]); // marks for ALL students in grade
   const [schoolInfo, setSchoolInfo] = useState(null);
@@ -117,6 +119,7 @@ const Reports = ({ schoolConfig, examsList }) => {
     if (schoolConfig?.id) {
       fetchStudents();
       fetchAggPolicy();
+      fetchComments();
     }
   }, [schoolConfig?.id, selectedClass]);
 
@@ -154,6 +157,15 @@ const Reports = ({ schoolConfig, examsList }) => {
       .eq('level_category', selectedClass)
       .maybeSingle();
     setAggPolicy(data || null);
+  };
+
+  // General comments (class teacher / principal) for report cards.
+  const fetchComments = async () => {
+    const { data } = await supabase
+      .from('report_comments')
+      .select('*')
+      .eq('school_id', schoolConfig.id);
+    setDbComments(data || []);
   };
 
   const fetchStreams = async () => {
@@ -275,6 +287,38 @@ const Reports = ({ schoolConfig, examsList }) => {
     return { total, average, belowMinimum };
   }, [aggPolicy]);
 
+  // Role-specific general comments. A class-specific comment set beats the
+  // general ('All') set; the student's id picks a wording variation stably;
+  // tokens are filled from the student's actual results. Falls back to the
+  // grading band's description (teacher) / blank (principal) when unset.
+  const buildRemarks = useCallback((student, rows, { average, belowMinimum }) => {
+    if (belowMinimum) {
+      return {
+        teacherRemark: `Sat fewer than the minimum ${aggPolicy?.min_subjects} subjects required for grading.`,
+        principalRemark: '',
+      };
+    }
+    const overallGrade = getGrade(average);
+    const sat = rows.filter(r => r.score > 0);
+    const best = sat.length ? sat.reduce((a, b) => (b.score > a.score ? b : a)).sub.name : null;
+    const weak = sat.length ? sat.reduce((a, b) => (b.score < a.score ? b : a)).sub.name : null;
+    const tokens = {
+      name: (student.first_name || '').trim().split(' ')[0] || 'The student',
+      grade: overallGrade.grade,
+      mean: average,
+      best,
+      weak,
+    };
+    const args = { band: overallGrade.grade, classCode: selectedClass, studentId: student.id };
+    const ct = resolveComment(dbComments, { role: 'class_teacher', ...args });
+    const pr = resolveComment(dbComments, { role: 'principal', ...args });
+    return {
+      teacherRemark: ct ? renderCommentTokens(ct, tokens) : gradeComment(overallGrade),
+      principalRemark: pr ? renderCommentTokens(pr, tokens) : '',
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbComments, selectedClass, getGrade, aggPolicy]);
+
   // Class + stream positions for every student in the class. Ranked by overall
   // total (policy-aware, so it uses the counted subjects). Below-minimum
   // students are excluded from ranking but still counted in the "out of" total.
@@ -316,9 +360,8 @@ const Reports = ({ schoolConfig, examsList }) => {
     const rows = reportRowsFor(student);
     const { total, average, belowMinimum } = computeOverall(rows);
     const overallGrade = getGrade(average);
-    const remark = belowMinimum
-      ? `Sat fewer than the minimum ${aggPolicy?.min_subjects} subjects required for grading.`
-      : gradeComment(overallGrade);
+    const { teacherRemark, principalRemark } = buildRemarks(student, rows, { average, belowMinimum });
+    const remark = teacherRemark;
     const className = currentTypeClasses.find(c => c.id === student.level_id)?.name || student.level_id;
     const streamName = dbStreams.find(s => s.id === student.stream_id)?.name || '—';
     const classPosition = posText(rankings.classPos[student.id], rankings.classSize);
@@ -447,10 +490,10 @@ const Reports = ({ schoolConfig, examsList }) => {
           </div>
         </div>
 
-        {/* Principal's remarks — left blank for the principal to complete. */}
+        {/* Principal's remarks — from the configured comment set (blank if unset). */}
         <div style={{ border: '1px solid #000', padding: '10px', marginBottom: 20 }}>
           <div style={{ fontWeight: 700, marginBottom: 5 }}>PRINCIPAL'S REMARKS:</div>
-          <div style={{ minHeight: 34, background: '#F9F9F9' }}>&nbsp;</div>
+          <div style={{ minHeight: 34, background: '#F9F9F9' }}>{principalRemark || ' '}</div>
           <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
             <span>Name/Sign: <u style={{ display: 'inline-block', minWidth: 160 }}>&nbsp;</u></span>
             <span>Date: <u style={{ display: 'inline-block', minWidth: 90 }}>&nbsp;</u></span>
@@ -499,9 +542,8 @@ const Reports = ({ schoolConfig, examsList }) => {
       const rows = reportRowsFor(student);
       const { total, average, belowMinimum } = computeOverall(rows);
       const overallGrade = getGrade(average);
-      const remark = belowMinimum
-        ? `Sat fewer than the minimum ${aggPolicy?.min_subjects} subjects required for grading.`
-        : gradeComment(overallGrade);
+      const { teacherRemark, principalRemark } = buildRemarks(student, rows, { average, belowMinimum });
+      const remark = teacherRemark;
       const className = currentTypeClasses.find(c => c.id === student.level_id)?.name || '';
       const streamName = dbStreams.find(s => s.id === student.stream_id)?.name || '—';
       const classPosition = posText(rankings.classPos[student.id], rankings.classSize);
@@ -583,7 +625,7 @@ const Reports = ({ schoolConfig, examsList }) => {
         </div>
         <div class="remarks">
           <b>PRINCIPAL'S REMARKS:</b>
-          <div style="min-height:34px;background:#F9F9F9">&nbsp;</div>
+          <div style="min-height:34px;background:#F9F9F9">${principalRemark || '&nbsp;'}</div>
           <div class="rem-sign"><span>Name/Sign: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span><span>Date: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span></div>
         </div>
       </div>`);
