@@ -94,6 +94,182 @@ export const SUBJECTS_BY_LEVEL = {
   ],
 };
 
+// ---------------------------------------------------------------------------
+// Built-in grading defaults for every newly registered school (captured from
+// the reference configuration on 2026-07-15). A school sees these until it
+// saves its own grading system, which then takes precedence.
+//   - Form 3 / Form 4      → DEFAULT_FORM_GRADES (A–E 12-point scale)
+//   - PP1 through Grade 12 → DEFAULT_CBC_GRADES  (competency EE/ME/AE scale)
+// Rows use the grading_systems DB shape (grade / description / min_score /
+// max_score / points) plus display colors for badges.
+// ---------------------------------------------------------------------------
+export const DEFAULT_FORM_GRADES = [
+  { grade: "A",  description: "EXCELLENT",             min_score: 80, max_score: 100, points: 12, color: "#1B6B3A", bg: "#E8F5EE" },
+  { grade: "A-", description: "EXCELLENT",             min_score: 75, max_score: 79,  points: 11, color: "#1B6B3A", bg: "#E8F5EE" },
+  { grade: "B+", description: "VERY GOOD",             min_score: 70, max_score: 74,  points: 10, color: "#1A5F9C", bg: "#EBF3FB" },
+  { grade: "B",  description: "GOOD",                  min_score: 65, max_score: 69,  points: 9,  color: "#1A5F9C", bg: "#EBF3FB" },
+  { grade: "B-", description: "GOOD",                  min_score: 60, max_score: 64,  points: 8,  color: "#1A5F9C", bg: "#EBF3FB" },
+  { grade: "C+", description: "AVERAGE STUDENT",       min_score: 50, max_score: 59,  points: 7,  color: "#D35400", bg: "#FEF0E6" },
+  { grade: "C",  description: "CAN DO BETTER",         min_score: 40, max_score: 49,  points: 6,  color: "#D35400", bg: "#FEF0E6" },
+  { grade: "C-", description: "CAN DO BETTER",         min_score: 30, max_score: 39,  points: 5,  color: "#D35400", bg: "#FEF0E6" },
+  { grade: "D+", description: "POOR PERFORMANCE",      min_score: 25, max_score: 29,  points: 4,  color: "#C0392B", bg: "#FDEDEC" },
+  { grade: "D",  description: "POOR PERFORMANCE",      min_score: 20, max_score: 24,  points: 3,  color: "#C0392B", bg: "#FDEDEC" },
+  { grade: "D-", description: "VERY POOR PERFORMANCE", min_score: 15, max_score: 19,  points: 2,  color: "#C0392B", bg: "#FDEDEC" },
+  { grade: "E",  description: "FAILED",                min_score: 0,  max_score: 14,  points: 1,  color: "#C0392B", bg: "#FDEDEC" },
+];
+
+export const DEFAULT_CBC_GRADES = [
+  { grade: "EE 1", description: "EXCEEDING EXPECTATIONS 1",  min_score: 80, max_score: 100, points: 12, color: "#1B6B3A", bg: "#E8F5EE" },
+  { grade: "EE2",  description: "EXCEEDING EXPECTATION II",  min_score: 70, max_score: 79,  points: 11, color: "#1B6B3A", bg: "#E8F5EE" },
+  { grade: "ME 1", description: "MEETING EXPECTATION I",     min_score: 60, max_score: 69,  points: 10, color: "#1A5F9C", bg: "#EBF3FB" },
+  { grade: "ME 2", description: "MEETING EXPECTATION II",    min_score: 50, max_score: 59,  points: 9,  color: "#1A5F9C", bg: "#EBF3FB" },
+  { grade: "AE",   description: "APPROACHING EXPECTATION",   min_score: 40, max_score: 49,  points: 8,  color: "#D35400", bg: "#FEF0E6" },
+  { grade: "BE",   description: "BELOW EXPECTATION",         min_score: 0,  max_score: 39,  points: 7,  color: "#C0392B", bg: "#FDEDEC" },
+];
+
+// Which built-in default applies to a given grade/class. Accepts either the
+// display name ("Form 3", "Grade 10") or the class code ("f3", "g10").
+export const defaultGradesFor = (gradeNameOrCode) =>
+  /^(form\s|f\d)/i.test(String(gradeNameOrCode || "")) ? DEFAULT_FORM_GRADES : DEFAULT_CBC_GRADES;
+
+// ---------------------------------------------------------------------------
+// Built-in default subjects per grade (Kenya). CBC lists follow the KICD 2024
+// rationalized learning areas; senior school follows the 2026 pathway
+// structure; Form 3/4 use official KNEC KCSE subject codes. Loaded into a
+// school's account via "Load Default Subjects" — the school can then edit
+// freely. Types match the Subjects page: Core/Optional below senior level,
+// Compulsory/Elective for Senior Secondary (Grade 10–12, Form 3–4).
+// ---------------------------------------------------------------------------
+const CBC_PP_SUBJECTS = [
+  { code: "LA",  name: "Language Activities",            type: "Core" },
+  { code: "MA",  name: "Mathematical Activities",        type: "Core" },
+  { code: "EA",  name: "Environmental Activities",       type: "Core" },
+  { code: "CA",  name: "Creative Activities",            type: "Core" },
+  { code: "REA", name: "Religious Education Activities", type: "Core" },
+];
+
+const CBC_LOWER_PRIMARY_SUBJECTS = [
+  { code: "ENG", name: "English Language Activities",    type: "Core" },
+  { code: "KIS", name: "Kiswahili Language Activities",  type: "Core" },
+  { code: "IL",  name: "Indigenous Language Activities", type: "Core" },
+  { code: "MA",  name: "Mathematical Activities",        type: "Core" },
+  { code: "EA",  name: "Environmental Activities",       type: "Core" },
+  { code: "CA",  name: "Creative Activities",            type: "Core" },
+  { code: "REA", name: "Religious Education Activities", type: "Core" },
+];
+
+const CBC_UPPER_PRIMARY_SUBJECTS = [
+  { code: "ENG", name: "English",                 type: "Core" },
+  { code: "KIS", name: "Kiswahili",               type: "Core" },
+  { code: "MAT", name: "Mathematics",             type: "Core" },
+  { code: "RE",  name: "Religious Education",     type: "Core" },
+  { code: "SCT", name: "Science & Technology",    type: "Core" },
+  { code: "SST", name: "Social Studies",          type: "Core" },
+  { code: "AGN", name: "Agriculture & Nutrition", type: "Core" },
+  { code: "CRA", name: "Creative Arts",           type: "Core" },
+];
+
+const CBC_JSS_SUBJECTS = [
+  { code: "ENG", name: "English",                 type: "Core" },
+  { code: "KIS", name: "Kiswahili",               type: "Core" },
+  { code: "MAT", name: "Mathematics",             type: "Core" },
+  { code: "RE",  name: "Religious Education",     type: "Core" },
+  { code: "SST", name: "Social Studies",          type: "Core" },
+  { code: "ISC", name: "Integrated Science",      type: "Core" },
+  { code: "PTS", name: "Pre-Technical Studies",   type: "Core" },
+  { code: "AGN", name: "Agriculture & Nutrition", type: "Core" },
+  { code: "CAS", name: "Creative Arts & Sports",  type: "Core" },
+];
+
+const CBC_SENIOR_SUBJECTS = [
+  // Compulsory core (PE is compulsory but assessed internally)
+  { code: "ENG", name: "English",                    type: "Compulsory" },
+  { code: "KIS", name: "Kiswahili",                  type: "Compulsory" },
+  { code: "MAT", name: "Mathematics",                type: "Compulsory" },
+  { code: "CSL", name: "Community Service Learning", type: "Compulsory" },
+  { code: "PE",  name: "Physical Education",         type: "Compulsory" },
+  // STEM pathway electives
+  { code: "BIO", name: "Biology",                type: "Elective" },
+  { code: "CHE", name: "Chemistry",              type: "Elective" },
+  { code: "PHY", name: "Physics",                type: "Elective" },
+  { code: "GSC", name: "General Science",        type: "Elective" },
+  { code: "CSC", name: "Computer Science",       type: "Elective" },
+  { code: "AGR", name: "Agriculture",            type: "Elective" },
+  { code: "HSC", name: "Home Science",           type: "Elective" },
+  // Social Sciences pathway electives
+  { code: "HCT", name: "History & Citizenship",       type: "Elective" },
+  { code: "GEO", name: "Geography",                   type: "Elective" },
+  { code: "CRE", name: "Christian Religious Education", type: "Elective" },
+  { code: "IRE", name: "Islamic Religious Education",   type: "Elective" },
+  { code: "BST", name: "Business Studies",            type: "Elective" },
+  { code: "LIT", name: "Literature in English",       type: "Elective" },
+  { code: "FAS", name: "Fasihi ya Kiswahili",         type: "Elective" },
+  { code: "FRE", name: "French",                      type: "Elective" },
+  { code: "GER", name: "German",                      type: "Elective" },
+  { code: "ARB", name: "Arabic",                      type: "Elective" },
+  // Arts & Sports Science pathway electives
+  { code: "FA",  name: "Fine Arts",            type: "Elective" },
+  { code: "MUS", name: "Music & Dance",        type: "Elective" },
+  { code: "TF",  name: "Theatre & Film",       type: "Elective" },
+  { code: "SRS", name: "Sports & Recreation",  type: "Elective" },
+];
+
+const FORM_844_SUBJECTS = [
+  // Group 1 — compulsory (KNEC codes)
+  { code: "101", name: "English",     type: "Compulsory", subject_group: 1 },
+  { code: "102", name: "Kiswahili",   type: "Compulsory", subject_group: 1 },
+  { code: "121", name: "Mathematics", type: "Compulsory", subject_group: 1 },
+  // Group 2 — sciences
+  { code: "231", name: "Biology",   type: "Elective", subject_group: 2 },
+  { code: "232", name: "Physics",   type: "Elective", subject_group: 2 },
+  { code: "233", name: "Chemistry", type: "Elective", subject_group: 2 },
+  // Group 3 — humanities
+  { code: "311", name: "History & Government",          type: "Elective", subject_group: 3 },
+  { code: "312", name: "Geography",                     type: "Elective", subject_group: 3 },
+  { code: "313", name: "Christian Religious Education", type: "Elective", subject_group: 3 },
+  { code: "314", name: "Islamic Religious Education",   type: "Elective", subject_group: 3 },
+  // Group 4 — technical & applied
+  { code: "441", name: "Home Science",     type: "Elective", subject_group: 4 },
+  { code: "443", name: "Agriculture",      type: "Elective", subject_group: 4 },
+  { code: "451", name: "Computer Studies", type: "Elective", subject_group: 4 },
+  // Group 5 — business & languages
+  { code: "565", name: "Business Studies", type: "Elective", subject_group: 5 },
+];
+
+// The classic KNEC "best 7" counting rule for 8-4-4 forms: all of Group 1,
+// best 2 sciences, best 1 humanity, then the single best remaining subject.
+export const KNEC_BEST7_RULES = [
+  { group: 1, take: "all" },
+  { group: 2, take: 2 },
+  { group: 3, take: 1 },
+  { remaining: true, take: 1 },
+];
+export const KNEC_BEST7_MIN_SUBJECTS = 7;
+
+export const DEFAULT_SUBJECTS_BY_GRADE = (() => {
+  const map = {};
+  ["pp1", "pp2"].forEach(g => { map[g] = CBC_PP_SUBJECTS; });
+  ["g1", "g2", "g3"].forEach(g => { map[g] = CBC_LOWER_PRIMARY_SUBJECTS; });
+  ["g4", "g5", "g6"].forEach(g => { map[g] = CBC_UPPER_PRIMARY_SUBJECTS; });
+  ["g7", "g8", "g9"].forEach(g => { map[g] = CBC_JSS_SUBJECTS; });
+  ["g10", "g11", "g12"].forEach(g => { map[g] = CBC_SENIOR_SUBJECTS; });
+  ["f3", "f4"].forEach(g => { map[g] = FORM_844_SUBJECTS; });
+  return map;
+})();
+
+// Accepts a class code ("f3", "g10") or display name ("Form 3", "Grade 10").
+export const defaultSubjectsFor = (gradeNameOrCode) => {
+  const raw = String(gradeNameOrCode || "").trim();
+  if (DEFAULT_SUBJECTS_BY_GRADE[raw.toLowerCase()]) return DEFAULT_SUBJECTS_BY_GRADE[raw.toLowerCase()];
+  const nameToCode = {
+    "PP1": "pp1", "PP2": "pp2",
+    "Grade 1": "g1", "Grade 2": "g2", "Grade 3": "g3", "Grade 4": "g4", "Grade 5": "g5", "Grade 6": "g6",
+    "Grade 7": "g7", "Grade 8": "g8", "Grade 9": "g9",
+    "Grade 10": "g10", "Grade 11": "g11", "Grade 12": "g12", "Form 3": "f3", "Form 4": "f4"
+  };
+  return DEFAULT_SUBJECTS_BY_GRADE[nameToCode[raw]] || [];
+};
+
 export const COMPETENCY_GRADES = [
   { code: "EE1", label: "Exceeding Expectations (Distinction)", min: 90, color: "#1B6B3A", bg: "#E8F5EE" },
   { code: "EE2", label: "Exceeding Expectations (Credit)", min: 80, color: "#1B6B3A", bg: "#E8F5EE" },

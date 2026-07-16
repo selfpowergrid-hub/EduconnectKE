@@ -374,7 +374,7 @@ function App() {
           style={{
             flex: 1,
             overflowY: "auto",
-            padding: focusMode ? "12px 16px" : "32px 40px",
+            padding: focusMode ? "12px 16px" : "18px 40px 32px",
             scrollBehavior: "smooth",
             background: "#f5f2eb",
             fontFamily: "'Inter', sans-serif"

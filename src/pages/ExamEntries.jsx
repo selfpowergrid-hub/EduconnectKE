@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { LEVELS, GRADE_NAME_TO_CODE, GRADE_CODE_TO_NAME, gradesByLevelForSchool } from '../lib/schoolLevels';
+import { defaultGradesFor } from '../data/mockData';
 
 const levelToSubjectKey = {
   "Pre-Primary": "ecde",
@@ -48,7 +49,8 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [studentSearch, setStudentSearch] = useState("");
   const [studentViewMarks, setStudentViewMarks] = useState({}); // { subjectId: { examId: score } }
-  const [svHasUnsaved, setSvHasUnsaved] = useState(false);
+  // Both views share one "unsaved" flag (hasUnsavedChanges) and one draft
+  // namespace (marks_draft_*) so edits in either view stay in sync.
 
   const activeColor = "#D4AF37";
   const labelStyle = { display: "block", fontSize: 10, fontWeight: 800, color: "#2a2421", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" };
@@ -91,14 +93,14 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
 
   useEffect(() => {
     const handleBeforeUnload = (e) => {
-      if (hasUnsavedChanges || svHasUnsaved) {
+      if (hasUnsavedChanges) {
         e.preventDefault();
         e.returnValue = '';
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [hasUnsavedChanges, svHasUnsaved]);
+  }, [hasUnsavedChanges]);
 
   const checkAllDrafts = () => {
     if (!schoolConfig?.id) return;
@@ -111,6 +113,146 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
     checkAllDrafts();
   }, [schoolConfig?.id, hasUnsavedChanges]);
 
+  // One-time migration: Student View used to store drafts under its own
+  // sv_draft_{school}_{grade}_{term}_{studentId} = { subjectId: { examId } }
+  // namespace. Fold any leftovers into the shared per-subject marks_draft_
+  // keys so previously-typed marks aren't lost after the unification.
+  useEffect(() => {
+    if (!schoolConfig?.id) return;
+    const svPrefix = `sv_draft_${schoolConfig.id}_`;
+    const oldKeys = Object.keys(localStorage).filter(k => k.startsWith(svPrefix));
+    if (oldKeys.length === 0) return;
+    oldKeys.forEach(oldKey => {
+      try {
+        const rest = oldKey.slice(svPrefix.length).split('_'); // [grade, term, studentId]
+        const studentId = rest[rest.length - 1];
+        const grade = rest[0], term = rest[1];
+        const bySubject = JSON.parse(localStorage.getItem(oldKey) || '{}');
+        Object.keys(bySubject).forEach(subjectId => {
+          const newKey = `marks_draft_${schoolConfig.id}_${grade}_${term}_${subjectId}`;
+          let merged = {};
+          try { merged = JSON.parse(localStorage.getItem(newKey) || '{}'); } catch { merged = {}; }
+          merged[studentId] = { ...(merged[studentId] || {}), ...bySubject[subjectId] };
+          localStorage.setItem(newKey, JSON.stringify(merged));
+        });
+      } catch (e) { console.error('sv_draft migration failed for', oldKey, e); }
+      localStorage.removeItem(oldKey);
+    });
+    setHasUnsavedChanges(true);
+    checkAllDrafts();
+  }, [schoolConfig?.id]);
+
+  // --- Cloud sync of ALL drafted classes -----------------------------------
+  // Drafts live in localStorage keyed marks_draft_{school}_{grade}_{term}_{subjectId}
+  // (grade/term names never contain underscores), so every drafted class can
+  // be synced from here without navigating to it. Runs silently when the
+  // connection is available, or with feedback when the banner is clicked.
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
+
+  const syncAllDrafts = async (silent = false) => {
+    if (!schoolConfig?.id || isSyncingAll) return;
+    const prefix = `marks_draft_${schoolConfig.id}_`;
+    const draftKeys = Object.keys(localStorage).filter(k => k.startsWith(prefix));
+    if (draftKeys.length === 0) return;
+    if (!navigator.onLine) {
+      if (!silent) alert('No internet connection — drafts stay saved on this device and will sync automatically when you are back online.');
+      return;
+    }
+
+    setIsSyncingAll(true);
+    let synced = 0;
+    const failures = [];
+    try {
+      for (const key of draftKeys) {
+        try {
+          const [gradeName, termName, subjectId] = key.slice(prefix.length).split('_');
+          const gid = getGradeId(gradeName);
+          const draft = JSON.parse(localStorage.getItem(key) || '{}');
+
+          const records = [];
+          Object.keys(draft).forEach(studentId => {
+            Object.keys(draft[studentId] || {}).forEach(examId => {
+              const score = draft[studentId][examId];
+              if (score === '' || score === null || score === undefined) return;
+              const exam = examsList.find(e => e.id === examId);
+              records.push({
+                student_id: studentId,
+                exam_id: examId,
+                score,
+                subject_id: subjectId || null,
+                level_id: gid,
+                term: exam?.term || termName,
+                year: exam?.year || new Date().getFullYear()
+              });
+            });
+          });
+
+          if (records.length > 0) {
+            const { error } = await supabase
+              .from('marks')
+              .upsert(records, { onConflict: 'exam_id,student_id,subject_id,level_id,term,year' });
+            if (error) throw error;
+          }
+
+          localStorage.removeItem(key);
+          synced++;
+
+          // If the class currently open was among the synced drafts, its
+          // pending-changes flag is now stale.
+          const currentSubject = currentSubjectRow();
+          if (gradeName === entryGrade && termName === entryTerm && currentSubject?.id === subjectId) {
+            setHasUnsavedChanges(false);
+          }
+        } catch (err) {
+          failures.push(err.message);
+        }
+      }
+    } finally {
+      setIsSyncingAll(false);
+      // If every draft was pushed, both views are fully in sync with the cloud.
+      const remaining = Object.keys(localStorage).filter(k => k.startsWith(prefix));
+      if (remaining.length === 0) setHasUnsavedChanges(false);
+      checkAllDrafts();
+    }
+
+    if (!silent) {
+      if (failures.length === 0) {
+        alert(`✓ ${synced} class${synced === 1 ? '' : 'es'} synced to the cloud successfully.`);
+      } else {
+        alert(`Synced ${synced} class${synced === 1 ? '' : 'es'}; ${failures.length} failed: ${failures[0]}`);
+      }
+    }
+  };
+
+  // Keep a ref so the listeners below always call the latest version.
+  const syncAllDraftsRef = useRef(syncAllDrafts);
+  syncAllDraftsRef.current = syncAllDrafts;
+
+  // Auto-sync silently: shortly after edits pause, when the connection comes
+  // back, and once on page load — so with good internet, data flows to the
+  // cloud on its own and the banner clears itself.
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const t = setTimeout(() => {
+      if (navigator.onLine) syncAllDraftsRef.current(true);
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [hasUnsavedChanges, marksData, studentViewMarks]);
+
+  useEffect(() => {
+    const onOnline = () => syncAllDraftsRef.current(true);
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, []);
+
+  useEffect(() => {
+    if (!schoolConfig?.id) return;
+    const t = setTimeout(() => {
+      if (navigator.onLine) syncAllDraftsRef.current(true);
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [schoolConfig?.id]);
+
   const fetchStudents = async () => {
     const gid = getGradeId(entryGrade);
     let query = supabase.from('students').select('*').eq('school_id', schoolConfig.id).eq('level_id', gid);
@@ -121,10 +263,19 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
     setStudents(data || []);
   };
 
+  // Resolve the selected subject WITHIN the selected grade. Several grades
+  // share subject names (e.g. MATHEMATICS exists in Form 3 AND Grade 4), so a
+  // name-only lookup can return another grade's subject id and silently
+  // read/write the wrong marks rows.
+  const currentSubjectRow = () => {
+    const gid = getGradeId(entryGrade);
+    return dbSubjects.find(s => s.level_category === gid && s.name === entrySubject);
+  };
+
   const fetchMarks = async () => {
     if (!entryExams.length || !entrySubject) return;
-    
-    const subject = dbSubjects.find(s => s.name === entrySubject);
+
+    const subject = currentSubjectRow();
     if (!subject) return;
 
     const { data } = await supabase
@@ -149,13 +300,14 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
             if (!formatted[studentId]) formatted[studentId] = {};
             formatted[studentId] = { ...formatted[studentId], ...parsedDraft[studentId] };
           });
-          setHasUnsavedChanges(true);
         } catch(e) {
           console.error("Failed to parse draft marks", e);
         }
-      } else {
-        setHasUnsavedChanges(false);
       }
+      // Reflect the GLOBAL draft state (any subject/either view), not just this
+      // subject's, so the "unsaved" flag agrees with the banner count.
+      const anyDrafts = Object.keys(localStorage).some(k => k.startsWith(`marks_draft_${schoolConfig.id}_`));
+      setHasUnsavedChanges(anyDrafts);
     }
 
     setMarksData(formatted);
@@ -237,7 +389,7 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
         }
       };
       
-      const subject = dbSubjects.find(s => s.name === entrySubject);
+      const subject = currentSubjectRow();
       if (schoolConfig?.id && subject) {
         const cacheKey = `marks_draft_${schoolConfig.id}_${entryGrade}_${entryTerm}_${subject.id}`;
         localStorage.setItem(cacheKey, JSON.stringify(next));
@@ -252,6 +404,7 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
     setIsLoading(true);
     try {
       const gid = getGradeId(entryGrade);
+      const subjectRow = currentSubjectRow();
 
       const records = [];
       Object.keys(marksData).forEach(studentId => {
@@ -261,7 +414,7 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
             student_id: studentId,
             exam_id: examId,
             score: marksData[studentId][examId],
-            subject_id: dbSubjects.find(s => s.name === entrySubject)?.id || null,
+            subject_id: subjectRow?.id || null,
             level_id: gid,
             term: exam?.term || entryTerm,
             year: exam?.year || new Date().getFullYear()
@@ -278,7 +431,7 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
       if (error) throw error;
       
       // Clear draft
-      const subject = dbSubjects.find(s => s.name === entrySubject);
+      const subject = currentSubjectRow();
       if (schoolConfig?.id && subject) {
         const cacheKey = `marks_draft_${schoolConfig.id}_${entryGrade}_${entryTerm}_${subject.id}`;
         localStorage.removeItem(cacheKey);
@@ -303,12 +456,8 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
     }
 
     if (scale.length === 0) {
-      scale = [
-        { grade: "EE", min_score: 80, color: "#1B6B3A", bg: "#ebf5ee" },
-        { grade: "ME", min_score: 50, color: "#2a2421", bg: "#f5f2eb" },
-        { grade: "AE", min_score: 30, color: "#D35400", bg: "#FEF0E6" },
-        { grade: "BE", min_score: 0, color: "#C0392B", bg: "#FCE8E8" },
-      ];
+      // Built-in defaults: Form 3/4 → A–E scale, everything else → competency.
+      scale = defaultGradesFor(entryGrade);
     }
     
     const sorted = [...scale].sort((a, b) => b.min_score - a.min_score);
@@ -348,22 +497,23 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
       formatted[m.subject_id][m.exam_id] = m.score;
     });
 
-    // Load draft
+    // Overlay unsaved edits from the SHARED per-subject draft keys (the same
+    // ones Class View writes), so a mark typed in either view shows here.
     if (schoolConfig?.id) {
-      const cacheKey = `sv_draft_${schoolConfig.id}_${entryGrade}_${entryTerm}_${student.id}`;
-      const draft = localStorage.getItem(cacheKey);
-      if (draft) {
+      let anyDraft = false;
+      svSubjects.forEach(sub => {
+        const cacheKey = `marks_draft_${schoolConfig.id}_${entryGrade}_${entryTerm}_${sub.id}`;
+        const draft = localStorage.getItem(cacheKey);
+        if (!draft) return;
         try {
-          const parsed = JSON.parse(draft);
-          Object.keys(parsed).forEach(subId => {
-            if (!formatted[subId]) formatted[subId] = {};
-            formatted[subId] = { ...formatted[subId], ...parsed[subId] };
-          });
-          setSvHasUnsaved(true);
+          const forStudent = JSON.parse(draft)[student.id];
+          if (forStudent && Object.keys(forStudent).length) {
+            formatted[sub.id] = { ...(formatted[sub.id] || {}), ...forStudent };
+            anyDraft = true;
+          }
         } catch (e) { console.error(e); }
-      } else {
-        setSvHasUnsaved(false);
-      }
+      });
+      if (anyDraft) setHasUnsavedChanges(true);
     }
     setStudentViewMarks(formatted);
   };
@@ -375,57 +525,28 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
   }, [selectedStudent, entryExams, svSubjects, viewMode]);
 
   const handleSvScoreChange = (subjectId, examId, value) => {
-    const val = parseInt(value) || 0;
-    setStudentViewMarks(prev => {
-      const next = {
-        ...prev,
-        [subjectId]: { ...(prev[subjectId] || {}), [examId]: val }
-      };
-      if (schoolConfig?.id && selectedStudent) {
-        const cacheKey = `sv_draft_${schoolConfig.id}_${entryGrade}_${entryTerm}_${selectedStudent.id}`;
-        localStorage.setItem(cacheKey, JSON.stringify(next));
-      }
-      return next;
-    });
-    setSvHasUnsaved(true);
-  };
+    const exam = examsList.find(e => e.id === examId);
+    const maxAllowed = exam?.total_marks || 100;
+    let val = parseInt(value) || 0;
+    if (val > maxAllowed) val = maxAllowed;
+    if (val < 0) val = 0;
 
-  const handleSvSave = async () => {
-    setIsLoading(true);
-    try {
-      const gid = getGradeId(entryGrade);
-      const records = [];
-      Object.keys(studentViewMarks).forEach(subjectId => {
-        Object.keys(studentViewMarks[subjectId]).forEach(examId => {
-          const exam = examsList.find(e => e.id === examId);
-          records.push({
-            student_id: selectedStudent.id,
-            exam_id: examId,
-            score: studentViewMarks[subjectId][examId],
-            subject_id: subjectId,
-            level_id: gid,
-            term: exam?.term || entryTerm,
-            year: exam?.year || new Date().getFullYear()
-          });
-        });
-      });
-      if (records.length === 0) return;
-      const { error } = await supabase
-        .from('marks')
-        .upsert(records, { onConflict: 'exam_id,student_id,subject_id,level_id,term,year' });
-      if (error) throw error;
-      if (schoolConfig?.id && selectedStudent) {
-        const cacheKey = `sv_draft_${schoolConfig.id}_${entryGrade}_${entryTerm}_${selectedStudent.id}`;
-        localStorage.removeItem(cacheKey);
-      }
-      setSvHasUnsaved(false);
-      checkAllDrafts();
-      alert('Marks saved successfully!');
-    } catch (err) {
-      alert('Failed to save marks: ' + err.message);
-    } finally {
-      setIsLoading(false);
+    setStudentViewMarks(prev => ({
+      ...prev,
+      [subjectId]: { ...(prev[subjectId] || {}), [examId]: val }
+    }));
+
+    // Persist into the SHARED per-subject draft key (identical shape to Class
+    // View: { studentId: { examId: score } }), merging this student's entry so
+    // other students' drafts in the same subject are preserved.
+    if (schoolConfig?.id && selectedStudent) {
+      const cacheKey = `marks_draft_${schoolConfig.id}_${entryGrade}_${entryTerm}_${subjectId}`;
+      let existing = {};
+      try { existing = JSON.parse(localStorage.getItem(cacheKey) || '{}'); } catch { existing = {}; }
+      existing[selectedStudent.id] = { ...(existing[selectedStudent.id] || {}), [examId]: val };
+      localStorage.setItem(cacheKey, JSON.stringify(existing));
     }
+    setHasUnsavedChanges(true);
   };
 
   const navigateGrid = (e, studentIdx, examIdx, totalStudents, totalExams) => {
@@ -449,23 +570,44 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
     <div style={{ paddingBottom: 40 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {totalDrafts > 0 && (
-          <div style={{ 
-            background: "#FFF4E5", 
-            border: "1px solid #FFB020", 
-            padding: "10px 16px", 
-            borderRadius: 8, 
-            display: "flex", 
-            alignItems: "center", 
-            justifyContent: "space-between",
-            boxShadow: "0 2px 4px rgba(255,176,32,0.1)"
-          }}>
+          <div
+            onClick={() => syncAllDrafts(false)}
+            role="button"
+            title="Click to sync all drafted classes to the cloud now"
+            style={{
+              background: "#FFF4E5",
+              border: "1px solid #FFB020",
+              padding: "10px 16px",
+              borderRadius: 8,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              boxShadow: "0 2px 4px rgba(255,176,32,0.1)",
+              cursor: isSyncingAll ? "wait" : "pointer"
+            }}
+          >
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: 18 }}>⚠️</span>
+              <span style={{ fontSize: 18 }}>{isSyncingAll ? "⌛" : "⚠️"}</span>
               <span style={{ fontSize: 13, color: "#BF6A02", fontWeight: 700 }}>
-                You have {totalDrafts} unsaved {totalDrafts === 1 ? 'class' : 'classes'} waiting to be synced to the cloud. 
-                <span style={{ fontWeight: 400, marginLeft: 4 }}>Please sync them before closing your session.</span>
+                {isSyncingAll
+                  ? "Syncing your classes to the cloud..."
+                  : <>You have {totalDrafts} unsaved {totalDrafts === 1 ? 'class' : 'classes'} waiting to be synced to the cloud.
+                      <span style={{ fontWeight: 400, marginLeft: 4 }}>Click here to sync {totalDrafts === 1 ? 'it' : 'them'} now.</span></>}
               </span>
             </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); syncAllDrafts(false); }}
+              disabled={isSyncingAll}
+              style={{
+                padding: "7px 16px", borderRadius: 6, border: "none",
+                background: "#D35400", color: "#fff", fontSize: 12, fontWeight: 700,
+                cursor: isSyncingAll ? "wait" : "pointer", whiteSpace: "nowrap",
+                boxShadow: "0 2px 6px rgba(211,84,0,0.3)"
+              }}
+            >
+              {isSyncingAll ? "⌛ Syncing..." : "🔄 Sync Now"}
+            </button>
           </div>
         )}
 
@@ -682,6 +824,10 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
             <tbody>
               {entryStudents.map((s, sIdx) => {
                 const studentMarks = marksData[s.id] || {};
+                const hasAnyMark = entryExams.some(exam => {
+                  const v = studentMarks[exam.id];
+                  return v !== undefined && v !== null && v !== "";
+                });
                 const total = entryExams.reduce((sum, exam) => {
                   const raw = parseInt(studentMarks[exam.id]) || 0;
                   const outOf = exam.total_marks || 100;
@@ -723,8 +869,8 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
                         />
                       </td>
                     ))}
-                    <td style={{ padding: "4px 12px", borderRight: "1px solid #e6dfd8", textAlign: "center", background: "#f5f2eb", fontWeight: 700, color: "#2a2421" }}>{Math.round(total)}%</td>
-                    <td style={{ padding: "4px 12px", textAlign: "center", background: grade.bg, color: grade.color, fontWeight: 700 }}>{grade.code}</td>
+                    <td style={{ padding: "4px 12px", borderRight: "1px solid #e6dfd8", textAlign: "center", background: "#f5f2eb", fontWeight: 700, color: "#2a2421" }}>{hasAnyMark ? `${Math.round(total)}%` : ""}</td>
+                    <td style={{ padding: "4px 12px", textAlign: "center", background: hasAnyMark ? grade.bg : "transparent", color: grade.color, fontWeight: 700 }}>{hasAnyMark ? grade.code : ""}</td>
                   </tr>
                 );
               })}
@@ -766,16 +912,16 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
               <option>Term 1</option><option>Term 2</option><option>Term 3</option>
             </select>
           </div>
-          <button onClick={handleSvSave} disabled={isLoading || !svHasUnsaved}
+          <button onClick={() => syncAllDrafts(false)} disabled={isSyncingAll || !hasUnsavedChanges}
             style={{
-              height: 36, padding: "0 24px", background: svHasUnsaved ? "#D35400" : "#2a2421",
+              height: 36, padding: "0 24px", background: hasUnsavedChanges ? "#D35400" : "#2a2421",
               color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700,
-              cursor: (isLoading || !svHasUnsaved) ? "not-allowed" : "pointer",
-              opacity: (isLoading || !svHasUnsaved) ? 0.7 : 1, transition: "all 0.2s ease",
-              boxShadow: svHasUnsaved ? "0 4px 12px rgba(211,84,0,0.3)" : "none"
+              cursor: (isSyncingAll || !hasUnsavedChanges) ? "not-allowed" : "pointer",
+              opacity: (isSyncingAll || !hasUnsavedChanges) ? 0.7 : 1, transition: "all 0.2s ease",
+              boxShadow: hasUnsavedChanges ? "0 4px 12px rgba(211,84,0,0.3)" : "none"
             }}
           >
-            {isLoading ? "⌛ Saving..." : (svHasUnsaved ? "⚠️ Sync to Cloud" : "✓ All Synced")}
+            {isSyncingAll ? "⌛ Saving..." : (hasUnsavedChanges ? "⚠️ Sync to Cloud" : "✓ All Synced")}
           </button>
         </div>
 
@@ -828,16 +974,30 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
                 {entryExams.map(exam => (
                   <th key={exam.id} style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", textAlign: "center", width: 120 }}>
                     <div style={{ fontSize: 10, color: "#8a8fa8", textTransform: "uppercase" }}>{exam.name}</div>
-                    <div style={{ fontWeight: 700, color: "#2a2421" }}>Marks (%)</div>
+                    <div style={{ fontWeight: 700, color: "#2a2421" }}>Out of {exam.total_marks || 100}</div>
+                    <div style={{ fontSize: 10, color: "#8a8fa8", fontWeight: 600 }}>· weight {exam.weight || 0}%</div>
                   </th>
                 ))}
                 <th style={{ padding: "8px 12px", textAlign: "center", background: "#f5f2eb", width: 100, fontWeight: 700 }}>AVG %</th>
+                <th style={{ padding: "8px 12px", textAlign: "center", width: 90, fontWeight: 700 }}>GRADE</th>
               </tr>
             </thead>
             <tbody>
               {svSubjects.map((sub, sIdx) => {
                 const subMarks = studentViewMarks[sub.id] || {};
-                const total = entryExams.reduce((sum, ex) => sum + (parseInt(subMarks[ex.id]) || 0) * (ex.weight / 100), 0);
+                const hasAnyMark = entryExams.some(ex => {
+                  const v = subMarks[ex.id];
+                  return v !== undefined && v !== null && v !== "";
+                });
+                // Normalize each raw mark by the exam's "out of" before
+                // weighting — same math as Class View.
+                const total = entryExams.reduce((sum, ex) => {
+                  const raw = parseInt(subMarks[ex.id]) || 0;
+                  const outOf = ex.total_marks || 100;
+                  const pct = outOf > 0 ? (raw / outOf) * 100 : 0;
+                  return sum + pct * ((ex.weight || 0) / 100);
+                }, 0);
+                const grade = getGrade(total);
                 return (
                   <tr key={sub.id} style={{ borderBottom: "1px solid #e6dfd8", background: sIdx % 2 === 0 ? "#fff" : "#fafafa" }}>
                     <td className="sticky-col sticky-left-0" style={{ padding: "4px 12px", borderRight: "1px solid #e6dfd8", fontWeight: 600, color: "#2a2421" }}>{sub.name}</td>
@@ -858,12 +1018,13 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
                         />
                       </td>
                     ))}
-                    <td style={{ padding: "4px 12px", textAlign: "center", background: "#f5f2eb", fontWeight: 700 }}>{Math.round(total)}%</td>
+                    <td style={{ padding: "4px 12px", textAlign: "center", background: "#f5f2eb", fontWeight: 700 }}>{hasAnyMark ? `${Math.round(total)}%` : ""}</td>
+                    <td style={{ padding: "4px 12px", textAlign: "center", background: hasAnyMark ? grade.bg : "transparent", color: grade.color, fontWeight: 700 }}>{hasAnyMark ? grade.code : ""}</td>
                   </tr>
                 );
               })}
               {svSubjects.length === 0 && (
-                <tr><td colSpan={entryExams.length + 2} style={{ padding: "40px", textAlign: "center", color: "#8a8fa8" }}>No subjects found for this grade.</td></tr>
+                <tr><td colSpan={entryExams.length + 3} style={{ padding: "40px", textAlign: "center", color: "#8a8fa8" }}>No subjects found for this grade.</td></tr>
               )}
             </tbody>
           </table>

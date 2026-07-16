@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { getStudentPhotoUrl } from '../lib/imageProcessing';
-import { getClassesByType } from '../data/mockData';
-import { LEVELS, GRADE_CODE_TO_NAME } from '../lib/schoolLevels';
+import { getClassesByType, defaultGradesFor } from '../data/mockData';
+import { LEVELS, GRADE_CODE_TO_NAME, GRADE_NAME_TO_CODE, gradesByLevelForSchool } from '../lib/schoolLevels';
+import { applyAggregationPolicy } from '../lib/aggregation';
 
 // The academic level ("Senior Secondary") a class id ("f3") belongs to — the
 // grading system stores its scales against the level name and/or the class.
@@ -18,6 +19,7 @@ const Reports = ({ schoolConfig, examsList }) => {
   const [students, setStudents] = useState([]);
   const [dbSubjects, setDbSubjects] = useState([]);
   const [dbGrades, setDbGrades] = useState([]);
+  const [aggPolicy, setAggPolicy] = useState(null); // totalling policy row; null = count all
   const [dbStreams, setDbStreams] = useState([]);
   const [allMarks, setAllMarks] = useState([]); // marks for ALL students in grade
   const [schoolInfo, setSchoolInfo] = useState(null);
@@ -29,17 +31,58 @@ const Reports = ({ schoolConfig, examsList }) => {
     () => getClassesByType(schoolConfig?.schoolType),
     [schoolConfig?.schoolType]
   );
-  const [selectedClass, setSelectedClass] = useState(
-    () => getClassesByType(schoolConfig?.schoolType)[0]?.id || 'g10'
+  // Level → grade names map for the standard Level ▸ Class selection.
+  const gradesByLevel = useMemo(
+    () => gradesByLevelForSchool(schoolConfig?.schoolType),
+    [schoolConfig?.schoolType]
+  );
+  const [selectedLevel, setSelectedLevel] = useState(
+    () => Object.keys(gradesByLevelForSchool(schoolConfig?.schoolType))[0] || 'Senior Secondary'
+  );
+  const [selectedClass, setSelectedClass] = useState(() => {
+    const first = Object.values(gradesByLevelForSchool(schoolConfig?.schoolType))[0]?.[0];
+    return GRADE_NAME_TO_CODE[first] || 'g10';
+  });
+  // Grades available in the chosen level, as { code, name } for the dropdown.
+  const classesForLevel = useMemo(
+    () => (gradesByLevel[selectedLevel] || []).map(name => ({ code: GRADE_NAME_TO_CODE[name], name })),
+    [gradesByLevel, selectedLevel]
   );
   const [selectedStream, setSelectedStream] = useState('all');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedTerm, setSelectedTerm] = useState('Term 1');
+  // Class/stream position defaults ON for Form 3/4 (8-4-4 ranking convention)
+  // and OFF for CBC grades — the user can still toggle it per selection.
+  const [showPositions, setShowPositions] = useState(
+    () => selectedClass === 'f3' || selectedClass === 'f4'
+  );
 
   const selectedStudent = useMemo(
     () => students.find(s => s.id === selectedStudentId),
     [students, selectedStudentId]
   );
+
+  // schoolConfig loads asynchronously; once its levels are known, snap the
+  // Level/Class selection to valid values for this school.
+  useEffect(() => {
+    const levels = Object.keys(gradesByLevel);
+    if (levels.length === 0) return;
+    if (!levels.includes(selectedLevel)) {
+      const lvl = levels[0];
+      setSelectedLevel(lvl);
+      setSelectedClass(GRADE_NAME_TO_CODE[gradesByLevel[lvl][0]]);
+      return;
+    }
+    const validCodes = (gradesByLevel[selectedLevel] || []).map(n => GRADE_NAME_TO_CODE[n]);
+    if (validCodes.length && !validCodes.includes(selectedClass)) {
+      setSelectedClass(validCodes[0]);
+    }
+  }, [gradesByLevel, selectedLevel, selectedClass]);
+
+  // Default the position toggle per class: ON for Form 3/4, OFF for CBC grades.
+  useEffect(() => {
+    setShowPositions(selectedClass === 'f3' || selectedClass === 'f4');
+  }, [selectedClass]);
 
   // Exams for selected grade + term
   const gradeExams = useMemo(
@@ -73,6 +116,7 @@ const Reports = ({ schoolConfig, examsList }) => {
   useEffect(() => {
     if (schoolConfig?.id) {
       fetchStudents();
+      fetchAggPolicy();
     }
   }, [schoolConfig?.id, selectedClass]);
 
@@ -99,6 +143,17 @@ const Reports = ({ schoolConfig, examsList }) => {
   const fetchGrades = async () => {
     const { data } = await supabase.from('grading_systems').select('*').eq('school_id', schoolConfig.id);
     setDbGrades(data || []);
+  };
+
+  // Totalling policy for this class; null (no row) = count all subjects.
+  const fetchAggPolicy = async () => {
+    const { data } = await supabase
+      .from('aggregation_policies')
+      .select('*')
+      .eq('school_id', schoolConfig.id)
+      .eq('level_category', selectedClass)
+      .maybeSingle();
+    setAggPolicy(data || null);
   };
 
   const fetchStreams = async () => {
@@ -142,12 +197,8 @@ const Reports = ({ schoolConfig, examsList }) => {
     }
     if (!scale.length) scale = dbGrades.filter(g => g.school_level === levelName);
     if (!scale.length) {
-      scale = [
-        { grade: 'EE', min_score: 80, description: 'Exceeding Expectations' },
-        { grade: 'ME', min_score: 50, description: 'Meeting Expectations' },
-        { grade: 'AE', min_score: 30, description: 'Approaching Expectations' },
-        { grade: 'BE', min_score: 0,  description: 'Below Expectations' },
-      ];
+      // Built-in defaults: Form 3/4 → A–E scale, everything else → competency.
+      scale = defaultGradesFor(selectedClass);
     }
     const sorted = [...scale].sort((a, b) => (b.min_score || 0) - (a.min_score || 0));
     for (const g of sorted) {
@@ -188,6 +239,9 @@ const Reports = ({ schoolConfig, examsList }) => {
     return best;
   }, [students, filteredStudents, selectedStream, getStudentSubjectScore]);
 
+  // Form 3 / Form 4 (8-4-4) report cards omit subjects the student didn't sit.
+  const isForm = selectedClass === 'f3' || selectedClass === 'f4';
+
   // Build full report data for a student
   const buildReportData = useCallback((student) => {
     return gradeSubjects.map(sub => {
@@ -198,21 +252,79 @@ const Reports = ({ schoolConfig, examsList }) => {
         const m = allMarks.find(mk => mk.student_id === student.id && mk.exam_id === exam.id && mk.subject_id === sub.id);
         return m?.score ?? '-';
       });
-      return { sub, score, best, grade, examScores };
+      const hasMark = examScores.some(sc => sc !== '-' && sc !== null && sc !== undefined && sc !== '');
+      return { sub, score, best, grade, examScores, hasMark };
     });
   }, [gradeSubjects, gradeExams, allMarks, getStudentSubjectScore, getBestInGrade, getGrade]);
+
+  // Which rows to print: for Form 3/4, drop subjects with no marks entered.
+  const reportRowsFor = useCallback((student) => {
+    const rows = buildReportData(student);
+    return isForm ? rows.filter(r => r.hasMark) : rows;
+  }, [buildReportData, isForm]);
+
+  // Overall total/average per the class's totalling policy. Without a policy
+  // (or with count_all) every sat subject counts — identical to the old math.
+  const computeOverall = useCallback((rows) => {
+    const entries = rows
+      .filter(r => r.score > 0)
+      .map(r => ({ score: r.score, group: r.sub.subject_group || 1 }));
+    const { counted, belowMinimum } = applyAggregationPolicy(aggPolicy, entries);
+    const total = counted.reduce((a, e) => a + e.score, 0);
+    const average = counted.length ? total / counted.length : 0;
+    return { total, average, belowMinimum };
+  }, [aggPolicy]);
+
+  // Class + stream positions for every student in the class. Ranked by overall
+  // total (policy-aware, so it uses the counted subjects). Below-minimum
+  // students are excluded from ranking but still counted in the "out of" total.
+  const rankings = useMemo(() => {
+    const withTotals = students.map(s => {
+      const { total, belowMinimum } = computeOverall(reportRowsFor(s));
+      return { id: s.id, streamId: s.stream_id || null, total, belowMinimum };
+    });
+    const assign = (list) => {
+      const sorted = [...list].filter(x => !x.belowMinimum).sort((a, b) => b.total - a.total);
+      const pos = {};
+      let rank = 0, prev = null, seen = 0;
+      sorted.forEach(item => {
+        seen++;
+        if (prev === null || Math.round(item.total) !== Math.round(prev)) rank = seen;
+        pos[item.id] = rank;
+        prev = item.total;
+      });
+      return pos;
+    };
+    const classPos = assign(withTotals);
+    const streamPos = {};
+    const byStream = {};
+    withTotals.forEach(w => { (byStream[w.streamId] = byStream[w.streamId] || []).push(w); });
+    Object.values(byStream).forEach(group => Object.assign(streamPos, assign(group)));
+    const streamSize = {};
+    withTotals.forEach(w => { streamSize[w.streamId] = (streamSize[w.streamId] || 0) + 1; });
+    return { classSize: students.length, classPos, streamPos, streamSize };
+  }, [students, computeOverall, reportRowsFor]);
 
   const labelStyle = { fontSize: 10, color: '#8A8FA8', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase' };
   const selectStyle = { width: '100%', padding: '8px', borderRadius: 6, border: '1px solid #E8EAF0', fontSize: 12, background: '#fff', outline: 'none' };
 
+  // Position "n / total", or "—" for below-minimum students.
+  const posText = (pos, size) => (pos ? `${pos} / ${size}` : '—');
+
   // Single report card HTML (used for both preview + bulk PDF)
   const ReportCard = ({ student }) => {
-    const rows = buildReportData(student);
-    const scores = rows.map(r => r.score).filter(s => s > 0);
-    const total = scores.reduce((a, b) => a + b, 0);
-    const average = scores.length ? total / scores.length : 0;
+    const rows = reportRowsFor(student);
+    const { total, average, belowMinimum } = computeOverall(rows);
     const overallGrade = getGrade(average);
+    const remark = belowMinimum
+      ? `Sat fewer than the minimum ${aggPolicy?.min_subjects} subjects required for grading.`
+      : gradeComment(overallGrade);
     const className = currentTypeClasses.find(c => c.id === student.level_id)?.name || student.level_id;
+    const streamName = dbStreams.find(s => s.id === student.stream_id)?.name || '—';
+    const classPosition = posText(rankings.classPos[student.id], rankings.classSize);
+    const streamPosition = student.stream_id
+      ? posText(rankings.streamPos[student.id], rankings.streamSize[student.stream_id] || 0)
+      : '—';
 
     return (
       <div style={{ maxWidth: 750, margin: '0 auto', border: '1px solid #000', padding: '20px', background: '#fff', fontSize: 12 }}>
@@ -261,18 +373,24 @@ const Reports = ({ schoolConfig, examsList }) => {
           </div>
         </div>
 
-        {/* Student Info */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-          <div>
-            <div style={{ marginBottom: 4 }}><b>NAME:</b> <u>{student.first_name?.toUpperCase()} {student.last_name?.toUpperCase()}</u></div>
-            <div style={{ marginBottom: 4 }}><b>ADM NO:</b> <u>{student.adm_no}</u></div>
-            <div style={{ marginBottom: 4 }}><b>CLASS:</b> <u>{className}</u></div>
+        {/* Student Info — bordered panel, three logical bands */}
+        <div style={{ border: '1px solid #000', marginBottom: 16, fontSize: 13.5 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 20, padding: '10px 14px', borderBottom: '1px solid #bbb' }}>
+            <div><b style={{ fontWeight: 800 }}>NAME:</b>&nbsp; {student.first_name?.toUpperCase()} {student.last_name?.toUpperCase()}</div>
+            <div><b style={{ fontWeight: 800 }}>ADM NO:</b>&nbsp; {student.adm_no}</div>
           </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ marginBottom: 4 }}><b>TERM:</b> <u>{selectedTerm.toUpperCase()}</u></div>
-            <div style={{ marginBottom: 4 }}><b>YEAR:</b> <u>{selectedYear}</u></div>
-            <div style={{ marginBottom: 4 }}><b>DATE:</b> <u>{new Date().toLocaleDateString()}</u></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px 20px', padding: '10px 14px', borderBottom: showPositions ? '1px solid #bbb' : 'none' }}>
+            <div><b style={{ fontWeight: 800 }}>CLASS:</b>&nbsp; {className}</div>
+            <div><b style={{ fontWeight: 800 }}>STREAM:</b>&nbsp; {streamName}</div>
+            <div><b style={{ fontWeight: 800 }}>TERM:</b>&nbsp; {selectedTerm.toUpperCase()}</div>
+            <div><b style={{ fontWeight: 800 }}>YEAR:</b>&nbsp; {selectedYear}</div>
           </div>
+          {showPositions && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20, padding: '10px 14px', background: '#f2f5f2' }}>
+              <div><b style={{ fontWeight: 800 }}>CLASS POSITION:</b>&nbsp; <span style={{ fontWeight: 900 }}>{classPosition}</span></div>
+              <div><b style={{ fontWeight: 800 }}>STREAM POSITION:</b>&nbsp; <span style={{ fontWeight: 900 }}>{streamPosition}</span></div>
+            </div>
+          )}
         </div>
 
         {/* Marks Table */}
@@ -310,24 +428,33 @@ const Reports = ({ schoolConfig, examsList }) => {
             <tr style={{ background: '#e8f5ee', color: '#1A1A2E' }}>
               <td style={{ border: '1px solid #000', padding: '6px 8px', fontWeight: 700 }}>SUMMARY</td>
               {gradeExams.map((_, i) => <td key={i} style={{ border: '1px solid #000' }} />)}
-              <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 900 }}>{Math.round(total)}</td>
-              <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 900 }}>{overallGrade.grade}</td>
-              <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center' }}>AVG: {Math.round(average)}%</td>
-              <td style={{ border: '1px solid #000', padding: '6px 8px' }}>{gradeComment(overallGrade)}</td>
+              <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 900 }}>{belowMinimum ? '—' : Math.round(total)}</td>
+              <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 900 }}>{belowMinimum ? '—' : overallGrade.grade}</td>
+              <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center' }}>AVG: {belowMinimum ? '—' : `${Math.round(average)}%`}</td>
+              <td style={{ border: '1px solid #000', padding: '6px 8px' }}>{remark}</td>
             </tr>
           </tfoot>
         </table>
 
-        {/* Remarks — the comment configured against the student's overall grade */}
-        <div style={{ border: '1px solid #000', padding: '10px', marginBottom: 20 }}>
-          <div style={{ fontWeight: 700, marginBottom: 5 }}>TEACHER'S REMARKS:</div>
-          <div style={{ minHeight: 28, background: '#F9F9F9' }}>{gradeComment(overallGrade)}</div>
+        {/* Class Teacher's remarks — auto-filled with the overall-grade comment,
+            with space + signature line. */}
+        <div style={{ border: '1px solid #000', padding: '10px', marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 5 }}>CLASS TEACHER'S REMARKS:</div>
+          <div style={{ minHeight: 34, background: '#F9F9F9' }}>{remark}</div>
+          <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+            <span>Name/Sign: <u style={{ display: 'inline-block', minWidth: 160 }}>&nbsp;</u></span>
+            <span>Date: <u style={{ display: 'inline-block', minWidth: 90 }}>&nbsp;</u></span>
+          </div>
         </div>
 
-        {/* Signatures */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 40 }}>
-          <div style={{ textAlign: 'center' }}><div style={{ borderTop: '1px solid #000', paddingTop: 5, width: 120 }}>Class Teacher</div></div>
-          <div style={{ textAlign: 'center' }}><div style={{ borderTop: '1px solid #000', paddingTop: 5, width: 120 }}>Headteacher</div></div>
+        {/* Principal's remarks — left blank for the principal to complete. */}
+        <div style={{ border: '1px solid #000', padding: '10px', marginBottom: 20 }}>
+          <div style={{ fontWeight: 700, marginBottom: 5 }}>PRINCIPAL'S REMARKS:</div>
+          <div style={{ minHeight: 34, background: '#F9F9F9' }}>&nbsp;</div>
+          <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+            <span>Name/Sign: <u style={{ display: 'inline-block', minWidth: 160 }}>&nbsp;</u></span>
+            <span>Date: <u style={{ display: 'inline-block', minWidth: 90 }}>&nbsp;</u></span>
+          </div>
         </div>
       </div>
     );
@@ -354,22 +481,33 @@ const Reports = ({ schoolConfig, examsList }) => {
       .photo-box img { width: 100px; height: 100px; object-fit: cover; border: 1px solid #000; }
       .logo-box img { width: 100px; height: 100px; object-fit: contain; }
       .placeholder { width: 100px; height: 100px; border: 1px dashed #888; display: flex; align-items: center; justify-content: center; color: #888; font-size: 10px; text-align: center; padding: 4px; box-sizing: border-box; }
-      .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-      .info-right { text-align: right; }
+      .info-panel { border: 1px solid #000; margin-bottom: 16px; font-size: 13.5px; }
+      .info-band { padding: 10px 14px; display: grid; gap: 8px 20px; }
+      .info-name { grid-template-columns: 2fr 1fr; border-bottom: 1px solid #bbb; }
+      .info-mid { grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid #bbb; }
+      .info-mid-last { border-bottom: none; }
+      .info-pos { grid-template-columns: repeat(2, 1fr); background: #f2f5f2; }
+      .info-band b { font-weight: 800; }
       .tfoot-row { background: #e8f5ee; color: #1A1A2E; }
-      .remarks { border: 1px solid #000; padding: 10px; margin-bottom: 20px; }
-      .sigs { display: flex; justify-content: space-between; margin-top: 40px; }
-      .sig { text-align: center; border-top: 1px solid #000; padding-top: 5px; width: 120px; }
+      .remarks { border: 1px solid #000; padding: 10px; margin-bottom: 12px; }
+      .rem-sign { margin-top: 10px; display: flex; justify-content: space-between; font-size: 11px; }
+      .rem-sign u { display: inline-block; }
       @media print { @page { margin: 10mm; } }
     </style></head><body>`);
 
     printStudents.forEach(student => {
-      const rows = buildReportData(student);
-      const scores = rows.map(r => r.score).filter(s => s > 0);
-      const total = scores.reduce((a, b) => a + b, 0);
-      const average = scores.length ? total / scores.length : 0;
+      const rows = reportRowsFor(student);
+      const { total, average, belowMinimum } = computeOverall(rows);
       const overallGrade = getGrade(average);
+      const remark = belowMinimum
+        ? `Sat fewer than the minimum ${aggPolicy?.min_subjects} subjects required for grading.`
+        : gradeComment(overallGrade);
       const className = currentTypeClasses.find(c => c.id === student.level_id)?.name || '';
+      const streamName = dbStreams.find(s => s.id === student.stream_id)?.name || '—';
+      const classPosition = posText(rankings.classPos[student.id], rankings.classSize);
+      const streamPosition = student.stream_id
+        ? posText(rankings.streamPos[student.id], rankings.streamSize[student.stream_id] || 0)
+        : '—';
 
       win.document.write(`<div class="page">
         <div class="header-grid">
@@ -391,17 +529,21 @@ const Reports = ({ schoolConfig, examsList }) => {
               : `<div class="placeholder">SCHOOL LOGO</div>`}
           </div>
         </div>
-        <div class="info-grid">
-          <div>
-            <div><b>NAME:</b> <u>${student.first_name?.toUpperCase()} ${student.last_name?.toUpperCase()}</u></div>
-            <div><b>ADM NO:</b> <u>${student.adm_no}</u></div>
-            <div><b>CLASS:</b> <u>${className}</u></div>
+        <div class="info-panel">
+          <div class="info-band info-name">
+            <div><b>NAME:</b>&nbsp; ${student.first_name?.toUpperCase()} ${student.last_name?.toUpperCase()}</div>
+            <div><b>ADM NO:</b>&nbsp; ${student.adm_no}</div>
           </div>
-          <div class="info-right">
-            <div><b>TERM:</b> <u>${selectedTerm.toUpperCase()}</u></div>
-            <div><b>YEAR:</b> <u>${selectedYear}</u></div>
-            <div><b>DATE:</b> <u>${new Date().toLocaleDateString()}</u></div>
+          <div class="info-band info-mid${showPositions ? '' : ' info-mid-last'}">
+            <div><b>CLASS:</b>&nbsp; ${className}</div>
+            <div><b>STREAM:</b>&nbsp; ${streamName}</div>
+            <div><b>TERM:</b>&nbsp; ${selectedTerm.toUpperCase()}</div>
+            <div><b>YEAR:</b>&nbsp; ${selectedYear}</div>
           </div>
+          ${showPositions ? `<div class="info-band info-pos">
+            <div><b>CLASS POSITION:</b>&nbsp; <span style="font-weight:900">${classPosition}</span></div>
+            <div><b>STREAM POSITION:</b>&nbsp; <span style="font-weight:900">${streamPosition}</span></div>
+          </div>` : ''}
         </div>
         <table>
           <thead><tr style="background:#F0F2F5">
@@ -427,17 +569,22 @@ const Reports = ({ schoolConfig, examsList }) => {
             <tr class="tfoot-row">
               <td><b>SUMMARY</b></td>
               ${gradeExams.map(() => '<td></td>').join('')}
-              <td style="text-align:center;font-weight:900">${Math.round(total)}</td>
-              <td style="text-align:center;font-weight:900">${overallGrade.grade}</td>
-              <td style="text-align:center">AVG: ${Math.round(average)}%</td>
-              <td>${gradeComment(overallGrade)}</td>
+              <td style="text-align:center;font-weight:900">${belowMinimum ? '—' : Math.round(total)}</td>
+              <td style="text-align:center;font-weight:900">${belowMinimum ? '—' : overallGrade.grade}</td>
+              <td style="text-align:center">AVG: ${belowMinimum ? '—' : `${Math.round(average)}%`}</td>
+              <td>${remark}</td>
             </tr>
           </tfoot>
         </table>
-        <div class="remarks"><b>TEACHER'S REMARKS:</b><div style="min-height:28px;background:#F9F9F9">${gradeComment(overallGrade)}</div></div>
-        <div class="sigs">
-          <div><div class="sig">Class Teacher</div></div>
-          <div><div class="sig">Headteacher</div></div>
+        <div class="remarks">
+          <b>CLASS TEACHER'S REMARKS:</b>
+          <div style="min-height:34px;background:#F9F9F9">${remark}</div>
+          <div class="rem-sign"><span>Name/Sign: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span><span>Date: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span></div>
+        </div>
+        <div class="remarks">
+          <b>PRINCIPAL'S REMARKS:</b>
+          <div style="min-height:34px;background:#F9F9F9">&nbsp;</div>
+          <div class="rem-sign"><span>Name/Sign: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span><span>Date: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span></div>
         </div>
       </div>`);
     });
@@ -454,11 +601,28 @@ const Reports = ({ schoolConfig, examsList }) => {
         <div style={{ padding: 16, borderBottom: '1px solid #E8EAF0' }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: '#1A1A2E', marginBottom: 12 }}>Report Generation</div>
 
+          <div style={{ marginBottom: 10 }}>
+            <div style={labelStyle}>LEVEL</div>
+            <select
+              value={selectedLevel}
+              onChange={e => {
+                const lvl = e.target.value;
+                setSelectedLevel(lvl);
+                setSelectedClass(GRADE_NAME_TO_CODE[(gradesByLevel[lvl] || [])[0]]);
+                setSelectedStream('all');
+                setSelectedStudentId(null);
+              }}
+              style={selectStyle}
+            >
+              {Object.keys(gradesByLevel).map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
+          </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
             <div>
               <div style={labelStyle}>CLASS</div>
-              <select value={selectedClass} onChange={e => { setSelectedClass(e.target.value); }} style={selectStyle}>
-                {currentTypeClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <select value={selectedClass} onChange={e => { setSelectedClass(e.target.value); setSelectedStream('all'); setSelectedStudentId(null); }} style={selectStyle}>
+                {classesForLevel.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
               </select>
             </div>
             <div>
@@ -484,6 +648,16 @@ const Reports = ({ schoolConfig, examsList }) => {
               </select>
             </div>
           </div>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#1A1A2E' }}>
+            <input
+              type="checkbox"
+              checked={showPositions}
+              onChange={e => setShowPositions(e.target.checked)}
+              style={{ width: 15, height: 15, accentColor: '#1B6B3A', cursor: 'pointer' }}
+            />
+            Show class &amp; stream position on report
+          </label>
 
           <button
             onClick={handleBulkPDF}

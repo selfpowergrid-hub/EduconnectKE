@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { STUDENTS, getClassesByType, SUBJECTS_BY_LEVEL, ACADEMIC_GRADES, COMPETENCY_GRADES } from '../data/mockData';
+import { STUDENTS, getClassesByType, SUBJECTS_BY_LEVEL, COMPETENCY_GRADES, defaultGradesFor } from '../data/mockData';
 import { supabase } from '../lib/supabase';
 import { LEVELS, gradesByLevelForSchool } from '../lib/schoolLevels';
 
@@ -40,7 +40,12 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
 
   useEffect(() => {
     fetchGradingSystems();
-  }, [filterGrade]);
+    // Grading is scoped to Level + Grade (term-independent by design), so it
+    // refreshes whenever either of those changes — but not on Term change.
+    // schoolConfig?.id is included because on a fresh page load it arrives
+    // asynchronously AFTER mount; without it here the initial fetch bails out
+    // (no school id yet) and the saved config never loads until navigation.
+  }, [filterGrade, filterLevel, schoolConfig?.id]);
 
   const fetchGradingSystems = async () => {
     if (!schoolConfig?.id) return;
@@ -73,20 +78,15 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
         label: g.description, // map description to label for state
       }));
 
-      // If still empty, use defaults
+      // If still empty, use the built-in defaults for this grade
+      // (Form 3/4 → A–E scale; PP1–Grade 12 → competency scale).
       if (filtered.length === 0) {
-        filtered = filterLevel === "Senior Secondary" ? ACADEMIC_GRADES : COMPETENCY_GRADES;
-        // Map mock data format to DB format
-        filtered = filtered.map(g => ({
-          grade: g.code || g.grade,
-          label: g.label,
-          min_score: g.min,
-          max_score: g.max || 100,
-          points: g.points || 0
-        }));
+        filtered = defaultGradesFor(filterGrade).map(g => ({ ...g, label: g.description }));
       }
 
       setCustomGrades(filtered);
+      setEditingGradeIdx(null);
+      setNewGradeEntry({ code: "", label: "", min: "", max: "", points: "" });
     } catch (err) {
       console.error('Error fetching grades:', err);
     } finally {
@@ -112,6 +112,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
 
   const [selectedSubjectForGrading, setSelectedSubjectForGrading] = useState("");
   const [newGradeEntry, setNewGradeEntry] = useState({ code: "", label: "", min: "", max: "", points: "" });
+  const [editingGradeIdx, setEditingGradeIdx] = useState(null); // index into customGrades being edited via the entry form
   const [customGrades, setCustomGrades] = useState([]);
   const [isGradingLoading, setIsGradingLoading] = useState(false);
 
@@ -385,7 +386,11 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
     }
   };
 
-  const handleSaveGrading = async () => {
+  // gradesOverride: optional explicit list to persist (used by "Load Default
+  // Settings", where state hasn't flushed yet). When absent, saves the current
+  // on-screen list plus any grade still typed in the entry form.
+  const handleSaveGrading = async (gradesOverride) => {
+    const usingOverride = Array.isArray(gradesOverride);
     setIsGradingLoading(true);
     try {
       const gradeIdMap = {
@@ -397,6 +402,10 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
       const gid = gradeIdMap[filterGrade];
       const targetGroup = gid || filterLevel;
 
+      if (!schoolConfig?.id) {
+        throw new Error('School is still loading — please wait a moment and try again.');
+      }
+
       // 1. Delete existing for this group first (to perform a clean replacement)
       const { error: delError } = await supabase
         .from('grading_systems')
@@ -407,8 +416,27 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
 
       if (delError) throw delError;
 
-      // 2. Prepare payload
-      const records = customGrades.map(g => ({
+      // 2. Fold in whatever is typed in the entry form but not yet added, so
+      //    Save never silently drops the grade the user is looking at.
+      //    (Users often type a grade and hit Save without clicking Add first.)
+      let effectiveGrades = usingOverride ? [...gradesOverride] : [...customGrades];
+      if (!usingOverride && newGradeEntry.code && newGradeEntry.min) {
+        const pending = {
+          grade: newGradeEntry.code,
+          label: newGradeEntry.label,
+          min_score: parseInt(newGradeEntry.min) || 0,
+          max_score: parseInt(newGradeEntry.max) || 100,
+          points: parseInt(newGradeEntry.points) || 0
+        };
+        if (editingGradeIdx !== null && effectiveGrades[editingGradeIdx]) {
+          effectiveGrades[editingGradeIdx] = { ...effectiveGrades[editingGradeIdx], ...pending };
+        } else {
+          effectiveGrades.push(pending);
+        }
+      }
+
+      // 3. Prepare payload
+      const records = effectiveGrades.map(g => ({
         school_id: schoolConfig.id,
         school_level: filterLevel,
         school_grade: filterGrade || "All",
@@ -420,9 +448,25 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
       }));
 
       if (records.length > 0) {
-        const { error } = await supabase.from('grading_systems').insert(records);
+        // .select() so we can VERIFY the rows actually persisted. Under RLS a
+        // blocked insert can return no error but zero rows; without this we'd
+        // falsely report success and the config would be gone on refresh.
+        const { data: inserted, error } = await supabase
+          .from('grading_systems')
+          .insert(records)
+          .select();
         if (error) throw error;
+        if (!inserted || inserted.length !== records.length) {
+          throw new Error(
+            `Save was not persisted (expected ${records.length} grade${records.length === 1 ? '' : 's'}, database stored ${inserted?.length || 0}). ` +
+            `You may not have permission to edit this school's grading system.`
+          );
+        }
       }
+
+      // 4. Re-read from the DB so the on-screen list reflects the true saved
+      //    state (also confirms readback works for this scope).
+      await fetchGradingSystems();
 
       alert('Grading configuration saved successfully!');
     } catch (err) {
@@ -430,6 +474,23 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
     } finally {
       setIsGradingLoading(false);
     }
+  };
+
+  // Replace the current scope's grading with the app's built-in defaults
+  // (Form 3/4 → A–E scale, PP1–Grade 12 → competency scale) and save.
+  const handleLoadDefaults = async () => {
+    const scopeName = filterGrade || filterLevel;
+    const ok = window.confirm(
+      `Load the default grading settings for ${scopeName}?\n\n` +
+      `⚠️ WARNING: everything currently entered for ${scopeName} will be REPLACED by the defaults and saved immediately. This cannot be undone.`
+    );
+    if (!ok) return;
+
+    const defaults = defaultGradesFor(filterGrade).map(g => ({ ...g, label: g.description }));
+    setCustomGrades(defaults);
+    setEditingGradeIdx(null);
+    setNewGradeEntry({ code: "", label: "", min: "", max: "", points: "" });
+    await handleSaveGrading(defaults);
   };
 
   const moveExam = async (exam, direction) => {
@@ -489,72 +550,72 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
   return (
     <div style={{ paddingBottom: 40 }}>
 
-      {/* Global Filter Bar */}
-      <div style={{ ...sectionCardStyle, padding: "16px 24px", marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
-        <h4 style={{ margin: 0, fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Settings Scope</h4>
-        
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+      {/* Toolbar: Navigation Tabs (left) + Scope Filters (right) */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: 16,
+          marginBottom: 24
+        }}
+      >
+        <div style={{ display: "flex", gap: 12, flexWrap: "nowrap" }}>
+          {[
+            { id: "listings", label: "Exam Listings", icon: "📅" },
+            { id: "options", label: "Weighting & Grading", icon: "⚙️" },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                padding: "14px 26px",
+                background: activeTab === tab.id ? activeColor : "#fff",
+                color: activeTab === tab.id ? "#fff" : "#2a2421",
+                border: activeTab === tab.id ? "none" : "1px solid #e6dfd8",
+                borderRadius: 30,
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                transition: "all 0.2s ease",
+                whiteSpace: "nowrap",
+                boxShadow: activeTab === tab.id ? "0 2px 6px rgba(212,175,55,0.35)" : "0 1px 2px rgba(0,0,0,0.03)"
+              }}
+            >
+              <span>{tab.icon}</span>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", background: "#fff", border: "1px solid #e6dfd8", borderRadius: 30, padding: "10px 16px", boxShadow: "0 1px 2px rgba(0,0,0,0.03)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>LEVEL:</span>
-            <select value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: "#2a2421", letterSpacing: "0.04em" }}>LEVEL</span>
+            <select value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12, fontWeight: 600, border: "1px solid #e6dfd8", background: "#faf8f5" }}>
               {Object.keys(GRADES_BY_LEVEL).map(lvl => <option key={lvl}>{lvl}</option>)}
             </select>
           </div>
+          <div style={{ width: 1, height: 22, background: "#e6dfd8" }} />
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>GRADE:</span>
-            <select value={filterGrade} onChange={(e) => setFilterGrade(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: "#2a2421", letterSpacing: "0.04em" }}>GRADE</span>
+            <select value={filterGrade} onChange={(e) => setFilterGrade(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12, fontWeight: 600, border: "1px solid #e6dfd8", background: "#faf8f5" }}>
               {(GRADES_BY_LEVEL[filterLevel] || []).map(g => <option key={g}>{g}</option>)}
             </select>
           </div>
+          <div style={{ width: 1, height: 22, background: "#e6dfd8" }} />
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8FA8" }}>TERM:</span>
-            <select value={filterTerm} onChange={(e) => setFilterTerm(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12 }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: "#2a2421", letterSpacing: "0.04em" }}>TERM</span>
+            <select value={filterTerm} onChange={(e) => setFilterTerm(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12, fontWeight: 600, border: "1px solid #e6dfd8", background: "#faf8f5" }}>
               <option>Term 1</option>
               <option>Term 2</option>
               <option>Term 3</option>
             </select>
           </div>
         </div>
-      </div>
-      {/* Internal Navigation Tabs (Pills) */}
-      <div 
-        style={{ 
-          display: "flex", 
-          gap: 12, 
-          marginBottom: 32, 
-          overflowX: "auto", 
-          paddingBottom: 4,
-          flexWrap: "nowrap"
-        }}
-        className="sidebar-scroll"
-      >
-        {[
-          { id: "listings", label: "Exam Listings", icon: "📅" },
-          { id: "options", label: "Weighting & Grading", icon: "⚙️" },
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            style={{
-              padding: "10px 24px",
-              background: activeTab === tab.id ? activeColor : "transparent",
-              color: activeTab === tab.id ? "#fff" : "#2a2421",
-              border: activeTab === tab.id ? "none" : "1px solid #e6dfd8",
-              borderRadius: 30,
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              transition: "all 0.2s ease",
-              whiteSpace: "nowrap"
-            }}
-          >
-            <span>{tab.icon}</span>
-            {tab.label}
-          </button>
-        ))}
       </div>
 
       {/* 1. EXAM LISTINGS TAB */}
@@ -728,13 +789,6 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
       {/* 2. EXAM OPTIONS TAB */}
       {activeTab === "options" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-          {/* Options Selection Bar */}
-          <section style={{ ...sectionCardStyle, padding: "20px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
-              <h4 style={{ margin: 0, fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Weighting Configuration</h4>
-            </div>
-          </section>
-
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1.8fr", gap: 24 }}>
             <section style={sectionCardStyle}>
               <h4 style={{ margin: "0 0 20px", fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Percentage Contributions</h4>
@@ -777,11 +831,11 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                 </table>
               </div>
 
-              <div style={{ padding: "16px", background: "#F1F5F9", borderRadius: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontSize: 14, color: "#475569", fontWeight: 700 }}>
-                  Cumulative Total: 
-                  <span style={{ 
-                    marginLeft: 12, padding: "6px 14px", borderRadius: 8, 
+              <div style={{ padding: "14px 16px", background: "#F1F5F9", borderRadius: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", whiteSpace: "nowrap", fontSize: 14, color: "#475569", fontWeight: 700 }}>
+                  <span>Cumulative Total:</span>
+                  <span style={{
+                    padding: "6px 14px", borderRadius: 8,
                     background: filteredExams.reduce((acc, curr) => acc + (parseInt(curr.weight) || 0), 0) === 100 ? "#1B6B3A" : "#D97706",
                     color: "#fff",
                     boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
@@ -789,19 +843,32 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                     {filteredExams.reduce((acc, curr) => acc + (parseInt(curr.weight) || 0), 0)}%
                   </span>
                 </div>
-                <div style={{ fontSize: 11, color: "#64748B", textAlign: "right", maxWidth: "200px", lineHeight: 1.4 }}>
-                  {filteredExams.reduce((acc, curr) => acc + (parseInt(curr.weight) || 0), 0) === 100 
-                    ? "✅ Weighting is balanced and ready for report cards." 
+                <div style={{ borderTop: "1px solid #DDE3EB", marginTop: 12, paddingTop: 10, fontSize: 11, color: "#64748B", lineHeight: 1.4 }}>
+                  {filteredExams.reduce((acc, curr) => acc + (parseInt(curr.weight) || 0), 0) === 100
+                    ? "✅ Weighting is balanced and ready for report cards."
                     : "⚠️ Total must equal 100% for correct calculations."}
                 </div>
               </div>
             </section>
 
             <section style={sectionCardStyle}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                <h4 style={{ margin: 0, fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Grading System Configuration</h4>
-                <div style={{ display: "flex", background: "#F1F5F9", padding: "8px 12px", borderRadius: 10, fontSize: 12, fontWeight: 700, color: "#1B6B3A" }}>
-                  <span>🌍 Global System Enabled</span>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, gap: 16 }}>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: 16, color: "#1A1A2E", fontWeight: 800 }}>Grading System Configuration</h4>
+                  <div style={{ marginTop: 6, fontSize: 12, color: "#8A8FA8", fontWeight: 500 }}>
+                    Scope: <span style={{ color: "#1A1A2E", fontWeight: 700 }}>{filterGrade || filterLevel}</span> · applies to <span style={{ color: "#1A1A2E", fontWeight: 700 }}>all terms</span>
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button
+                    onClick={handleLoadDefaults}
+                    disabled={isGradingLoading}
+                    title="Replace the current grading list with the app's default settings"
+                    style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", padding: "8px 12px", borderRadius: 10, fontSize: 12, fontWeight: 700, color: "#B45309", border: "1px solid #F0D9B5", cursor: isGradingLoading ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}
+                  >↺ Default Settings</button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#F1F5F9", padding: "8px 12px", borderRadius: 10, fontSize: 12, fontWeight: 700, color: "#1B6B3A", whiteSpace: "nowrap" }}>
+                    <span>🌍 All Terms</span>
+                  </div>
                 </div>
               </div>
 
@@ -823,55 +890,77 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                 {true && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
                     {/* Add Grade Form Row */}
-                    <div style={{ padding: "20px", background: "#F8FAFC", borderRadius: 12, border: "1px solid #E8EAF0" }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "20px", alignItems: "flex-end" }}>
+                    <div style={{ padding: "14px", background: "#F8FAFC", borderRadius: 12, border: "1px solid #E8EAF0" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", alignItems: "flex-end" }}>
                         <div>
-                          <label style={{ ...labelStyle, fontSize: 10 }}>Grade</label>
-                          <input type="text" placeholder="e.g. EE" value={newGradeEntry.code} onChange={(e) => setNewGradeEntry({...newGradeEntry, code: e.target.value})} style={inputStyle} />
+                          <label style={{ ...labelStyle, fontSize: 10, marginBottom: 6 }}>Grade</label>
+                          <input type="text" placeholder="e.g. EE" value={newGradeEntry.code} onChange={(e) => setNewGradeEntry({...newGradeEntry, code: e.target.value})} style={{ ...inputStyle, padding: "9px 12px", fontSize: 13 }} />
                         </div>
                         <div style={{ gridColumn: "span 2" }}>
-                          <label style={{ ...labelStyle, fontSize: 10 }}>Description / Label</label>
-                          <input type="text" placeholder="e.g. Exceeding Expectations" value={newGradeEntry.label} onChange={(e) => setNewGradeEntry({...newGradeEntry, label: e.target.value})} style={inputStyle} />
+                          <label style={{ ...labelStyle, fontSize: 10, marginBottom: 6 }}>Description / Label</label>
+                          <input type="text" placeholder="e.g. Exceeding Expectations" value={newGradeEntry.label} onChange={(e) => setNewGradeEntry({...newGradeEntry, label: e.target.value})} style={{ ...inputStyle, padding: "9px 12px", fontSize: 13 }} />
                         </div>
                         <div>
-                          <label style={{ ...labelStyle, fontSize: 10 }}>Min %</label>
-                          <input type="number" placeholder="0" value={newGradeEntry.min} onChange={(e) => setNewGradeEntry({...newGradeEntry, min: e.target.value})} style={inputStyle} />
+                          <label style={{ ...labelStyle, fontSize: 10, marginBottom: 6 }}>Min %</label>
+                          <input type="number" placeholder="0" value={newGradeEntry.min} onChange={(e) => setNewGradeEntry({...newGradeEntry, min: e.target.value})} style={{ ...inputStyle, padding: "9px 12px", fontSize: 13 }} />
                         </div>
                         <div>
-                          <label style={{ ...labelStyle, fontSize: 10 }}>Max %</label>
-                          <input type="number" placeholder="100" value={newGradeEntry.max} onChange={(e) => setNewGradeEntry({...newGradeEntry, max: e.target.value})} style={inputStyle} />
+                          <label style={{ ...labelStyle, fontSize: 10, marginBottom: 6 }}>Max %</label>
+                          <input type="number" placeholder="100" value={newGradeEntry.max} onChange={(e) => setNewGradeEntry({...newGradeEntry, max: e.target.value})} style={{ ...inputStyle, padding: "9px 12px", fontSize: 13 }} />
                         </div>
                         <div>
-                          <label style={{ ...labelStyle, fontSize: 10 }}>Points</label>
-                          <input type="number" placeholder="0" value={newGradeEntry.points} onChange={(e) => setNewGradeEntry({...newGradeEntry, points: e.target.value})} style={inputStyle} />
+                          <label style={{ ...labelStyle, fontSize: 10, marginBottom: 6 }}>Points</label>
+                          <input type="number" placeholder="0" value={newGradeEntry.points} onChange={(e) => setNewGradeEntry({...newGradeEntry, points: e.target.value})} style={{ ...inputStyle, padding: "9px 12px", fontSize: 13 }} />
                         </div>
-                        <div style={{ gridColumn: "1 / -1" }}>
-                          <button 
+                        <div style={{ gridColumn: "1 / -1", display: "flex", gap: 10 }}>
+                          <button
                             onClick={() => {
                                if (!newGradeEntry.code || !newGradeEntry.min) return;
-                               setCustomGrades([...customGrades, { 
-                                 grade: newGradeEntry.code, 
-                                 label: newGradeEntry.label, 
+                               const entry = {
+                                 grade: newGradeEntry.code,
+                                 label: newGradeEntry.label,
                                  min_score: parseInt(newGradeEntry.min) || 0,
                                  max_score: parseInt(newGradeEntry.max) || 100,
-                                 points: parseInt(newGradeEntry.points) || 0,
-                                 id: Date.now() 
-                               }]);
+                                 points: parseInt(newGradeEntry.points) || 0
+                               };
+                               if (editingGradeIdx !== null) {
+                                 setCustomGrades(customGrades.map((g, i) => i === editingGradeIdx ? { ...g, ...entry } : g));
+                                 setEditingGradeIdx(null);
+                               } else {
+                                 setCustomGrades([...customGrades, { ...entry, id: Date.now() }]);
+                               }
                                setNewGradeEntry({ code: "", label: "", min: "", max: "", points: "" });
                             }}
-                            style={{ 
-                              height: 42, 
-                              width: "100%", 
-                              background: "#1B6B3A", 
-                              color: "#fff", 
-                              border: "none", 
-                              borderRadius: 8, 
-                              fontSize: 12, 
-                              fontWeight: 700, 
+                            style={{
+                              height: 38,
+                              flex: 1,
+                              background: editingGradeIdx !== null ? "#1A5F9C" : "#1B6B3A",
+                              color: "#fff",
+                              border: "none",
+                              borderRadius: 8,
+                              fontSize: 12,
+                              fontWeight: 700,
                               cursor: "pointer",
-                              boxShadow: "0 2px 8px rgba(27, 107, 58, 0.2)"
+                              boxShadow: editingGradeIdx !== null ? "0 2px 8px rgba(26, 95, 156, 0.2)" : "0 2px 8px rgba(27, 107, 58, 0.2)"
                             }}
-                          >+ Add Grade to System</button>
+                          >{editingGradeIdx !== null ? "✓ Update Grade" : "+ Add Grade to System"}</button>
+                          {editingGradeIdx !== null && (
+                            <button
+                              onClick={() => {
+                                setEditingGradeIdx(null);
+                                setNewGradeEntry({ code: "", label: "", min: "", max: "", points: "" });
+                              }}
+                              style={{ height: 38, padding: "0 18px", background: "#fff", color: "#4A4A6A", border: "1px solid #E8EAF0", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                            >Cancel</button>
+                          )}
+                          <button
+                            onClick={handleSaveGrading}
+                            disabled={isGradingLoading}
+                            style={{ height: 38, flex: 1, background: isGradingLoading ? "#8a8fa8" : "#1A5F9C", color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: isGradingLoading ? "not-allowed" : "pointer", boxShadow: "0 2px 8px rgba(26, 95, 156, 0.2)" }}
+                          >{isGradingLoading ? "Saving..." : "💾 Save Grading Configuration"}</button>
+                        </div>
+                        <div style={{ gridColumn: "1 / -1", fontSize: 11, color: "#8A8FA8", fontWeight: 500, marginTop: -6 }}>
+                          💡 This grading system persists across all terms for {filterGrade || filterLevel}.
                         </div>
                       </div>
                     </div>
@@ -889,57 +978,68 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
                       </div>
                       
                       {!isSettingsCollapsed && (
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                          <thead>
-                            <tr style={{ background: "#F8FAFC", borderBottom: "1px solid #E8EAF0" }}>
-                              <th style={{ textAlign: "left", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700 }}>Grade</th>
-                              <th style={{ textAlign: "left", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700 }}>Label</th>
-                              <th style={{ textAlign: "center", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700 }}>Range %</th>
-                              <th style={{ textAlign: "center", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700 }}>Points</th>
-                              <th style={{ textAlign: "center", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700 }}></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {customGrades.map((g, idx) => (
-                              <tr key={g.id || idx} style={{ borderBottom: "1px solid #F1F5F9" }}>
-                                <td style={{ padding: "12px 18px" }}>
-                                  <span style={{ 
-                                    padding: "4px 10px", borderRadius: 6, fontWeight: 800, fontSize: 11,
-                                    background: g.bg || "#F1F5F9", color: g.color || "#4A4A6A"
-                                  }}>{g.grade || g.code}</span>
-                                </td>
-                                <td style={{ padding: "12px 18px", fontWeight: 600, color: "#1A1A2E" }}>{g.label}</td>
-                                <td style={{ padding: "12px 18px", textAlign: "center", fontWeight: 700, color: "#4A4A6A" }}>{g.min_score ?? g.min} - {g.max_score || g.max || 100}</td>
-                                <td style={{ padding: "12px 18px", textAlign: "center", fontWeight: 800, color: "#1A5F9C" }}>{g.points || "-"}</td>
-                                <td style={{ padding: "12px 18px", textAlign: "center" }}>
-                                  <button 
-                                    onClick={() => setCustomGrades(customGrades.filter((_, i) => i !== idx))}
-                                    style={{ background: "none", border: "none", cursor: "pointer", color: "#8A8FA8", fontSize: 14 }}
-                                  >🗑️</button>
-                                </td>
+                        <div className="table-scroll" style={{ maxHeight: 220, overflowY: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                            <thead>
+                              <tr style={{ borderBottom: "1px solid #E8EAF0" }}>
+                                <th style={{ textAlign: "left", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700, position: "sticky", top: 0, background: "#F8FAFC", zIndex: 1 }}>Grade</th>
+                                <th style={{ textAlign: "left", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700, position: "sticky", top: 0, background: "#F8FAFC", zIndex: 1 }}>Label</th>
+                                <th style={{ textAlign: "center", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700, position: "sticky", top: 0, background: "#F8FAFC", zIndex: 1 }}>Range %</th>
+                                <th style={{ textAlign: "center", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700, position: "sticky", top: 0, background: "#F8FAFC", zIndex: 1 }}>Points</th>
+                                <th style={{ textAlign: "center", padding: "12px 18px", color: "#8A8FA8", fontWeight: 700, position: "sticky", top: 0, background: "#F8FAFC", zIndex: 1 }}></th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {customGrades.map((g, idx) => (
+                                <tr key={g.id || idx} style={{ borderBottom: "1px solid #F1F5F9", background: editingGradeIdx === idx ? "#EBF3FB" : "transparent" }}>
+                                  <td style={{ padding: "12px 18px" }}>
+                                    <span style={{
+                                      padding: "4px 10px", borderRadius: 6, fontWeight: 800, fontSize: 11,
+                                      background: g.bg || "#F1F5F9", color: g.color || "#4A4A6A"
+                                    }}>{g.grade || g.code}</span>
+                                  </td>
+                                  <td style={{ padding: "12px 18px", fontWeight: 600, color: "#1A1A2E" }}>{g.label}</td>
+                                  <td style={{ padding: "12px 18px", textAlign: "center", fontWeight: 700, color: "#4A4A6A" }}>{g.min_score ?? g.min} - {g.max_score || g.max || 100}</td>
+                                  <td style={{ padding: "12px 18px", textAlign: "center", fontWeight: 800, color: "#1A5F9C" }}>{g.points || "-"}</td>
+                                  <td style={{ padding: "12px 18px", textAlign: "center", whiteSpace: "nowrap" }}>
+                                    <button
+                                      onClick={() => {
+                                        setEditingGradeIdx(idx);
+                                        setNewGradeEntry({
+                                          code: g.grade || g.code || "",
+                                          label: g.label || "",
+                                          min: String(g.min_score ?? g.min ?? ""),
+                                          max: String(g.max_score ?? g.max ?? ""),
+                                          points: String(g.points ?? "")
+                                        });
+                                      }}
+                                      title="Edit this grade"
+                                      style={{ background: "none", border: "none", cursor: "pointer", color: "#8A8FA8", fontSize: 14, marginRight: 6 }}
+                                    >✏️</button>
+                                    <button
+                                      onClick={() => {
+                                        setCustomGrades(customGrades.filter((_, i) => i !== idx));
+                                        if (editingGradeIdx === idx) {
+                                          setEditingGradeIdx(null);
+                                          setNewGradeEntry({ code: "", label: "", min: "", max: "", points: "" });
+                                        } else if (editingGradeIdx !== null && editingGradeIdx > idx) {
+                                          setEditingGradeIdx(editingGradeIdx - 1);
+                                        }
+                                      }}
+                                      title="Delete this grade"
+                                      style={{ background: "none", border: "none", cursor: "pointer", color: "#8A8FA8", fontSize: 14 }}
+                                    >🗑️</button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       )}
                     </div>
                   </div>
                 )}
 
-                <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px", background: "#EBF3FB", borderRadius: 12, border: "1px solid #D1E3F8" }}>
-                  <div style={{ fontSize: 18 }}>💡</div>
-                  <div style={{ fontSize: 12, color: "#1A5F9C", lineHeight: 1.4, fontWeight: 500 }}>
-                    Grading systems defined here automatically persist across all terms for the selected level.
-                  </div>
-                </div>
-                
-                <button 
-                  onClick={handleSaveGrading}
-                  disabled={isGradingLoading}
-                  style={{ width: "100%", height: 42, background: isGradingLoading ? "#8a8fa8" : "#1A5F9C", color: "#fff", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: isGradingLoading ? "not-allowed" : "pointer", marginTop: 10 }}
-                >
-                  {isGradingLoading ? "Saving..." : "Save Grading Configuration"}
-                </button>
               </div>
             </section>
           </div>

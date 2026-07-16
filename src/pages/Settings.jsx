@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import * as XLSXLib from 'xlsx';
-import { CLASSES, FEE_STRUCTURE, ACADEMIC_GRADES, getClassesByType } from '../data/mockData';
+import { CLASSES, FEE_STRUCTURE, ACADEMIC_GRADES, getClassesByType, defaultSubjectsFor } from '../data/mockData';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import SchoolCodeCard from '../components/school/SchoolCodeCard';
@@ -69,7 +69,8 @@ const Settings = ({ schoolConfig, initialTab }) => {
           id: sub.id,
           name: sub.name,
           code: sub.code,
-          type: sub.type
+          type: sub.type,
+          subject_group: sub.subject_group || 1
         });
       });
       setSubjectsByGrade(prev => ({ ...prev, ...subjectsMap }));
@@ -411,40 +412,64 @@ const Settings = ({ schoolConfig, initialTab }) => {
   });
 
   const [subjectsByGrade, setSubjectsByGrade] = useState({});
-  const [newSubject, setNewSubject] = useState({ name: "", code: "", type: "Core" });
+  const [newSubject, setNewSubject] = useState({ name: "", code: "", type: "Core", group: 1 });
+  const [editingSubjectId, setEditingSubjectId] = useState(null); // subject id being edited via the entry form
 
+  // Adds a new subject, or — when a row's ✏️ put it in the entry form —
+  // updates that subject in place (persisted to the DB by id).
   const handleAddSubject = async () => {
     if (!newSubject.name.trim() || !selectedSubjectGrade) return;
     try {
-      const payload = {
-        school_id: schoolConfig.id,
-        name: newSubject.name,
-        code: newSubject.code,
-        level_category: selectedSubjectGrade,
-        type: newSubject.type
-      };
+      if (editingSubjectId !== null) {
+        const { data, error } = await supabase
+          .from('subjects')
+          .update({ name: newSubject.name.trim().toUpperCase(), code: newSubject.code.trim().toUpperCase(), type: newSubject.type, subject_group: parseInt(newSubject.group) || 1 })
+          .eq('id', editingSubjectId)
+          .select()
+          .single();
+        if (error) throw error;
+        if (!data) throw new Error('Update was not persisted.');
 
-      const { data, error } = await supabase
-        .from('subjects')
-        .insert([payload])
-        .select()
-        .single();
+        setSubjectsByGrade(prev => ({
+          ...prev,
+          [selectedSubjectGrade]: (prev[selectedSubjectGrade] || []).map(s =>
+            s.id === editingSubjectId ? { id: data.id, name: data.name, code: data.code, type: data.type, subject_group: data.subject_group || 1 } : s
+          )
+        }));
+        setEditingSubjectId(null);
+      } else {
+        const payload = {
+          school_id: schoolConfig.id,
+          name: newSubject.name.trim().toUpperCase(),
+          code: newSubject.code.trim().toUpperCase(),
+          level_category: selectedSubjectGrade,
+          type: newSubject.type,
+          subject_group: parseInt(newSubject.group) || 1
+        };
 
-      if (error) throw error;
-      
-      setSubjectsByGrade(prev => ({
-        ...prev,
-        [selectedSubjectGrade]: [...(prev[selectedSubjectGrade] || []), {
-          id: data.id,
-          name: data.name,
-          code: data.code,
-          type: data.type
-        }]
-      }));
-      
-      setNewSubject({ name: "", code: "", type: subjectLevel === "sss" ? "Compulsory" : "Core" });
+        const { data, error } = await supabase
+          .from('subjects')
+          .insert([payload])
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        setSubjectsByGrade(prev => ({
+          ...prev,
+          [selectedSubjectGrade]: [...(prev[selectedSubjectGrade] || []), {
+            id: data.id,
+            name: data.name,
+            code: data.code,
+            type: data.type,
+            subject_group: data.subject_group || 1
+          }]
+        }));
+      }
+
+      setNewSubject({ name: "", code: "", type: subjectLevel === "Senior Secondary" ? "Compulsory" : "Core", group: 1 });
     } catch (err) {
-      alert('Failed to add subject: ' + err.message);
+      alert('Failed to save subject: ' + err.message);
     }
   };
 
@@ -460,8 +485,154 @@ const Settings = ({ schoolConfig, initialTab }) => {
         ...prev,
         [gradeId]: prev[gradeId].filter(s => s.id !== id)
       }));
+      if (editingSubjectId === id) {
+        setEditingSubjectId(null);
+        setNewSubject({ name: "", code: "", type: subjectLevel === "Senior Secondary" ? "Compulsory" : "Core", group: 1 });
+      }
     } catch (err) {
       alert('Failed to remove subject: ' + err.message);
+    }
+  };
+
+  // Replace the selected grade's subjects with the built-in Kenyan defaults
+  // (KICD rationalized CBC learning areas / 8-4-4 KNEC subjects) and save.
+  const handleLoadDefaultSubjects = async () => {
+    if (!selectedSubjectGrade) {
+      alert('Please select a grade first.');
+      return;
+    }
+    const gradeName = CLASSES.find(c => c.id === selectedSubjectGrade)?.name || selectedSubjectGrade;
+    const defaults = defaultSubjectsFor(selectedSubjectGrade);
+    if (!defaults.length) {
+      alert(`No built-in default subjects exist for ${gradeName}.`);
+      return;
+    }
+    const ok = window.confirm(
+      `Load the ${defaults.length} default subjects for ${gradeName}?\n\n` +
+      `⚠️ WARNING: all subjects currently entered for ${gradeName} will be REPLACED by the defaults and saved immediately. This cannot be undone.`
+    );
+    if (!ok) return;
+
+    try {
+      // Clean replacement: delete this grade's existing subjects first.
+      const { error: delErr } = await supabase
+        .from('subjects')
+        .delete()
+        .eq('school_id', schoolConfig.id)
+        .eq('level_category', selectedSubjectGrade);
+      if (delErr) throw delErr;
+
+      const payload = defaults.map(s => ({
+        school_id: schoolConfig.id,
+        level_category: selectedSubjectGrade,
+        code: s.code,
+        name: s.name.toUpperCase(),
+        type: s.type,
+        subject_group: s.subject_group || 1
+      }));
+
+      // .select() so we can verify the rows actually persisted (RLS can block
+      // an insert without raising an error).
+      const { data: inserted, error } = await supabase
+        .from('subjects')
+        .insert(payload)
+        .select();
+      if (error) throw error;
+      if (!inserted || inserted.length !== payload.length) {
+        throw new Error(
+          `Save was not persisted (expected ${payload.length} subjects, database stored ${inserted?.length || 0}).`
+        );
+      }
+
+      setSubjectsByGrade(prev => ({
+        ...prev,
+        [selectedSubjectGrade]: inserted.map(d => ({ id: d.id, name: d.name, code: d.code, type: d.type, subject_group: d.subject_group || 1 }))
+      }));
+      setEditingSubjectId(null);
+      setNewSubject({ name: "", code: "", type: subjectLevel === "Senior Secondary" ? "Compulsory" : "Core", group: 1 });
+      alert(`${inserted.length} default subjects loaded and saved for ${gradeName}.`);
+    } catch (err) {
+      alert('Failed to load default subjects: ' + err.message);
+    }
+  };
+
+  // --- Totalling & Minimum Subjects Policy (aggregation_policies) ---
+  // Editor state: groupTakes[g] is 'all' | number (0 = not counted);
+  // remaining = best-N from any group not already counted.
+  const EMPTY_AGG_POLICY = { count_all: true, groupTakes: { 1: "all", 2: "all", 3: "all", 4: "all", 5: "all" }, remaining: 0, min_subjects: "" };
+  const [aggPolicy, setAggPolicy] = useState(EMPTY_AGG_POLICY);
+  const [isAggSaving, setIsAggSaving] = useState(false);
+
+  useEffect(() => {
+    if (schoolConfig?.id && selectedSubjectGrade) fetchAggPolicy();
+    else setAggPolicy(EMPTY_AGG_POLICY);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schoolConfig?.id, selectedSubjectGrade]);
+
+  const fetchAggPolicy = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('aggregation_policies')
+        .select('*')
+        .eq('school_id', schoolConfig.id)
+        .eq('level_category', selectedSubjectGrade)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) { setAggPolicy(EMPTY_AGG_POLICY); return; }
+
+      const groupTakes = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+      let remaining = 0;
+      (data.rules || []).forEach(r => {
+        if (r.remaining) remaining = parseInt(r.take) || 0;
+        else if (r.group) groupTakes[r.group] = r.take === "all" ? "all" : (parseInt(r.take) || 0);
+      });
+      setAggPolicy({
+        count_all: data.count_all !== false,
+        groupTakes: (data.rules || []).length ? groupTakes : EMPTY_AGG_POLICY.groupTakes,
+        remaining,
+        min_subjects: data.min_subjects ?? ""
+      });
+    } catch (err) {
+      console.error('Error fetching aggregation policy:', err);
+    }
+  };
+
+  const handleSaveAggPolicy = async () => {
+    if (!selectedSubjectGrade) { alert('Please select a grade first.'); return; }
+    setIsAggSaving(true);
+    try {
+      const rules = [];
+      if (!aggPolicy.count_all) {
+        [1, 2, 3, 4, 5].forEach(g => {
+          const t = aggPolicy.groupTakes[g];
+          if (t === "all") rules.push({ group: g, take: "all" });
+          else if ((parseInt(t) || 0) > 0) rules.push({ group: g, take: parseInt(t) });
+        });
+        if ((parseInt(aggPolicy.remaining) || 0) > 0) rules.push({ remaining: true, take: parseInt(aggPolicy.remaining) });
+        if (rules.length === 0) throw new Error('Add at least one counting rule, or switch back to "Count all subjects".');
+      }
+      const row = {
+        school_id: schoolConfig.id,
+        level_category: selectedSubjectGrade,
+        count_all: aggPolicy.count_all,
+        rules: aggPolicy.count_all ? null : rules,
+        min_subjects: parseInt(aggPolicy.min_subjects) || null,
+        updated_at: new Date().toISOString()
+      };
+      // Verified upsert: unique (school_id, level_category) makes this an
+      // insert-or-replace; .select() proves the row persisted.
+      const { data, error } = await supabase
+        .from('aggregation_policies')
+        .upsert(row, { onConflict: 'school_id,level_category' })
+        .select();
+      if (error) throw error;
+      if (!data || data.length !== 1) throw new Error('Save was not persisted.');
+      const gradeName = CLASSES.find(c => c.id === selectedSubjectGrade)?.name || selectedSubjectGrade;
+      alert(`Totalling policy saved for ${gradeName}.`);
+    } catch (err) {
+      alert('Failed to save policy: ' + err.message);
+    } finally {
+      setIsAggSaving(false);
     }
   };
 
@@ -2750,83 +2921,73 @@ const Settings = ({ schoolConfig, initialTab }) => {
         ========================================= */}
         {activeTab === "subjects" && (
           <div>
-            {/* Page Header */}
-            <div style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-              marginBottom: 24,
-              paddingBottom: 20,
-              borderBottom: "1px solid #e6dfd8",
-              flexWrap: "wrap",
-              gap: 16,
-            }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: 20, color: "#2a2421", fontWeight: 800, letterSpacing: "-0.02em" }}>Subjects Configuration</h3>
-              </div>
-              <button style={{
-                padding: "11px 28px",
-                background: "linear-gradient(135deg, #D4AF37, #28a05f)",
-                color: "#fff",
-                border: "none",
-                borderRadius: 10,
-                fontWeight: 700,
-                cursor: "pointer",
-                fontSize: 13.5,
-                boxShadow: "0 2px 8px rgba(27,107,58,0.25)",
-                transition: "all 0.2s ease",
-              }}
-                onMouseEnter={(e) => { e.target.style.transform = "translateY(-1px)"; e.target.style.boxShadow = "0 4px 12px rgba(27,107,58,0.35)"; }}
-                onMouseLeave={(e) => { e.target.style.transform = "translateY(0)"; e.target.style.boxShadow = "0 2px 8px rgba(27,107,58,0.25)"; }}
-              >
-                💾 Save Changes
-              </button>
-            </div>
-
-            {/* Level & Grade Dropdowns - matching Exam Settings style */}
+            {/* Toolbar: title (left) + scope filters & default action (right) */}
             {(() => {
               const GRADES_BY_LEVEL = scopedLevelClasses;
-              const selectStyle = {
-                width: "100%", padding: "12px 16px", borderRadius: 8,
-                border: "1px solid #e6dfd8", fontSize: 14, background: "#fff",
-                outline: "none", cursor: "pointer", appearance: "none",
-                fontWeight: 600, color: "#2a2421", boxSizing: "border-box"
+              const compactSelect = {
+                padding: "6px 10px", borderRadius: 8, border: "1px solid #e6dfd8",
+                fontSize: 12, fontWeight: 600, background: "#faf8f5", color: "#2a2421",
+                outline: "none", cursor: "pointer"
               };
-              const labelStyle2 = { display: "block", fontSize: 11, fontWeight: 800, color: "#2a2421", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" };
+              const resetEntry = () => {
+                setEditingSubjectId(null);
+                setNewSubject({ name: "", code: "", type: subjectLevel === "Senior Secondary" ? "Compulsory" : "Core", group: 1 });
+              };
               return (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24, padding: "20px 24px", background: "#fff", border: "1px solid #e6dfd8", borderRadius: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.02)" }}>
-                  <div>
-                    <label style={labelStyle2}>Level</label>
-                    <div style={{ position: "relative" }}>
-                      <select
-                        value={subjectLevel}
-                        onChange={(e) => {
-                          setSubjectLevel(e.target.value);
-                          setSelectedSubjectGrade("");
-                          setNewSubject({ name: "", code: "", type: e.target.value === "Senior Secondary" ? "Compulsory" : "Core" });
-                        }}
-                        style={selectStyle}
-                      >
-                        {scopedLevelNames.map(l => <option key={l} value={l}>{l}</option>)}
-                      </select>
-                      <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16, marginBottom: 12 }}>
+                  <h3 style={{ margin: 0, fontSize: 20, color: "#2a2421", fontWeight: 800, letterSpacing: "-0.02em" }}>Subjects Configuration</h3>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 12, alignItems: "center", background: "#fff", border: "1px solid #e6dfd8", borderRadius: 30, padding: "10px 16px", boxShadow: "0 1px 2px rgba(0,0,0,0.03)" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: "#2a2421", letterSpacing: "0.04em" }}>LEVEL</span>
+                        <select
+                          value={subjectLevel}
+                          onChange={(e) => {
+                            setSubjectLevel(e.target.value);
+                            setSelectedSubjectGrade("");
+                            setEditingSubjectId(null);
+                            setNewSubject({ name: "", code: "", type: e.target.value === "Senior Secondary" ? "Compulsory" : "Core", group: 1 });
+                          }}
+                          style={compactSelect}
+                        >
+                          {scopedLevelNames.map(l => <option key={l} value={l}>{l}</option>)}
+                        </select>
+                      </div>
+                      <div style={{ width: 1, height: 22, background: "#e6dfd8" }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: "#2a2421", letterSpacing: "0.04em" }}>GRADE</span>
+                        <select
+                          value={selectedSubjectGrade}
+                          onChange={(e) => { setSelectedSubjectGrade(e.target.value); resetEntry(); }}
+                          style={compactSelect}
+                        >
+                          <option value="">-- Select --</option>
+                          {(GRADES_BY_LEVEL[subjectLevel] || []).map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <label style={labelStyle2}>Grade</label>
-                    <div style={{ position: "relative" }}>
-                      <select
-                        value={selectedSubjectGrade}
-                        onChange={(e) => setSelectedSubjectGrade(e.target.value)}
-                        style={selectStyle}
-                      >
-                        <option value="">-- Select Grade --</option>
-                        {(GRADES_BY_LEVEL[subjectLevel] || []).map(c => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
-                      <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
-                    </div>
+
+                    <button
+                      onClick={handleLoadDefaultSubjects}
+                      title="Replace the selected grade's subjects with the standard Kenyan defaults (CBC / 8-4-4)"
+                      style={{
+                        padding: "12px 18px",
+                        background: "#fff",
+                        color: "#B45309",
+                        border: "1px solid #F0D9B5",
+                        borderRadius: 30,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        fontSize: 13,
+                        whiteSpace: "nowrap",
+                        boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+                      }}
+                    >
+                      ↺ Default Subjects
+                    </button>
                   </div>
                 </div>
               );
@@ -2834,38 +2995,38 @@ const Settings = ({ schoolConfig, initialTab }) => {
 
 
             {/* Subjects Content Block */}
-            <section style={sectionCardStyle}>
+            <section style={{ ...sectionCardStyle, padding: 16 }}>
 
-              {/* Add Subject Form */}
+              {/* Add / Edit Subject Form */}
               <div style={{
                 background: "#f8fafc",
                 border: "1px solid #e2e8f0",
                 borderRadius: 16,
-                padding: "24px",
+                padding: "12px 14px",
                 display: "grid",
-                gridTemplateColumns: "1fr 2.5fr 1.5fr auto",
-                gap: 20,
+                gridTemplateColumns: "1fr 2.2fr 1.2fr 0.9fr auto",
+                gap: 14,
                 alignItems: "flex-end",
-                marginBottom: 28,
+                marginBottom: 12,
                 boxShadow: "inset 0 2px 4px rgba(0,0,0,0.01)"
               }}>
                 <div>
-                  <label style={{ ...labelStyle, marginBottom: 8, color: "#64748b", fontWeight: 700, fontSize: 11 }}>SUBJECT CODE</label>
-                  <input type="text" placeholder="e.g. MATH" value={newSubject.code} onChange={(e) => setNewSubject({ ...newSubject, code: e.target.value })} style={{ ...inputStyle, padding: "0 16px", height: "46px" }} />
-                </div>
-                
-                <div>
-                  <label style={{ ...labelStyle, marginBottom: 8, color: "#64748b", fontWeight: 700, fontSize: 11 }}>SUBJECT NAME</label>
-                  <input type="text" placeholder="e.g. Integrated Science" value={newSubject.name} onChange={(e) => setNewSubject({ ...newSubject, name: e.target.value })} style={{ ...inputStyle, padding: "0 16px", height: "46px" }} onKeyDown={(e) => e.key === "Enter" && handleAddSubject()} />
+                  <label style={{ ...labelStyle, marginBottom: 6, color: "#64748b", fontWeight: 700, fontSize: 11 }}>SUBJECT CODE</label>
+                  <input type="text" placeholder="e.g. MATH" value={newSubject.code} onChange={(e) => setNewSubject({ ...newSubject, code: e.target.value })} style={{ ...inputStyle, padding: "0 14px", height: "40px", fontSize: 13 }} />
                 </div>
 
                 <div>
-                  <label style={{ ...labelStyle, marginBottom: 8, color: "#64748b", fontWeight: 700, fontSize: 11 }}>TYPE</label>
+                  <label style={{ ...labelStyle, marginBottom: 6, color: "#64748b", fontWeight: 700, fontSize: 11 }}>SUBJECT NAME</label>
+                  <input type="text" placeholder="e.g. Integrated Science" value={newSubject.name} onChange={(e) => setNewSubject({ ...newSubject, name: e.target.value })} style={{ ...inputStyle, padding: "0 14px", height: "40px", fontSize: 13 }} onKeyDown={(e) => e.key === "Enter" && handleAddSubject()} />
+                </div>
+
+                <div>
+                  <label style={{ ...labelStyle, marginBottom: 6, color: "#64748b", fontWeight: 700, fontSize: 11 }}>TYPE</label>
                   <div style={{ position: "relative" }}>
                     <select
                       value={newSubject.type}
                       onChange={(e) => setNewSubject({ ...newSubject, type: e.target.value })}
-                      style={{ ...inputStyle, padding: "0 16px", height: "46px", appearance: "none", cursor: "pointer" }}
+                      style={{ ...inputStyle, padding: "0 14px", height: "40px", fontSize: 13, appearance: "none", cursor: "pointer" }}
                     >
                       {subjectLevel === "Senior Secondary" ? (
                         <>
@@ -2883,29 +3044,52 @@ const Settings = ({ schoolConfig, initialTab }) => {
                   </div>
                 </div>
 
-                <button
-                  onClick={handleAddSubject}
-                  style={{
-                    height: "46px",
-                    padding: "0 28px",
-                    background: "linear-gradient(135deg, #10b981, #059669)",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 12,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    fontSize: 14,
-                    boxShadow: "0 4px 12px rgba(16, 185, 129, 0.25)",
-                    transition: "all 0.2s ease",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                  onMouseEnter={(e) => { e.target.style.transform = "translateY(-2px)"; e.target.style.boxShadow = "0 6px 16px rgba(16, 185, 129, 0.35)"; }}
-                  onMouseLeave={(e) => { e.target.style.transform = "translateY(0)"; e.target.style.boxShadow = "0 4px 12px rgba(16, 185, 129, 0.25)"; }}
-                >
-                  + Add Subject
-                </button>
+                <div>
+                  <label style={{ ...labelStyle, marginBottom: 6, color: "#64748b", fontWeight: 700, fontSize: 11 }} title="KNEC-style subject group, used by the totalling policy below">GROUP</label>
+                  <div style={{ position: "relative" }}>
+                    <select
+                      value={newSubject.group}
+                      onChange={(e) => setNewSubject({ ...newSubject, group: parseInt(e.target.value) })}
+                      style={{ ...inputStyle, padding: "0 14px", height: "40px", fontSize: 13, appearance: "none", cursor: "pointer" }}
+                    >
+                      {[1, 2, 3, 4, 5].map(g => <option key={g} value={g}>Group {g}</option>)}
+                    </select>
+                    <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", fontSize: 11, color: "#8a8fa8" }}>▼</span>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={handleAddSubject}
+                    style={{
+                      height: "40px",
+                      padding: "0 24px",
+                      background: editingSubjectId !== null ? "#1A5F9C" : "linear-gradient(135deg, #10b981, #059669)",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      fontSize: 13.5,
+                      boxShadow: editingSubjectId !== null ? "0 4px 12px rgba(26, 95, 156, 0.25)" : "0 4px 12px rgba(16, 185, 129, 0.25)",
+                      whiteSpace: "nowrap",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {editingSubjectId !== null ? "✓ Update Subject" : "+ Add Subject"}
+                  </button>
+                  {editingSubjectId !== null && (
+                    <button
+                      onClick={() => {
+                        setEditingSubjectId(null);
+                        setNewSubject({ name: "", code: "", type: subjectLevel === "Senior Secondary" ? "Compulsory" : "Core", group: 1 });
+                      }}
+                      style={{ height: "40px", padding: "0 16px", background: "#fff", color: "#4A4A6A", border: "1px solid #e2e8f0", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                    >Cancel</button>
+                  )}
+                </div>
               </div>
 
               {/* Render table based on selected grade */}
@@ -2921,7 +3105,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                 const gradeName = CLASSES.find(c => c.id === selectedSubjectGrade)?.name || "";
 
                 const renderTable = (listTitle, listData) => (
-                  <div style={{ marginBottom: 20 }}>
+                  <div style={{ marginBottom: 12 }}>
                     <div
                       onClick={() => setSubjectsExpanded(prev => ({ ...prev, [listTitle]: !prev[listTitle] }))}
                       style={{
@@ -2938,46 +3122,186 @@ const Settings = ({ schoolConfig, initialTab }) => {
 
                     {(subjectsExpanded[listTitle] ?? true) && (
                       <div style={{ borderRadius: "0 0 12px 12px", border: "1px solid #e6dfd8", borderTop: "none", overflow: "hidden" }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
-                          <thead>
-                            <tr style={{ background: "#f5f2eb" }}>
-                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 40 }}>#</th>
-                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 90 }}>Code</th>
-                              <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12 }}>Subject Name</th>
-                              <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 120 }}>Type</th>
-                              <th style={{ padding: "11px 16px", textAlign: "center", width: 50 }}></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {listData.length === 0 ? (
-                               <tr><td colSpan="5" style={{ textAlign: "center", padding: "20px", color: "#8a8fa8", fontSize: 13 }}>No subjects found.</td></tr>
-                            ) : listData.map((s, idx) => (
-                              <tr key={s.id} style={{ borderTop: "1px solid #e6dfd8", background: idx % 2 === 0 ? "#fff" : "#f5f2eb" }}>
-                                <td style={{ padding: "12px 16px", color: "#8a8fa8", fontSize: 12, fontWeight: 600 }}>{idx + 1}</td>
-                                <td style={{ padding: "12px 16px", fontWeight: 600, color: "#8a8fa8" }}>{s.code || "-"}</td>
-                                <td style={{ padding: "12px 16px", fontWeight: 600, color: "#2a2421" }}>{s.name}</td>
-                                <td style={{ padding: "12px 16px", textAlign: "center" }}>
-                                  <span style={{
-                                    padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                                    background: (s.type === "Core" || s.type === "Compulsory") ? "#E8F5EE" : "#f5f2eb",
-                                    color: (s.type === "Core" || s.type === "Compulsory") ? "#D4AF37" : "#2a2421",
-                                  }}>
-                                    {s.type}
-                                  </span>
-                                </td>
-                                <td style={{ padding: "12px 16px", textAlign: "center" }}>
-                                  <button onClick={() => removeSubject(s.id, selectedSubjectGrade)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: "#c0392b", opacity: 0.5, transition: "opacity 0.2s" }} onMouseEnter={(e) => e.target.style.opacity = 1} onMouseLeave={(e) => e.target.style.opacity = 0.5}>🗑️</button>
-                                </td>
+                        <div className="table-scroll" style={{ maxHeight: 230, overflowY: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
+                            <thead>
+                              <tr>
+                                <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 40, position: "sticky", top: 0, background: "#f5f2eb", zIndex: 1 }}>#</th>
+                                <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 90, position: "sticky", top: 0, background: "#f5f2eb", zIndex: 1 }}>Code</th>
+                                <th style={{ padding: "11px 16px", textAlign: "left", fontWeight: 700, color: "#8a8fa8", fontSize: 12, position: "sticky", top: 0, background: "#f5f2eb", zIndex: 1 }}>Subject Name</th>
+                                <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 120, position: "sticky", top: 0, background: "#f5f2eb", zIndex: 1 }}>Type</th>
+                                <th style={{ padding: "11px 16px", textAlign: "center", fontWeight: 700, color: "#8a8fa8", fontSize: 12, width: 70, position: "sticky", top: 0, background: "#f5f2eb", zIndex: 1 }}>Group</th>
+                                <th style={{ padding: "11px 16px", textAlign: "center", width: 80, position: "sticky", top: 0, background: "#f5f2eb", zIndex: 1 }}></th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {listData.length === 0 ? (
+                                 <tr><td colSpan="6" style={{ textAlign: "center", padding: "20px", color: "#8a8fa8", fontSize: 13 }}>No subjects found.</td></tr>
+                              ) : listData.map((s, idx) => (
+                                <tr key={s.id} style={{ borderTop: "1px solid #e6dfd8", background: editingSubjectId === s.id ? "#EBF3FB" : (idx % 2 === 0 ? "#fff" : "#f5f2eb") }}>
+                                  <td style={{ padding: "12px 16px", color: "#8a8fa8", fontSize: 12, fontWeight: 600 }}>{idx + 1}</td>
+                                  <td style={{ padding: "12px 16px", fontWeight: 600, color: "#8a8fa8" }}>{s.code || "-"}</td>
+                                  <td style={{ padding: "12px 16px", fontWeight: 600, color: "#2a2421", textTransform: "uppercase" }}>{s.name}</td>
+                                  <td style={{ padding: "12px 16px", textAlign: "center" }}>
+                                    <span style={{
+                                      padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
+                                      background: (s.type === "Core" || s.type === "Compulsory") ? "#E8F5EE" : "#f5f2eb",
+                                      color: (s.type === "Core" || s.type === "Compulsory") ? "#D4AF37" : "#2a2421",
+                                    }}>
+                                      {s.type}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: "12px 16px", textAlign: "center" }}>
+                                    <span style={{ padding: "3px 9px", borderRadius: 6, fontSize: 11, fontWeight: 800, background: "#EBF3FB", color: "#1A5F9C" }}>
+                                      G{s.subject_group || 1}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: "12px 16px", textAlign: "center", whiteSpace: "nowrap" }}>
+                                    <button
+                                      onClick={() => {
+                                        setEditingSubjectId(s.id);
+                                        setNewSubject({ name: s.name || "", code: s.code || "", type: s.type || (subjectLevel === "Senior Secondary" ? "Compulsory" : "Core"), group: s.subject_group || 1 });
+                                      }}
+                                      title="Edit this subject"
+                                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: "#8a8fa8", opacity: 0.6, transition: "opacity 0.2s", marginRight: 6 }}
+                                      onMouseEnter={(e) => e.target.style.opacity = 1} onMouseLeave={(e) => e.target.style.opacity = 0.6}
+                                    >✏️</button>
+                                    <button onClick={() => removeSubject(s.id, selectedSubjectGrade)} title="Delete this subject" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, color: "#c0392b", opacity: 0.5, transition: "opacity 0.2s" }} onMouseEnter={(e) => e.target.style.opacity = 1} onMouseLeave={(e) => e.target.style.opacity = 0.5}>🗑️</button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     )}
                   </div>
                 );
 
                 return renderTable(`Subjects for ${gradeName}`, currentSubjects);
+              })()}
+
+              {/* Totalling & Minimum Subjects Policy */}
+              {selectedSubjectGrade && (() => {
+                const gradeName = CLASSES.find(c => c.id === selectedSubjectGrade)?.name || "";
+                const gradeSubjects = subjectsByGrade[selectedSubjectGrade] || [];
+                const groupCount = (g) => gradeSubjects.filter(s => (s.subject_group || 1) === g).length;
+                // Estimated counted subjects with the current rule (an 'all'
+                // group contributes however many subjects it currently holds).
+                const estimated = aggPolicy.count_all
+                  ? gradeSubjects.length
+                  : [1, 2, 3, 4, 5].reduce((acc, g) => {
+                      const t = aggPolicy.groupTakes[g];
+                      const c = groupCount(g);
+                      // A group can never contribute more subjects than it has.
+                      return acc + (t === "all" ? c : Math.min(parseInt(t) || 0, c));
+                    }, 0) + (parseInt(aggPolicy.remaining) || 0);
+                const takeSelect = {
+                  padding: "7px 10px", borderRadius: 8, border: "1px solid #e6dfd8",
+                  fontSize: 12, fontWeight: 600, background: "#faf8f5", color: "#2a2421",
+                  outline: "none", cursor: "pointer", width: "100%"
+                };
+                return (
+                  <div style={{ border: "1px solid #e6dfd8", borderRadius: 12, background: "#fff", overflow: "hidden" }}>
+                    <div style={{ padding: "10px 16px", background: "#f5f2eb", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: "#2a2421" }}>
+                        🧮 Totalling &amp; Minimum Subjects Policy — {gradeName}
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        {/^f\d/.test(selectedSubjectGrade) && !aggPolicy.count_all && (
+                          <button
+                            onClick={() => setAggPolicy({ count_all: false, groupTakes: { 1: "all", 2: 2, 3: 1, 4: 0, 5: 0 }, remaining: 1, min_subjects: 7 })}
+                            title="Fill the classic KNEC rule: all of Group 1 + best 2 sciences + best 1 humanity + best 1 remaining = 7"
+                            style={{ padding: "8px 14px", background: "#fff", color: "#B45309", border: "1px solid #F0D9B5", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+                          >↺ KNEC Best-7</button>
+                        )}
+                        <button
+                          onClick={handleSaveAggPolicy}
+                          disabled={isAggSaving}
+                          style={{ padding: "8px 18px", background: isAggSaving ? "#8a8fa8" : "#1A5F9C", color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: isAggSaving ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}
+                        >{isAggSaving ? "Saving..." : "💾 Save Policy"}</button>
+                      </div>
+                    </div>
+
+                    <div style={{ padding: "12px 16px" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#2a2421" }}>
+                        <input
+                          type="checkbox"
+                          checked={aggPolicy.count_all}
+                          onChange={(e) => setAggPolicy({ ...aggPolicy, count_all: e.target.checked })}
+                          style={{ width: 16, height: 16, accentColor: "#1B6B3A", cursor: "pointer" }}
+                        />
+                        Count all subjects (default) — every subject a student sits is totalled and averaged
+                      </label>
+
+                      {!aggPolicy.count_all && (
+                        <div style={{ marginTop: 12 }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
+                            {[1, 2, 3, 4, 5].map(g => {
+                              const c = groupCount(g);
+                              const current = aggPolicy.groupTakes[g];
+                              // "Best N" only up to the subjects the group actually
+                              // holds (a stale saved value stays selectable so it
+                              // isn't silently lost — the estimate clamps it anyway).
+                              const maxBest = Math.max(c, typeof current === "number" ? current : 0);
+                              return (
+                                <div key={g}>
+                                  <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                                    Group {g} <span style={{ color: "#8a8fa8", fontWeight: 600 }}>({c} subject{c === 1 ? "" : "s"})</span>
+                                  </div>
+                                  <select
+                                    value={String(current)}
+                                    onChange={(e) => setAggPolicy({ ...aggPolicy, groupTakes: { ...aggPolicy.groupTakes, [g]: e.target.value === "all" ? "all" : parseInt(e.target.value) } })}
+                                    style={takeSelect}
+                                  >
+                                    <option value="0">Not Compulsory</option>
+                                    {c > 0 && <option value="all">All subjects</option>}
+                                    {Array.from({ length: maxBest }, (_, i) => i + 1).map(n => (
+                                      <option key={n} value={n}>Best {n}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              );
+                            })}
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }} title="Best remaining subjects from any group, not already counted">
+                                Remaining
+                              </div>
+                              <select
+                                value={String(aggPolicy.remaining)}
+                                onChange={(e) => setAggPolicy({ ...aggPolicy, remaining: parseInt(e.target.value) })}
+                                style={takeSelect}
+                              >
+                                <option value="0">None</option>
+                                {[1, 2, 3].map(n => <option key={n} value={n}>Best {n}</option>)}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, padding: "10px 14px", background: "#F1F5F9", borderRadius: 10 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, fontWeight: 700, color: "#475569" }}>
+                              Minimum subjects required to grade a student:
+                              <input
+                                type="number"
+                                min="1"
+                                value={aggPolicy.min_subjects}
+                                onChange={(e) => setAggPolicy({ ...aggPolicy, min_subjects: e.target.value })}
+                                placeholder={String(estimated || "")}
+                                style={{ width: 64, padding: "6px 10px", borderRadius: 8, border: "1px solid #DDE3EB", fontSize: 13, fontWeight: 800, textAlign: "center", outline: "none", background: "#fff" }}
+                              />
+                            </div>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: "#1B6B3A", background: "#E8F5EE", padding: "6px 14px", borderRadius: 8 }}>
+                              = {estimated} subject{estimated === 1 ? "" : "s"} counted
+                            </div>
+                          </div>
+                          <div style={{ marginTop: 8, fontSize: 11, color: "#8A8FA8", lineHeight: 1.5 }}>
+                            💡 Rules apply top-down: "All" groups are always counted, "Best N" picks a group's highest-scoring subjects, and "Remaining" adds the best not-yet-counted subjects from any group. Students sitting fewer than the minimum are flagged instead of averaged.
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
               })()}
 
             </section>

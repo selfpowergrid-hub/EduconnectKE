@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { getClassesByType } from '../data/mockData';
+import { getClassesByType, defaultGradesFor } from '../data/mockData';
+import { applyAggregationPolicy } from '../lib/aggregation';
 
 // Class-type → level label, so the Level dropdown only offers types the
 // school actually teaches.
@@ -9,6 +10,7 @@ const TYPE_LABEL = { Primary: 'Primary', JSS: 'Junior Secondary', Secondary: 'Se
 const Marksheets = ({ schoolConfig, examsList }) => {
   const [students, setStudents] = useState([]);
   const [dbSubjects, setDbSubjects] = useState([]);
+  const [aggPolicy, setAggPolicy] = useState(null); // totalling policy row; null = count all
   const [dbGrades, setDbGrades] = useState([]);
   const [dbStreams, setDbStreams] = useState([]);
   const [allMarks, setAllMarks] = useState([]);
@@ -36,6 +38,7 @@ const Marksheets = ({ schoolConfig, examsList }) => {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedTerm, setSelectedTerm] = useState('Term 1');
   const [selectedExamId, setSelectedExamId] = useState('average'); // 'average' or specific exam.id
+  const [displayMode, setDisplayMode] = useState('marks'); // 'marks' | 'grades'
 
   // Filter Classes by Level
   const filteredClasses = useMemo(() => {
@@ -80,6 +83,7 @@ const Marksheets = ({ schoolConfig, examsList }) => {
   useEffect(() => {
     if (schoolConfig?.id) {
       fetchStudents();
+      fetchAggPolicy();
     }
   }, [schoolConfig?.id, selectedClass]);
 
@@ -115,6 +119,17 @@ const Marksheets = ({ schoolConfig, examsList }) => {
     setDbGrades(data || []);
   };
 
+  // Totalling policy for this class; null (no row) = count all subjects.
+  const fetchAggPolicy = async () => {
+    const { data } = await supabase
+      .from('aggregation_policies')
+      .select('*')
+      .eq('school_id', schoolConfig.id)
+      .eq('level_category', selectedClass)
+      .maybeSingle();
+    setAggPolicy(data || null);
+  };
+
   const fetchStreams = async () => {
     const { data } = await supabase.from('streams').select('*').eq('school_id', schoolConfig.id);
     setDbStreams(data || []);
@@ -147,12 +162,8 @@ const Marksheets = ({ schoolConfig, examsList }) => {
     let scale = dbGrades.filter(g => g.level_group === selectedClass);
     if (!scale.length) scale = dbGrades;
     if (!scale.length) {
-      scale = [
-        { grade: 'EE', min_score: 80 },
-        { grade: 'ME', min_score: 50 },
-        { grade: 'AE', min_score: 30 },
-        { grade: 'BE', min_score: 0 },
-      ];
+      // Built-in defaults: Form 3/4 → A–E scale, everything else → competency.
+      scale = defaultGradesFor(selectedClass);
     }
     const sorted = [...scale].sort((a, b) => b.min_score - a.min_score);
     for (const g of sorted) {
@@ -191,20 +202,20 @@ const Marksheets = ({ schoolConfig, examsList }) => {
     if (!filteredStudents.length) return [];
 
     let data = filteredStudents.map(student => {
-      let total = 0;
-      let count = 0;
       const subjectScores = {};
+      const entries = [];
 
       gradeSubjects.forEach(sub => {
         const score = getSubjectScore(student.id, sub.id);
         subjectScores[sub.id] = score;
-        if (score !== null) {
-          total += score;
-          count++;
-        }
+        if (score !== null) entries.push({ score, group: sub.subject_group || 1 });
       });
 
-      const average = count > 0 ? total / count : 0;
+      // Total/average over the policy-counted subjects only (all of them
+      // when no policy is set — identical to the old behavior).
+      const { counted, belowMinimum } = applyAggregationPolicy(aggPolicy, entries);
+      const total = counted.reduce((s, e) => s + e.score, 0);
+      const average = counted.length > 0 ? total / counted.length : 0;
       const meanGrade = getGrade(average).grade;
 
       return {
@@ -213,12 +224,13 @@ const Marksheets = ({ schoolConfig, examsList }) => {
         total,
         average,
         meanGrade,
-        subjectsCount: count
+        belowMinimum,
+        subjectsCount: entries.length
       };
     });
 
-    // Sort by total score descending
-    data.sort((a, b) => b.total - a.total);
+    // Sort by total score descending; below-minimum students sink to the end.
+    data.sort((a, b) => (b.belowMinimum ? -1 : b.total) - (a.belowMinimum ? -1 : a.total));
 
     // Assign ranks (handle ties)
     let currentRank = 1;
@@ -240,11 +252,29 @@ const Marksheets = ({ schoolConfig, examsList }) => {
     });
 
     return data;
-  }, [filteredStudents, gradeSubjects, getSubjectScore, getGrade]);
+  }, [filteredStudents, gradeSubjects, getSubjectScore, getGrade, aggPolicy]);
+
+  // Bottom summary: per-subject mean (only over students who actually have a
+  // mark for that subject — nulls excluded so absentees don't drag it down),
+  // plus overall class total/average across students who sat at least one
+  // subject. Grades are derived from those means.
+  const footerStats = useMemo(() => {
+    const mean = arr => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+    const perSubject = {};
+    gradeSubjects.forEach(sub => {
+      const vals = gridData.map(s => s.subjectScores[sub.id]).filter(v => v !== null && v !== undefined);
+      perSubject[sub.id] = mean(vals);
+    });
+    const withMarks = gridData.filter(s => gradeSubjects.some(sub => s.subjectScores[sub.id] !== null));
+    const classTotal = mean(withMarks.map(s => s.total));
+    const classAvg = mean(withMarks.map(s => s.average));
+    return { perSubject, classTotal, classAvg, count: withMarks.length };
+  }, [gridData, gradeSubjects]);
 
   const handlePrint = () => {
     const win = window.open('', '_blank');
-    const title = selectedExamId === 'average' ? 'OVERALL AVERAGE MARKSHEET' : `${gradeExams.find(e => e.id === selectedExamId)?.name.toUpperCase()} MARKSHEET`;
+    const baseTitle = selectedExamId === 'average' ? 'OVERALL AVERAGE MARKSHEET' : `${gradeExams.find(e => e.id === selectedExamId)?.name.toUpperCase()} MARKSHEET`;
+    const title = displayMode === 'grades' ? `${baseTitle} (GRADES)` : baseTitle;
     const className = currentTypeClasses.find(c => c.id === selectedClass)?.name || selectedClass;
     const streamName = selectedStream === 'all' ? 'All Streams' : dbStreams.find(s => s.id === selectedStream)?.name || '';
 
@@ -327,6 +357,26 @@ const Marksheets = ({ schoolConfig, examsList }) => {
           </select>
         </div>
         <div>
+          <div style={labelStyle}>Display</div>
+          <div style={{ display: 'flex', border: '1px solid #d1dee5', borderRadius: 8, overflow: 'hidden', height: 36 }}>
+            {['marks', 'grades'].map(mode => (
+              <button
+                key={mode}
+                onClick={() => setDisplayMode(mode)}
+                style={{
+                  padding: '0 16px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                  background: displayMode === mode ? '#1B6B3A' : '#fff',
+                  color: displayMode === mode ? '#fff' : '#2a2421',
+                  borderLeft: mode === 'grades' ? '1px solid #d1dee5' : 'none',
+                }}
+              >
+                {mode === 'marks' ? 'Marks' : 'Grades'}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div style={labelStyle}>&nbsp;</div>
           <button onClick={handlePrint} disabled={!gridData.length} style={{ padding: '8px 24px', background: gridData.length ? '#1B6B3A' : '#8A8FA8', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: gridData.length ? 'pointer' : 'not-allowed', height: 36, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span>🖨️</span> Print Marksheet
           </button>
@@ -363,23 +413,70 @@ const Marksheets = ({ schoolConfig, examsList }) => {
               <tbody>
                 {gridData.map((student, idx) => (
                   <tr key={student.id} style={{ background: idx % 2 === 0 ? '#fff' : '#f9fafc' }}>
-                    <td style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: '#1B6B3A' }}>{student.rank}</td>
+                    <td style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: '#1B6B3A' }}>{student.belowMinimum ? '—' : student.rank}</td>
                     <td style={{ border: '1px solid #e6dfd8', padding: '6px 8px', color: '#555' }}>{student.adm_no}</td>
                     <td style={{ border: '1px solid #e6dfd8', padding: '6px 8px', fontWeight: 600 }}>{student.first_name} {student.last_name}</td>
                     {gradeSubjects.map(sub => {
                       const score = student.subjectScores[sub.id];
+                      const cell = score === null ? '-' : (displayMode === 'grades' ? getGrade(score).grade : Math.round(score));
                       return (
-                        <td key={sub.id} style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center' }}>
-                          {score !== null ? Math.round(score) : '-'}
+                        <td key={sub.id} style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', fontWeight: displayMode === 'grades' ? 700 : 400, color: displayMode === 'grades' && score !== null ? '#d35400' : undefined }}>
+                          {cell}
                         </td>
                       );
                     })}
-                    <td style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', fontWeight: 700, background: '#f0f4f8' }}>{Math.round(student.total)}</td>
-                    <td style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', fontWeight: 700, background: '#f0f4f8' }}>{Math.round(student.average)}</td>
-                    <td style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', fontWeight: 700, background: '#f5efe6', color: '#d35400' }}>{student.meanGrade}</td>
+                    <td style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', fontWeight: 700, background: '#f0f4f8' }} title={student.belowMinimum ? 'Below minimum subjects required for grading' : undefined}>{student.belowMinimum ? '—' : Math.round(student.total)}</td>
+                    <td style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', fontWeight: 700, background: '#f0f4f8' }}>{student.belowMinimum ? '—' : Math.round(student.average)}</td>
+                    <td style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', fontWeight: 700, background: '#f5efe6', color: '#d35400' }}>{student.belowMinimum ? 'BELOW MIN' : student.meanGrade}</td>
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                {/* Per-subject class average (marks only; absentees excluded) */}
+                <tr style={{ background: '#eef3ee', fontWeight: 800 }}>
+                  <td colSpan={3} style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'right', color: '#1B6B3A' }}>
+                    SUBJECT AVERAGE
+                  </td>
+                  {gradeSubjects.map(sub => {
+                    const m = footerStats.perSubject[sub.id];
+                    const cell = m == null ? '-' : (displayMode === 'grades' ? getGrade(m).grade : Math.round(m));
+                    return (
+                      <td key={sub.id} style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', color: displayMode === 'grades' && m != null ? '#d35400' : '#1A1A2E' }}>
+                        {cell}
+                      </td>
+                    );
+                  })}
+                  <td style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', background: '#f0f4f8' }}>
+                    {footerStats.classTotal != null ? Math.round(footerStats.classTotal) : '-'}
+                  </td>
+                  <td style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', background: '#f0f4f8' }}>
+                    {footerStats.classAvg != null ? Math.round(footerStats.classAvg) : '-'}
+                  </td>
+                  <td style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', background: '#f5efe6', color: '#d35400' }}>
+                    {footerStats.classAvg != null ? getGrade(footerStats.classAvg).grade : '-'}
+                  </td>
+                </tr>
+                {/* Per-subject grade of that average — only in Marks view, since
+                    the Grades view already shows grades in the row above. */}
+                {displayMode === 'marks' && (
+                <tr style={{ background: '#f7faf7', fontWeight: 700 }}>
+                  <td colSpan={3} style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'right', color: '#1B6B3A' }}>
+                    SUBJECT GRADE
+                  </td>
+                  {gradeSubjects.map(sub => {
+                    const m = footerStats.perSubject[sub.id];
+                    return (
+                      <td key={sub.id} style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', color: '#d35400' }}>
+                        {m != null ? getGrade(m).grade : '-'}
+                      </td>
+                    );
+                  })}
+                  <td colSpan={3} style={{ border: '1px solid #e6dfd8', padding: '6px 8px', textAlign: 'center', color: '#8A8FA8', fontWeight: 600 }}>
+                    Based on {footerStats.count} student{footerStats.count === 1 ? '' : 's'} with marks
+                  </td>
+                </tr>
+                )}
+              </tfoot>
             </table>
           </div>
         )}

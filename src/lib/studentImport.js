@@ -92,12 +92,12 @@ export function normalizeBoarding(raw) {
   return { value: 'day', matched: false, changed: true };
 }
 
-const TEMPLATE_HEADERS = ["Adm No", "Full Name", "Grade", "Stream", "Gender", "Parent Phone", "Boarding", "Dorm"];
+const TEMPLATE_HEADERS = ["Adm No", "Full Name", "Grade", "Stream", "Gender", "Parent Phone", "Boarding", "Dorm", "UPI", "Birth Cert No", "Date of Birth", "Nationality", "Special Needs"];
 
 const EXAMPLE_ROWS = [
-  ["2026/001", "Mary Wanjiku Kamau", "", "", "F", "0712345678", "Day", ""],
-  ["2026/002", "Brian Otieno Ouma", "", "", "M", "0723456789", "Boarder", ""],
-  ["2026/003", "Faith Achieng Odhiambo", "", "", "F", "", "Day", ""],
+  ["2026/001", "Mary Wanjiku Kamau", "", "", "F", "0712345678", "Day", "", "A1B2C3D4", "1234567", "2010-03-14", "Kenyan", ""],
+  ["2026/002", "Brian Otieno Ouma", "", "", "M", "0723456789", "Boarder", "", "", "", "", "Kenyan", ""],
+  ["2026/003", "Faith Achieng Odhiambo", "", "", "F", "", "Day", "", "", "", "", "", ""],
 ];
 
 export function buildTemplate({ schoolName, defaultGrade, defaultStream, defaultGender, validGrades, validStreams, validDorms = [] }) {
@@ -112,7 +112,7 @@ export function buildTemplate({ schoolName, defaultGrade, defaultStream, default
   });
 
   while (rows.length < 50) {
-    rows.push(["", "", defaultGrade || "", defaultStream || "", defaultGender && defaultGender !== "per_row" ? defaultGender : "", "", "Day", ""]);
+    rows.push(["", "", defaultGrade || "", defaultStream || "", defaultGender && defaultGender !== "per_row" ? defaultGender : "", "", "Day", "", "", "", "", "Kenyan", ""]);
   }
 
   const data = [TEMPLATE_HEADERS, ...rows];
@@ -127,6 +127,11 @@ export function buildTemplate({ schoolName, defaultGrade, defaultStream, default
     { wch: 16 },
     { wch: 12 },
     { wch: 14 },
+    { wch: 14 },  // UPI
+    { wch: 14 },  // Birth Cert No
+    { wch: 14 },  // Date of Birth
+    { wch: 12 },  // Nationality
+    { wch: 18 },  // Special Needs
   ];
 
   const lastRow = rows.length + 1;
@@ -176,7 +181,7 @@ export function buildTemplate({ schoolName, defaultGrade, defaultStream, default
     ["1. Open the 'Students' sheet."],
     ["2. Fill one row per student. The first 3 rows are examples — overwrite or delete them."],
     ["3. Required fields: Adm No, Full Name."],
-    ["4. Optional fields: Stream, Gender, Parent Phone, Boarding, Dorm."],
+    ["4. Optional fields: Stream, Gender, Parent Phone, Boarding, Dorm, UPI, Birth Cert No, Date of Birth, Nationality, Special Needs."],
     ["5. Grade and Stream defaults are already pre-filled — change per row if needed."],
     ["6. Save the file and upload it back into the Bulk Import wizard."],
     [],
@@ -216,7 +221,7 @@ export function downloadTemplate(opts) {
 // "Admission Number" all resolve to the same field. Order matters: the first
 // canonical field whose alias matches wins.
 const HEADER_ALIASES = [
-  ['Adm No', ['admno', 'adm', 'admissionno', 'admissionnumber', 'admission', 'regno', 'reg', 'regnumber', 'indexno', 'upi', 'nemis']],
+  ['Adm No', ['admno', 'adm', 'admissionno', 'admissionnumber', 'admission', 'regno', 'reg', 'regnumber', 'indexno']],
   ['Full Name', ['fullname', 'name', 'names', 'studentname', 'studentnames', 'student', 'pupilname', 'pupil', 'learnername', 'learner']],
   ['Stream', ['stream', 'streams', 'classstream', 'streamname']],
   ['Grade', ['grade', 'gradeform', 'form', 'class', 'level', 'classform', 'gradelevel', 'standard']],
@@ -224,6 +229,13 @@ const HEADER_ALIASES = [
   ['Parent Phone', ['parentphone', 'guardianphone', 'phone', 'phoneno', 'phonenumber', 'mobile', 'mobileno', 'contact', 'contactno', 'telephone', 'parentcontact', 'guardiancontact', 'parentno']],
   ['Boarding', ['boarding', 'boarder', 'boardingstatus', 'residence', 'resident', 'dayboarder', 'dayorboarding', 'accommodation']],
   ['Dorm', ['dorm', 'dormitory', 'house', 'hostel', 'cubicle']],
+  // KEMIS / government register fields (UPI used to alias to Adm No — it is
+  // its own field now that we hold it separately).
+  ['UPI', ['upi', 'upino', 'upinumber', 'nemis', 'nemisno', 'nemisnumber', 'kemis', 'kemisno', 'maisha', 'maishanamba', 'maishanumber']],
+  ['Birth Cert No', ['birthcert', 'birthcertno', 'birthcertificate', 'birthcertificateno', 'birthcertificatenumber', 'birthentryno', 'bcertno']],
+  ['Date of Birth', ['dob', 'dateofbirth', 'birthdate', 'born', 'dateborn']],
+  ['Nationality', ['nationality', 'citizenship', 'citizen']],
+  ['Special Needs', ['specialneeds', 'specialneed', 'sne', 'disability', 'disabilities']],
 ];
 
 const normHeader = (h) => String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -378,6 +390,29 @@ export function validateRows(parsedRows, { validGrades, validStreams, validDorms
 
     if (!phone) warnings.push('Phone is blank');
 
+    // KEMIS fields — all optional. DOB accepts ISO (2010-07-15) or the common
+    // d/m/y spreadsheet form (15/07/2010); anything else is dropped with a note.
+    const upi = (row['UPI'] || '').trim();
+    const birthCertNo = (row['Birth Cert No'] || '').trim();
+    const nationality = (row['Nationality'] || '').trim();
+    const specialNeeds = (row['Special Needs'] || '').trim();
+    let dob = '';
+    const rawDob = (row['Date of Birth'] || '').trim();
+    if (rawDob) {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(rawDob)) {
+        dob = rawDob;
+      } else {
+        const m = rawDob.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/);
+        if (m) {
+          const yyyy = m[3].length === 2 ? `20${m[3]}` : m[3];
+          dob = `${yyyy}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+          notes.push(`Date of birth read as ${dob}`);
+        } else {
+          warnings.push(`Date of birth "${rawDob}" not recognised — left blank`);
+        }
+      }
+    }
+
     results.push({
       rowIndex: idx + 2,
       admNo,
@@ -388,6 +423,11 @@ export function validateRows(parsedRows, { validGrades, validStreams, validDorms
       phone,
       boarding: dorm ? 'boarder' : boarding,
       dorm,
+      upi,
+      birthCertNo,
+      dob,
+      nationality,
+      specialNeeds,
       errors,
       warnings,
       notes,
@@ -410,6 +450,11 @@ export function toInsertPayload(validatedRow, { schoolId, streamNameToId, dormNa
     boarding_status: validatedRow.boarding === 'boarder' ? 'boarder' : 'day',
     dorm_id: validatedRow.boarding === 'boarder' && validatedRow.dorm ? (dormNameToId[validatedRow.dorm] || null) : null,
     parent_phone: validatedRow.phone || null,
+    upi_number: validatedRow.upi || null,
+    birth_cert_no: validatedRow.birthCertNo || null,
+    date_of_birth: validatedRow.dob || null,
+    nationality: validatedRow.nationality || 'Kenyan',
+    special_needs: validatedRow.specialNeeds || null,
     status: 'Active',
   };
 }

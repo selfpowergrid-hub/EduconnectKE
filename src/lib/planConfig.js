@@ -19,7 +19,7 @@ export const PLANS = {
     allowedNavIds: [
       'dashboard', 'getting-started', 'registration-form', 'school-info', 'streams-dorms',
       'students', 'teachers', 'teacher-allocations', 'exams', 'exam-entries', 'reports',
-      'merit-list', 'subjects', 'grading', 'fees-structure', 'fees', 'fee-audit', 'fee-reports', 'fee-settings', 'pocket-money', 'banking', 'suppliers', 'payroll', 'final-accounts',
+      'merit-list', 'analysis', 'school-reports', 'attendance', 'subjects', 'grading', 'fees-structure', 'fees', 'fee-audit', 'fee-reports', 'fee-settings', 'pocket-money', 'banking', 'suppliers', 'payroll', 'final-accounts',
       'users', 'library',
     ],
     features: [
@@ -42,7 +42,7 @@ export const PLANS = {
     allowedNavIds: [
       'dashboard', 'getting-started', 'registration-form', 'school-info', 'streams-dorms',
       'students', 'teachers', 'teacher-allocations', 'exams', 'exam-entries', 'reports',
-      'merit-list', 'subjects', 'grading', 'fees-structure', 'fees', 'fee-audit', 'fee-reports', 'fee-settings', 'pocket-money', 'banking', 'suppliers', 'payroll', 'final-accounts',
+      'merit-list', 'analysis', 'school-reports', 'attendance', 'subjects', 'grading', 'fees-structure', 'fees', 'fee-audit', 'fee-reports', 'fee-settings', 'pocket-money', 'banking', 'suppliers', 'payroll', 'final-accounts',
       'users', 'library',
     ],
     features: [
@@ -65,7 +65,7 @@ export const PLANS = {
     allowedNavIds: [
       'dashboard', 'getting-started', 'registration-form', 'school-info', 'streams-dorms',
       'students', 'teachers', 'teacher-allocations', 'exams', 'exam-entries', 'reports',
-      'merit-list', 'subjects', 'grading', 'fees-structure', 'fees', 'fee-audit', 'fee-reports', 'fee-settings', 'pocket-money', 'banking', 'suppliers', 'payroll', 'final-accounts',
+      'merit-list', 'analysis', 'school-reports', 'attendance', 'subjects', 'grading', 'fees-structure', 'fees', 'fee-audit', 'fee-reports', 'fee-settings', 'pocket-money', 'banking', 'suppliers', 'payroll', 'final-accounts',
       'users', 'library',
     ],
     features: [

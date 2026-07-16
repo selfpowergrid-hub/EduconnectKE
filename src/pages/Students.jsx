@@ -132,7 +132,13 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
     boarding_status: "day",
     dorm_id: "",
     parent_phone: "",
-    photo_path: ""
+    photo_path: "",
+    // KEMIS / government register fields
+    upi_number: "",
+    birth_cert_no: "",
+    date_of_birth: "",
+    nationality: "Kenyan",
+    special_needs: ""
   });
 
   // Parents / guardians for the student being added or edited. Two blank rows
@@ -157,7 +163,12 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
       stream_id: "",
       dorm_id: "",
       parent_phone: "",
-      photo_path: ""
+      photo_path: "",
+      upi_number: "",
+      birth_cert_no: "",
+      date_of_birth: "",
+      nationality: "Kenyan",
+      special_needs: ""
     });
     setGuardians(emptyGuardians());
     setEditingStudentId(null);
@@ -178,7 +189,12 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
       boarding_status: student.boarding_status || (student.dorm_id ? "boarder" : "day"),
       dorm_id: student.dorm_id || "",
       parent_phone: student.parent_phone || "",
-      photo_path: student.photo_path || ""
+      photo_path: student.photo_path || "",
+      upi_number: student.upi_number || "",
+      birth_cert_no: student.birth_cert_no || "",
+      date_of_birth: student.date_of_birth || "",
+      nationality: student.nationality || "Kenyan",
+      special_needs: student.special_needs || ""
     });
     setEditingStudentId(student.id);
     setPendingPhotoBlob(null);
@@ -256,6 +272,12 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
       payload.last_name = "";
       // Empty selects come through as "" — store NULL, not an invalid UUID.
       payload.stream_id = payload.stream_id || null;
+      // KEMIS fields: empty strings become NULL ("" breaks the DATE column).
+      payload.upi_number = (payload.upi_number || "").trim() || null;
+      payload.birth_cert_no = (payload.birth_cert_no || "").trim() || null;
+      payload.date_of_birth = payload.date_of_birth || null;
+      payload.nationality = (payload.nationality || "").trim() || 'Kenyan';
+      payload.special_needs = (payload.special_needs || "").trim() || null;
       // Guardians drive the phone: mirror the first guardian's phone to the
       // legacy students.parent_phone so fees/reports keep working.
       const cleanGuardians = guardians
@@ -899,6 +921,44 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
                   </select>
                 </div>
               )}
+
+              {/* KEMIS / Government register details */}
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#4A4A6A", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>🏛️ KEMIS / Government Register</label>
+                <div style={{ fontSize: 11.5, color: "#8a8fa8", marginBottom: 10, lineHeight: 1.5 }}>
+                  Used for the KEMIS learner register and enrolment returns. Fill what you have — the School Reports page shows what's still missing.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, border: "1px solid #e6dfd8", borderRadius: 10, padding: 12, background: "#faf8f3" }}>
+                  {(() => {
+                    const fieldStyle = { width: "100%", padding: "9px 12px", borderRadius: 8, border: "1.5px solid #e6dfd8", fontSize: 13, boxSizing: "border-box", background: "#ffffff", outline: "none" };
+                    const miniLabel = { display: "block", fontSize: 9.5, fontWeight: 800, color: "#8a8fa8", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" };
+                    return (
+                      <>
+                        <div>
+                          <label style={miniLabel}>UPI / Maisha Namba</label>
+                          <input type="text" value={newStudent.upi_number} onChange={(e) => setNewStudent({ ...newStudent, upi_number: e.target.value })} placeholder="e.g. A1B2C3D4" style={fieldStyle} />
+                        </div>
+                        <div>
+                          <label style={miniLabel}>Birth Certificate No</label>
+                          <input type="text" value={newStudent.birth_cert_no} onChange={(e) => setNewStudent({ ...newStudent, birth_cert_no: e.target.value })} placeholder="e.g. 1234567" style={fieldStyle} />
+                        </div>
+                        <div>
+                          <label style={miniLabel}>Date of Birth</label>
+                          <input type="date" value={newStudent.date_of_birth} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setNewStudent({ ...newStudent, date_of_birth: e.target.value })} style={fieldStyle} />
+                        </div>
+                        <div>
+                          <label style={miniLabel}>Nationality</label>
+                          <input type="text" value={newStudent.nationality} onChange={(e) => setNewStudent({ ...newStudent, nationality: e.target.value })} placeholder="Kenyan" style={fieldStyle} />
+                        </div>
+                        <div style={{ gridColumn: "1 / -1" }}>
+                          <label style={miniLabel}>Special Needs (leave blank if none)</label>
+                          <input type="text" value={newStudent.special_needs} onChange={(e) => setNewStudent({ ...newStudent, special_needs: e.target.value })} placeholder="e.g. Visual impairment, physical disability…" style={fieldStyle} />
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
 
               {/* Parents / Guardians */}
               <div style={{ gridColumn: "1 / -1" }}>

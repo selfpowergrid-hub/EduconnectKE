@@ -17,6 +17,9 @@ import Exams from '../pages/Exams';
 import ExamEntries from '../pages/ExamEntries';
 import Reports from '../pages/Reports';
 import Marksheets from '../pages/Marksheets';
+import Analysis from '../pages/Analysis';
+import SchoolReports from '../pages/SchoolReports';
+import Attendance from '../pages/Attendance';
 import TeacherAllocations from '../pages/TeacherAllocations';
 import Fees from '../pages/Fees';
 import FeeAuditLog from '../pages/FeeAuditLog';
@@ -73,6 +76,7 @@ export const MODULES = {
         items: [
           { id: 'exams', label: 'Exam Settings', icon: '⚙️', component: Exams },
           { id: 'exam-entries', label: 'Exam Entries', icon: '✍️', component: ExamEntries, roles: ['admin', 'teacher'] },
+          { id: 'attendance', label: 'Attendance', icon: '📅', component: Attendance, roles: ['admin', 'teacher'] },
           { id: 'subjects', label: 'Subjects', icon: '📖', component: Settings, tab: 'subjects' },
           { id: 'grading', label: 'Grading System', icon: '📈', component: Settings, tab: 'grading' },
           { id: 'teacher-allocations', label: 'Teacher Allocations', icon: '🧑‍🏫', component: TeacherAllocations },
@@ -82,8 +86,10 @@ export const MODULES = {
         title: 'Reports',
         icon: '📋',
         items: [
+          { id: 'analysis', label: 'Analysis Reports', icon: '📊', component: Analysis, roles: ['admin', 'teacher'] },
           { id: 'reports', label: 'Report Cards', icon: '📋', component: Reports, roles: ['admin', 'teacher'] },
           { id: 'merit-list', label: 'Exam Marksheets', icon: '🔢', component: Marksheets, roles: ['admin', 'teacher'] },
+          { id: 'school-reports', label: 'School General Reports', icon: '🏛️', component: SchoolReports },
         ],
       },
     ],
