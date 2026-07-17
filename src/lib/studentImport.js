@@ -92,12 +92,12 @@ export function normalizeBoarding(raw) {
   return { value: 'day', matched: false, changed: true };
 }
 
-const TEMPLATE_HEADERS = ["Adm No", "Full Name", "Grade", "Stream", "Gender", "Parent Phone", "Boarding", "Dorm", "UPI", "Birth Cert No", "Date of Birth", "Nationality", "Special Needs"];
+const TEMPLATE_HEADERS = ["Adm No", "Full Name", "Grade", "Stream", "Gender", "Parent Phone", "Boarding", "Dorm", "UPI", "Birth Cert No", "Date of Birth", "Nationality", "Special Needs", "KCPE"];
 
 const EXAMPLE_ROWS = [
-  ["2026/001", "Mary Wanjiku Kamau", "", "", "F", "0712345678", "Day", "", "A1B2C3D4", "1234567", "2010-03-14", "Kenyan", ""],
-  ["2026/002", "Brian Otieno Ouma", "", "", "M", "0723456789", "Boarder", "", "", "", "", "Kenyan", ""],
-  ["2026/003", "Faith Achieng Odhiambo", "", "", "F", "", "Day", "", "", "", "", "", ""],
+  ["2026/001", "Mary Wanjiku Kamau", "", "", "F", "0712345678", "Day", "", "A1B2C3D4", "1234567", "2010-03-14", "Kenyan", "", "350"],
+  ["2026/002", "Brian Otieno Ouma", "", "", "M", "0723456789", "Boarder", "", "", "", "", "Kenyan", "", ""],
+  ["2026/003", "Faith Achieng Odhiambo", "", "", "F", "", "Day", "", "", "", "", "", "", ""],
 ];
 
 export function buildTemplate({ schoolName, defaultGrade, defaultStream, defaultGender, validGrades, validStreams, validDorms = [] }) {
@@ -112,7 +112,7 @@ export function buildTemplate({ schoolName, defaultGrade, defaultStream, default
   });
 
   while (rows.length < 50) {
-    rows.push(["", "", defaultGrade || "", defaultStream || "", defaultGender && defaultGender !== "per_row" ? defaultGender : "", "", "Day", "", "", "", "", "Kenyan", ""]);
+    rows.push(["", "", defaultGrade || "", defaultStream || "", defaultGender && defaultGender !== "per_row" ? defaultGender : "", "", "Day", "", "", "", "", "Kenyan", "", ""]);
   }
 
   const data = [TEMPLATE_HEADERS, ...rows];
@@ -132,6 +132,7 @@ export function buildTemplate({ schoolName, defaultGrade, defaultStream, default
     { wch: 14 },  // Date of Birth
     { wch: 12 },  // Nationality
     { wch: 18 },  // Special Needs
+    { wch: 10 },  // KCPE
   ];
 
   const lastRow = rows.length + 1;
@@ -181,7 +182,7 @@ export function buildTemplate({ schoolName, defaultGrade, defaultStream, default
     ["1. Open the 'Students' sheet."],
     ["2. Fill one row per student. The first 3 rows are examples — overwrite or delete them."],
     ["3. Required fields: Adm No, Full Name."],
-    ["4. Optional fields: Stream, Gender, Parent Phone, Boarding, Dorm, UPI, Birth Cert No, Date of Birth, Nationality, Special Needs."],
+    ["4. Optional fields: Stream, Gender, Parent Phone, Boarding, Dorm, UPI, Birth Cert No, Date of Birth, Nationality, Special Needs, KCPE (entry score out of 500)."],
     ["5. Grade and Stream defaults are already pre-filled — change per row if needed."],
     ["6. Save the file and upload it back into the Bulk Import wizard."],
     [],
@@ -236,6 +237,7 @@ const HEADER_ALIASES = [
   ['Date of Birth', ['dob', 'dateofbirth', 'birthdate', 'born', 'dateborn']],
   ['Nationality', ['nationality', 'citizenship', 'citizen']],
   ['Special Needs', ['specialneeds', 'specialneed', 'sne', 'disability', 'disabilities']],
+  ['KCPE', ['kcpe', 'kcpescore', 'kcpemarks', 'entrymarks', 'entryscore', 'baseline', 'baselinescore']],
 ];
 
 const normHeader = (h) => String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -396,6 +398,17 @@ export function validateRows(parsedRows, { validGrades, validStreams, validDorms
     const birthCertNo = (row['Birth Cert No'] || '').trim();
     const nationality = (row['Nationality'] || '').trim();
     const specialNeeds = (row['Special Needs'] || '').trim();
+    // KCPE entry score (0–500) — baseline for Value Added Progress.
+    let kcpe = null;
+    const rawKcpe = (row['KCPE'] || '').trim();
+    if (rawKcpe) {
+      const n = parseInt(rawKcpe, 10);
+      if (Number.isNaN(n) || n < 0 || n > 500) {
+        warnings.push(`KCPE "${rawKcpe}" not a score out of 500 — left blank`);
+      } else {
+        kcpe = n;
+      }
+    }
     let dob = '';
     const rawDob = (row['Date of Birth'] || '').trim();
     if (rawDob) {
@@ -428,6 +441,7 @@ export function validateRows(parsedRows, { validGrades, validStreams, validDorms
       dob,
       nationality,
       specialNeeds,
+      kcpe,
       errors,
       warnings,
       notes,
@@ -455,6 +469,7 @@ export function toInsertPayload(validatedRow, { schoolId, streamNameToId, dormNa
     date_of_birth: validatedRow.dob || null,
     nationality: validatedRow.nationality || 'Kenyan',
     special_needs: validatedRow.specialNeeds || null,
+    kcpe_score: validatedRow.kcpe ?? null,
     status: 'Active',
   };
 }

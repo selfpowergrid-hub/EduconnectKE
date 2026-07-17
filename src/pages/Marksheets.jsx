@@ -2,10 +2,19 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { getClassesByType, defaultGradesFor } from '../data/mockData';
 import { applyAggregationPolicy } from '../lib/aggregation';
+import { LEVELS, GRADE_CODE_TO_NAME } from '../lib/schoolLevels';
+import PrintSizer, { printCellFont, usePageEstimate } from '../components/PrintSizer';
 
 // Class-type → level label, so the Level dropdown only offers types the
 // school actually teaches.
 const TYPE_LABEL = { Primary: 'Primary', JSS: 'Junior Secondary', Secondary: 'Senior Secondary' };
+
+// The academic level name ("Senior Secondary") a class code ("f3") belongs to.
+const levelNameForClass = (classId) => {
+  const name = GRADE_CODE_TO_NAME[classId];
+  for (const [lvl, grades] of Object.entries(LEVELS)) if (grades.includes(name)) return lvl;
+  return null;
+};
 
 const Marksheets = ({ schoolConfig, examsList }) => {
   const [students, setStudents] = useState([]);
@@ -38,7 +47,11 @@ const Marksheets = ({ schoolConfig, examsList }) => {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedTerm, setSelectedTerm] = useState('Term 1');
   const [selectedExamId, setSelectedExamId] = useState('average'); // 'average' or specific exam.id
-  const [displayMode, setDisplayMode] = useState('marks'); // 'marks' | 'grades'
+  const [displayMode, setDisplayMode] = useState('broadsheet'); // 'broadsheet' | 'marks' | 'grades'
+  // Print sizing: zoom scales everything (font + row height) so a long sheet
+  // can be squeezed onto one page; font is an explicit override on top.
+  const [printScale, setPrintScale] = useState(100);   // 50–120 %
+  const [printFont, setPrintFont] = useState('auto');  // 'auto' | px number
 
   // Filter Classes by Level
   const filteredClasses = useMemo(() => {
@@ -158,19 +171,37 @@ const Marksheets = ({ schoolConfig, examsList }) => {
     setIsLoading(false);
   };
 
-  const getGrade = useCallback((score) => {
-    let scale = dbGrades.filter(g => g.level_group === selectedClass);
-    if (!scale.length) scale = dbGrades;
-    if (!scale.length) {
-      // Built-in defaults: Form 3/4 → A–E scale, everything else → competency.
-      scale = defaultGradesFor(selectedClass);
-    }
-    const sorted = [...scale].sort((a, b) => b.min_score - a.min_score);
-    for (const g of sorted) {
-      if (score >= g.min_score) return g;
-    }
-    return { grade: '-' };
+  // The grading scale for THIS class: exact grade match → level-wide rows →
+  // any rows for the level → built-in defaults. (Previously filtered on a
+  // non-existent level_group column, which silently mixed every scale the
+  // school has.)
+  const gradeScale = useMemo(() => {
+    const gradeName = GRADE_CODE_TO_NAME[selectedClass];
+    const levelName = levelNameForClass(selectedClass);
+    let scale = dbGrades.filter(g => g.school_grade === gradeName);
+    if (!scale.length) scale = dbGrades.filter(g => g.school_level === levelName && (g.school_grade === 'All' || !g.school_grade));
+    if (!scale.length) scale = dbGrades.filter(g => g.school_level === levelName);
+    if (!scale.length) scale = defaultGradesFor(selectedClass);
+    return [...scale].sort((a, b) => (b.min_score || 0) - (a.min_score || 0));
   }, [dbGrades, selectedClass]);
+
+  const getGrade = useCallback((score) => {
+    for (const g of gradeScale) {
+      if (score >= (g.min_score || 0)) return g;
+    }
+    return { grade: '-', points: 0 };
+  }, [gradeScale]);
+
+  // Points helpers for the broadsheet: grade for a mean-points value, and the
+  // top of the points scale (12 on the standard scale) for V.A.P normalising.
+  const gradeByPoints = useCallback((points) => {
+    const rounded = Math.round(points);
+    const exact = gradeScale.find(g => g.points === rounded);
+    if (exact) return exact.grade || exact.code || '-';
+    let nearest = null, diff = Infinity;
+    gradeScale.forEach(g => { const d = Math.abs((g.points || 0) - points); if (d < diff) { diff = d; nearest = g; } });
+    return nearest?.grade || nearest?.code || '-';
+  }, [gradeScale]);
 
   // Calculate score for one student + one subject based on selected mode.
   // All scores are returned as a 0-100 percentage so columns are comparable
@@ -271,23 +302,106 @@ const Marksheets = ({ schoolConfig, examsList }) => {
     return { perSubject, classTotal, classAvg, count: withMarks.length };
   }, [gridData, gradeSubjects]);
 
+  // ---------------------------------------------------------------------
+  // BROADSHEET (modelled on the classic KCSE merit broadsheet):
+  // score+grade per subject, SUB, PTS (policy-aware "point cluster
+  // selection"), M.SC (PTS÷SUB), GR, CL Pos (within stream), POS (overall,
+  // whole class), KCPE + V.A.P, and a PTS/POS mini-block per exam sitting.
+  // Computed over the WHOLE class so POS is real; the stream filter only
+  // decides which rows are displayed.
+  const bsData = useMemo(() => {
+    if (!students.length || !gradeSubjects.length) return { rows: [] };
+
+    // Competition ranking (1,2,2,4...) on a numeric key, descending.
+    const rankInto = (list, keyFn, field) => {
+      const ranked = list.filter(r => keyFn(r) !== null && !r.belowMinimum)
+        .sort((a, b) => keyFn(b) - keyFn(a));
+      let rank = 0, prev = null, seen = 0;
+      ranked.forEach(r => {
+        seen++;
+        const v = Math.round(keyFn(r) * 100) / 100;
+        if (prev === null || v !== prev) rank = seen;
+        r[field] = rank; prev = v;
+      });
+    };
+
+    const rows = students.map(student => {
+      const subjectDetail = {};
+      const entries = [];
+      gradeSubjects.forEach(sub => {
+        const score = getSubjectScore(student.id, sub.id);
+        if (score !== null) {
+          const g = getGrade(score);
+          subjectDetail[sub.id] = { score: Math.round(score), grade: g.grade || g.code || '-' };
+          entries.push({ score, group: sub.subject_group || 1 });
+        }
+      });
+      const { counted, belowMinimum } = applyAggregationPolicy(aggPolicy, entries);
+      const pts = counted.reduce((a, e) => a + (getGrade(e.score).points || 0), 0);
+      const meanPts = counted.length ? pts / counted.length : 0;
+
+      return {
+        student, subjectDetail,
+        sat: entries.length,
+        pts, meanPts,
+        meanGrade: counted.length ? gradeByPoints(meanPts) : '-',
+        belowMinimum,
+      };
+    }).filter(r => r.sat > 0);
+
+    // Overall position (whole class) and per-stream class position.
+    rankInto(rows, r => r.pts + r.meanPts / 1000, 'pos');
+    const byStream = {};
+    rows.forEach(r => { (byStream[r.student.stream_id || 'none'] = byStream[r.student.stream_id || 'none'] || []).push(r); });
+    Object.values(byStream).forEach(group => rankInto(group, r => r.pts + r.meanPts / 1000, 'clPos'));
+
+    rows.sort((a, b) => (a.belowMinimum ? 1 : 0) - (b.belowMinimum ? 1 : 0) || (a.pos || 9999) - (b.pos || 9999));
+    return { rows };
+  }, [students, gradeSubjects, aggPolicy, getSubjectScore, getGrade, gradeByPoints]);
+
+  // Broadsheet rows actually shown (stream filter applies to display only).
+  const bsRows = useMemo(
+    () => selectedStream === 'all' ? bsData.rows : bsData.rows.filter(r => r.student.stream_id === selectedStream),
+    [bsData, selectedStream]
+  );
+
+  // Live estimate of printed pages (landscape A4) at the current settings.
+  const estPages = usePageEstimate({
+    containerId: 'marksheet-table-container',
+    scale: printScale, font: printFont,
+    autoPx: displayMode === 'broadsheet' ? 8 : 11,
+    landscape: true,
+    headerPx: 110, // school header + title block added by the print window
+    deps: [displayMode, bsRows, gridData, isLoading],
+  });
+
   const handlePrint = () => {
     const win = window.open('', '_blank');
     const baseTitle = selectedExamId === 'average' ? 'OVERALL AVERAGE MARKSHEET' : `${gradeExams.find(e => e.id === selectedExamId)?.name.toUpperCase()} MARKSHEET`;
-    const title = displayMode === 'grades' ? `${baseTitle} (GRADES)` : baseTitle;
+    const title = displayMode === 'broadsheet'
+      ? `EXAM RESULTS ${(currentTypeClasses.find(c => c.id === selectedClass)?.name || '').toUpperCase()} — ${selectedExamId === 'average' ? 'OVERALL AVERAGE' : (gradeExams.find(e => e.id === selectedExamId)?.name || '').toUpperCase()}`
+      : displayMode === 'grades' ? `${baseTitle} (GRADES)` : baseTitle;
     const className = currentTypeClasses.find(c => c.id === selectedClass)?.name || selectedClass;
     const streamName = selectedStream === 'all' ? 'All Streams' : dbStreams.find(s => s.id === selectedStream)?.name || '';
+    const clusterNote = displayMode === 'broadsheet' && aggPolicy && aggPolicy.count_all === false
+      ? '<div style="font-weight:bold;font-size:12px;margin-top:4px">RANKING BY POINT CLUSTER SELECTION</div>' : '';
+    const stamp = displayMode === 'broadsheet'
+      ? `<div style="margin-top:10px;font-size:9px;color:#555">${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>` : '';
 
+    const cellFont = printCellFont(printFont, displayMode === 'broadsheet' ? 8 : 11);
+    const cellPad = displayMode === 'broadsheet'
+      ? (cellFont <= 7 ? '1px 2px' : '2px 3px')
+      : (cellFont <= 9 ? '3px' : '5px');
     win.document.write(`<html><head><title>Exam Marksheet</title>
       <style>
-        @page { size: landscape; margin: 10mm; }
-        body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
-        .header { text-align: center; margin-bottom: 20px; }
+        @page { size: landscape; margin: 8mm; }
+        body { font-family: Arial, sans-serif; font-size: 11px; color: #000; zoom: ${printScale / 100}; }
+        .header { text-align: center; margin-bottom: 14px; }
         .school-name { font-size: 20px; font-weight: bold; margin: 5px 0; }
-        .report-title { font-size: 16px; font-weight: bold; margin: 10px 0; text-decoration: underline; }
-        .meta-info { display: flex; justify-content: space-between; margin-bottom: 15px; font-weight: bold; }
+        .report-title { font-size: 16px; font-weight: bold; margin: 8px 0; text-decoration: underline; }
+        .meta-info { display: flex; justify-content: space-between; margin-bottom: 10px; font-weight: bold; }
         table { width: 100%; border-collapse: collapse; }
-        th, td { border: 1px solid #000; padding: 5px; text-align: center; }
+        th, td { border: 1px solid #000; padding: ${cellPad}; text-align: center; font-size: ${cellFont}px; }
         th { background: #f0f0f0; }
         .text-left { text-align: left; }
         .bold { font-weight: bold; }
@@ -297,6 +411,7 @@ const Marksheets = ({ schoolConfig, examsList }) => {
         ${schoolInfo?.logo_url ? `<img src="${schoolInfo.logo_url}" style="height:60px; object-fit:contain;" />` : ''}
         <div class="school-name">${(schoolConfig?.schoolName || '').toUpperCase()}</div>
         <div class="report-title">${title}</div>
+        ${clusterNote}
       </div>
       <div class="meta-info">
         <div>CLASS: ${className} ${streamName}</div>
@@ -304,6 +419,7 @@ const Marksheets = ({ schoolConfig, examsList }) => {
         <div>YEAR: ${selectedYear}</div>
       </div>
       ${document.getElementById('marksheet-table-container').innerHTML}
+      ${stamp}
     </body></html>`);
     
     win.document.close();
@@ -359,25 +475,29 @@ const Marksheets = ({ schoolConfig, examsList }) => {
         <div>
           <div style={labelStyle}>Display</div>
           <div style={{ display: 'flex', border: '1px solid #d1dee5', borderRadius: 8, overflow: 'hidden', height: 36 }}>
-            {['marks', 'grades'].map(mode => (
+            {[['broadsheet', 'Broadsheet'], ['marks', 'Marks'], ['grades', 'Grades']].map(([mode, label], i) => (
               <button
                 key={mode}
                 onClick={() => setDisplayMode(mode)}
                 style={{
-                  padding: '0 16px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                  padding: '0 14px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
                   background: displayMode === mode ? '#1B6B3A' : '#fff',
                   color: displayMode === mode ? '#fff' : '#2a2421',
-                  borderLeft: mode === 'grades' ? '1px solid #d1dee5' : 'none',
+                  borderLeft: i > 0 ? '1px solid #d1dee5' : 'none',
                 }}
               >
-                {mode === 'marks' ? 'Marks' : 'Grades'}
+                {label}
               </button>
             ))}
           </div>
         </div>
         <div>
+          <div style={labelStyle} title="Scale and font for the printout — the badge estimates printed pages">Print Size</div>
+          <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} />
+        </div>
+        <div>
           <div style={labelStyle}>&nbsp;</div>
-          <button onClick={handlePrint} disabled={!gridData.length} style={{ padding: '8px 24px', background: gridData.length ? '#1B6B3A' : '#8A8FA8', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: gridData.length ? 'pointer' : 'not-allowed', height: 36, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button onClick={handlePrint} disabled={displayMode === 'broadsheet' ? !bsRows.length : !gridData.length} style={{ padding: '8px 24px', background: (displayMode === 'broadsheet' ? bsRows.length : gridData.length) ? '#1B6B3A' : '#8A8FA8', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: (displayMode === 'broadsheet' ? bsRows.length : gridData.length) ? 'pointer' : 'not-allowed', height: 36, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span>🖨️</span> Print Marksheet
           </button>
         </div>
@@ -387,10 +507,78 @@ const Marksheets = ({ schoolConfig, examsList }) => {
       <div style={{ flex: 1, background: '#fff', border: '1px solid #E8EAF0', borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {isLoading ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8A8FA8' }}>Loading marks...</div>
-        ) : !gridData.length ? (
+        ) : (displayMode === 'broadsheet' ? !bsRows.length : !gridData.length) ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8A8FA8', flexDirection: 'column', gap: 10 }}>
             <span style={{ fontSize: 40 }}>📄</span>
             <span>No data available for this selection.</span>
+          </div>
+        ) : displayMode === 'broadsheet' ? (
+          <div id="marksheet-table-container" style={{ flex: 1, overflow: 'auto' }}>
+            {(() => {
+              const showStr = selectedStream === 'all';
+              const thB = { border: '1px solid #d8d2c8', padding: '5px 4px', textAlign: 'center', fontWeight: 800, fontSize: 10, background: '#faf8f5', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 5 };
+              const tdB = { border: '1px solid #e6dfd8', padding: '4px 4px', textAlign: 'center', fontSize: 11, whiteSpace: 'nowrap' };
+              const shortName = (n) => (n || '').length > 5 ? n.slice(0, 4).toUpperCase() : (n || '').toUpperCase();
+              return (
+                <>
+                  <div style={{ padding: '10px 14px 6px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 13, fontWeight: 900, letterSpacing: 0.5, color: '#1A1A2E' }}>
+                      EXAM RESULTS {(currentTypeClasses.find(c => c.id === selectedClass)?.name || '').toUpperCase()}
+                      {selectedStream !== 'all' ? ` ${(dbStreams.find(s => s.id === selectedStream)?.name || '').toUpperCase()}` : ''} · {selectedTerm.toUpperCase()} {selectedYear} · {selectedExamId === 'average' ? 'OVERALL AVERAGE' : (gradeExams.find(e => e.id === selectedExamId)?.name || '').toUpperCase()}
+                    </div>
+                    {aggPolicy && aggPolicy.count_all === false && (
+                      <div style={{ fontSize: 10.5, fontWeight: 700, color: '#8A6A1F', marginTop: 2 }}>RANKING BY POINT CLUSTER SELECTION</div>
+                    )}
+                  </div>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+                    <thead>
+                      <tr>
+                        <th style={thB}>ADM</th>
+                        <th style={{ ...thB, textAlign: 'left', minWidth: 140 }}>NAME</th>
+                        {showStr && <th style={thB}>STR</th>}
+                        <th style={thB} title="Subjects sat">SUB</th>
+                        {gradeSubjects.map(sub => (
+                          <th key={sub.id} style={{ ...thB, background: '#f0efe8' }} title={sub.name}>{shortName(sub.name)}</th>
+                        ))}
+                        <th style={{ ...thB, background: '#e8f5ee', color: '#1B6B3A' }} title="Total points">PTS</th>
+                        <th style={{ ...thB, background: '#e8f5ee', color: '#1B6B3A' }} title="Mean points (points ÷ subjects)">M.PTS</th>
+                        <th style={{ ...thB, background: '#e8f5ee', color: '#1B6B3A' }} title="Mean grade">M.GR</th>
+                        <th style={{ ...thB, background: '#eef3ee' }} title="Class position (within the stream)">CLp</th>
+                        <th style={{ ...thB, background: '#eef3ee' }} title="Overall position (whole class)">POS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bsRows.map((r, idx) => (
+                        <tr key={r.student.id} style={{ background: idx % 2 === 0 ? '#fff' : '#faf8f5' }}>
+                          <td style={{ ...tdB, fontSize: 10 }}>{r.student.adm_no}</td>
+                          <td style={{ ...tdB, textAlign: 'left', fontWeight: 600, fontSize: 10.5 }}>{r.student.first_name} {r.student.last_name}</td>
+                          {showStr && <td style={{ ...tdB, fontSize: 10 }}>{dbStreams.find(s => s.id === r.student.stream_id)?.name || '—'}</td>}
+                          <td style={{ ...tdB, fontWeight: 700 }}>{r.sat}</td>
+                          {gradeSubjects.map(sub => {
+                            const d = r.subjectDetail[sub.id];
+                            return (
+                              <td key={sub.id} style={{ ...tdB, fontSize: 10, color: d ? '#2a2421' : '#c9c4bd' }}>
+                                {d ? `${d.score} ${d.grade}` : '—'}
+                              </td>
+                            );
+                          })}
+                          <td style={{ ...tdB, fontWeight: 800, background: '#f0faf3' }}>{r.belowMinimum ? '—' : r.pts}</td>
+                          <td style={{ ...tdB, fontWeight: 700, background: '#f0faf3' }}>{r.belowMinimum ? '—' : r.meanPts.toFixed(2)}</td>
+                          <td style={{ ...tdB, fontWeight: 800, color: '#d35400', background: '#f0faf3' }}>{r.belowMinimum ? 'BM' : r.meanGrade}</td>
+                          <td style={{ ...tdB, fontWeight: 700, background: '#f4f7f4' }}>{r.belowMinimum ? '—' : (r.clPos || '—')}</td>
+                          <td style={{ ...tdB, fontWeight: 800, color: '#1B6B3A', background: '#f4f7f4' }}>{r.belowMinimum ? '—' : r.pos}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div style={{ padding: '8px 14px', fontSize: 10, color: '#8a8fa8' }}>
+                    Printed {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}
+                    {aggPolicy && aggPolicy.count_all === false ? ` · PTS uses the ${aggPolicy.min_subjects ? `best-${aggPolicy.min_subjects}` : 'configured'} point cluster selection` : ''}
+                    {' · CLp = class (stream) position · POS = overall position'}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         ) : (
           <div id="marksheet-table-container" style={{ flex: 1, overflow: 'auto' }}>

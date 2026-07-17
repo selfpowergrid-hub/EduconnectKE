@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { GRADE_NAME_TO_CODE, gradesByLevelForSchool } from '../lib/schoolLevels';
+import PrintSizer, { printCellFont, usePageEstimate } from '../components/PrintSizer';
 
 // Daily class attendance register + termly summary report.
 // One row per student per day in attendance_records (upsert on re-mark).
@@ -160,16 +161,25 @@ const Attendance = ({ schoolConfig, userEmail }) => {
     return { rows, schoolDays };
   }, [rangeRecords, scoped]);
 
+  const [printScale, setPrintScale] = useState(100);
+  const [printFont, setPrintFont] = useState('auto');
+  const estPages = usePageEstimate({
+    containerId: 'attendance-print',
+    scale: printScale, font: printFont, autoPx: 11,
+    deps: [viewMode, scoped, dayRecords, rangeRecords],
+  });
+
   const handlePrint = () => {
     const el = document.getElementById('attendance-print');
     if (!el) return;
     const win = window.open('', '_blank');
     const label = viewMode === 'register' ? `Class Register — ${date}` : `Attendance Summary — ${rangeFrom} to ${rangeTo}`;
     const cls = classesForLevel.find(c => c.code === selectedClass)?.name || '';
+    const cellFont = printCellFont(printFont, 11);
     win.document.write(`<html><head><title>${label}</title><style>
-      body{font-family:Arial,sans-serif;font-size:12px;padding:16px;color:#111}
+      body{font-family:Arial,sans-serif;font-size:12px;padding:16px;color:#111;zoom:${printScale / 100}}
       h1{font-size:18px;margin:0 0 2px}.sub{color:#555;margin-bottom:14px}
-      table{width:100%;border-collapse:collapse}th,td{border:1px solid #333;padding:5px 8px;font-size:11px}th{background:#eee;text-align:left}
+      table{width:100%;border-collapse:collapse}th,td{border:1px solid #333;padding:${cellFont <= 8 ? '2px 4px' : '5px 8px'};font-size:${cellFont}px}th{background:#eee;text-align:left}
       button{display:none}
       @media print{@page{margin:12mm}}
     </style></head><body>
@@ -239,7 +249,10 @@ const Attendance = ({ schoolConfig, userEmail }) => {
             </div>
           </>
         )}
-        <button onClick={handlePrint} style={{ padding: '10px 18px', background: '#1B6B3A', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', height: 40, whiteSpace: 'nowrap' }}>🖨️ Print</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} />
+          <button onClick={handlePrint} style={{ padding: '10px 18px', background: '#1B6B3A', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', height: 40, whiteSpace: 'nowrap' }}>🖨️ Print</button>
+        </div>
       </div>
 
       <div id="attendance-print">

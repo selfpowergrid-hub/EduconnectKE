@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { defaultGradesFor } from '../data/mockData';
 import { LEVELS, GRADE_CODE_TO_NAME, GRADE_NAME_TO_CODE, gradesByLevelForSchool } from '../lib/schoolLevels';
 import { applyAggregationPolicy } from '../lib/aggregation';
 import Letterhead from '../components/Letterhead';
+import PrintSizer, { printCellFont, usePageEstimate } from '../components/PrintSizer';
 
 const levelNameForClass = (classId) => {
   const name = GRADE_CODE_TO_NAME[classId];
@@ -75,6 +77,9 @@ const Analysis = ({ schoolConfig, examsList }) => {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [reportType, setReportType] = useState('merit');
   const [progressStudentId, setProgressStudentId] = useState(null);
+  const [showGrades, setShowGrades] = useState(true);
+  const [printScale, setPrintScale] = useState(100);
+  const [printFont, setPrintFont] = useState('auto');
 
   const [students, setStudents] = useState([]);
   const [dbSubjects, setDbSubjects] = useState([]);
@@ -186,6 +191,17 @@ const Analysis = ({ schoolConfig, examsList }) => {
     return nearest?.grade || nearest?.code || '-';
   }, [gradeScale]);
 
+  // Top of the points scale (12 on the standard scale) — used to normalise
+  // mean points to a percentage for Value Added Progress.
+  const maxPoints = useMemo(() => Math.max(1, ...gradeScale.map(g => g.points || 0)), [gradeScale]);
+
+  // V.A.P as printed on school broadsheets: both sides converted to
+  // percentages first — (mean points ÷ max points × 100) − (KCPE ÷ 500 × 100).
+  const vapFor = useCallback((meanPoints, kcpe) => {
+    if (!kcpe) return null;
+    return (meanPoints / maxPoints * 100) - (kcpe / 500 * 100);
+  }, [maxPoints]);
+
   const examsForTerm = useCallback(
     (term) => examsList.filter(e => e.level_id === selectedClass && e.term === term),
     [examsList, selectedClass]
@@ -219,10 +235,35 @@ const Analysis = ({ schoolConfig, examsList }) => {
   }, [classSubjects, subjectTermScore, aggPolicy]);
 
   // Merit rows (students with marks) sorted, ranked.
+  // Each row now includes per-subject detail for the broadsheet.
   const buildMerit = useCallback((pool, term) => {
     const rows = pool.map(s => {
       const o = overallMean(s.id, term);
-      return { student: s, ...o, grade: o.subjectsCount ? getGrade(o.mean).grade : '-' };
+      // Per-subject detail: { subjectId: { score, grade, points } }
+      const subjectDetail = {};
+      classSubjects.forEach(sub => {
+        const sc = subjectTermScore(s.id, sub.id, term);
+        if (sc !== null) {
+          const g = getGrade(sc);
+          subjectDetail[sub.id] = { score: Math.round(sc), grade: g.grade || g.code || '-', points: g.points || 0 };
+        }
+      });
+      // Total points = sum of each counted subject's grade points
+      const counted = o.counted || [];
+      const totalPoints = counted.reduce((sum, e) => {
+        const g = getGrade(e.score);
+        return sum + (g.points || 0);
+      }, 0);
+      const meanPoints = counted.length ? totalPoints / counted.length : 0;
+      const meanGrade = counted.length ? gradeByPoints(Math.round(meanPoints)) : '-';
+      return {
+        student: s, ...o,
+        grade: o.subjectsCount ? getGrade(o.mean).grade : '-',
+        subjectDetail,
+        totalPoints,
+        meanPoints,
+        meanGrade,
+      };
     }).filter(r => r.subjectsCount > 0);
     rows.sort((a, b) => (b.belowMinimum ? -1 : b.mean) - (a.belowMinimum ? -1 : a.mean));
     let rank = 0, prev = null, seen = 0;
@@ -233,7 +274,7 @@ const Analysis = ({ schoolConfig, examsList }) => {
       r.rank = rank; prev = r.mean;
     });
     return rows;
-  }, [overallMean, getGrade]);
+  }, [overallMean, getGrade, classSubjects, subjectTermScore, gradeByPoints]);
 
   const gradeDistribution = useCallback((means) => {
     const order = gradeScale.map(g => g.grade || g.code);
@@ -249,6 +290,15 @@ const Analysis = ({ schoolConfig, examsList }) => {
     if (progressStudentId && !students.find(s => s.id === progressStudentId)) setProgressStudentId(students[0]?.id || null);
   }, [students, progressStudentId]);
 
+  const estPages = usePageEstimate({
+    containerId: 'analysis-print',
+    scale: printScale, font: printFont,
+    autoPx: reportType === 'merit' ? 8 : 11,
+    landscape: reportType === 'merit',
+    screenZoom: printScale / 100, // the on-screen container is zoomed too
+    deps: [reportType, students, allMarks, selectedTerm, selectedStream, loading],
+  });
+
   const reportLabel = REPORTS.flatMap(g => g.items).find(r => r.id === reportType)?.label || 'Analysis Report';
   const scopeSubtitle = `${classesForLevel.find(c => c.code === selectedClass)?.name || selectedClass} · ${selectedStream === 'all' ? 'All Streams' : (streamById[selectedStream] || '')} · ${selectedTerm} · ${selectedYear}`;
 
@@ -256,14 +306,16 @@ const Analysis = ({ schoolConfig, examsList }) => {
     const el = document.getElementById('analysis-print');
     if (!el) return;
     const win = window.open('', '_blank');
+    const isLandscape = reportType === 'merit';
     // The letterhead is inside the printable container, so it carries over.
+    const cellFont = printCellFont(printFont, isLandscape ? 8 : 11);
     win.document.write(`<html><head><title>${reportLabel}</title><style>
-      body{font-family:Arial,sans-serif;font-size:12px;padding:16px;color:#111}
+      body{font-family:Arial,sans-serif;font-size:${isLandscape ? '9' : '12'}px;padding:10px;color:#111;zoom:${printScale / 100}}
       table{width:100%;border-collapse:collapse;margin-bottom:14px}
-      th,td{border:1px solid #333;padding:5px 8px;font-size:11px}
+      th,td{border:1px solid #333;padding:${cellFont <= 7 ? '1px 2px' : isLandscape ? '3px 4px' : '5px 8px'};font-size:${cellFont}px}
       th{background:#eee;text-align:left}
       img{max-width:80px;max-height:80px}
-      @media print{@page{margin:12mm}}
+      @media print{@page{size:${isLandscape ? 'landscape' : 'portrait'};margin:8mm}}
     </style></head><body>
       ${el.innerHTML}
     </body></html>`);
@@ -272,30 +324,127 @@ const Analysis = ({ schoolConfig, examsList }) => {
   };
 
   // ---------------------------------------------------------------- Reports
+  // Export broadsheet to Excel
+  const handleExcelExport = () => {
+    const rows = buildMerit(scopedStudents, selectedTerm);
+    if (!rows.length) { alert('No data to export.'); return; }
+    const headers = ['POS', 'ADM', 'NAME', 'STREAM'];
+    classSubjects.forEach(sub => {
+      headers.push(sub.name);
+      if (showGrades) headers.push(`${sub.name} Grd`);
+    });
+    headers.push('PTS', 'M.SC', 'M.GRD', 'MEAN %', 'GRADE');
+    if (rows.some(r => r.student.kcpe_score)) headers.push('KCPE', 'V.A.P');
+    const data = rows.map(r => {
+      const row = [
+        r.rank, r.student.adm_no,
+        `${r.student.first_name} ${r.student.last_name}`.trim(),
+        streamById[r.student.stream_id] || '',
+      ];
+      classSubjects.forEach(sub => {
+        const d = r.subjectDetail[sub.id];
+        row.push(d ? d.score : '');
+        if (showGrades) row.push(d ? d.grade : '');
+      });
+      row.push(r.belowMinimum ? '' : r.totalPoints);
+      row.push(r.belowMinimum ? '' : r.meanPoints.toFixed(2));
+      row.push(r.belowMinimum ? '' : r.meanGrade);
+      row.push(r.belowMinimum ? '' : Math.round(r.mean));
+      row.push(r.belowMinimum ? 'BELOW MIN' : r.grade);
+      if (rows.some(x => x.student.kcpe_score)) {
+        row.push(r.student.kcpe_score || '');
+        const xlVap = vapFor(r.meanPoints, r.student.kcpe_score);
+        row.push(xlVap !== null ? xlVap.toFixed(2) : '');
+      }
+      return row;
+    });
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Merit List');
+    const className = classesForLevel.find(c => c.code === selectedClass)?.name || selectedClass;
+    XLSX.writeFile(wb, `Merit_List_${className}_${selectedTerm}_${selectedYear}.xlsx`);
+  };
+
   const renderMerit = (poolOverride, hideHeader) => {
     const rows = buildMerit(poolOverride || scopedStudents, selectedTerm);
+    const hasKcpe = rows.some(r => r.student.kcpe_score);
+    const thBs = { ...th, textAlign: 'center', padding: '6px 5px', fontSize: 10, whiteSpace: 'nowrap', minWidth: 0 };
+    const tdBs = { ...tdC, padding: '5px 4px', fontSize: 11 };
+    const totalCols = 4 + classSubjects.length + 5 + (hasKcpe ? 2 : 0);
     return (
       <div style={card}>
-        {!hideHeader && <div style={sectionTitle}>Class Merit List — {selectedTerm}</div>}
+        {!hideHeader && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
+            <div style={sectionTitle}>Class Merit List (Broadsheet) — {selectedTerm}</div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: '#2a2421', cursor: 'pointer', userSelect: 'none' }}>
+                <input type="checkbox" checked={showGrades} onChange={e => setShowGrades(e.target.checked)} style={{ accentColor: '#1B6B3A', width: 16, height: 16 }} />
+                Show Grades
+              </label>
+              <button
+                onClick={handleExcelExport}
+                style={{ padding: '7px 14px', background: '#1A5F9C', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >📊 Export Excel</button>
+            </div>
+          </div>
+        )}
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>
-              <th style={th}>POS</th><th style={th}>ADM</th><th style={th}>NAME</th><th style={th}>STREAM</th>
-              <th style={{ ...th, textAlign: 'center' }}>SUBJECTS</th><th style={{ ...th, textAlign: 'center' }}>MEAN %</th><th style={{ ...th, textAlign: 'center' }}>GRADE</th>
-            </tr></thead>
+          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'auto' }}>
+            <thead>
+              <tr>
+                <th style={{ ...thBs, position: 'sticky', left: 0, zIndex: 2, background: '#faf8f5' }}>POS</th>
+                <th style={{ ...thBs, position: 'sticky', left: 40, zIndex: 2, background: '#faf8f5' }}>ADM</th>
+                <th style={{ ...thBs, textAlign: 'left', position: 'sticky', left: 100, zIndex: 2, background: '#faf8f5', minWidth: 130 }}>NAME</th>
+                <th style={thBs}>STR</th>
+                {classSubjects.map(sub => (
+                  <th key={sub.id} style={{ ...thBs, background: '#f0efe8' }} title={sub.name}>
+                    {sub.name.length > 5 ? sub.name.slice(0, 4).toUpperCase() : sub.name.toUpperCase()}
+                  </th>
+                ))}
+                <th style={{ ...thBs, background: '#e8f5ee', color: '#1B6B3A' }}>PTS</th>
+                <th style={{ ...thBs, background: '#e8f5ee', color: '#1B6B3A' }}>M.SC</th>
+                <th style={{ ...thBs, background: '#e8f5ee', color: '#1B6B3A' }}>M.GRD</th>
+                <th style={{ ...thBs, background: '#e8f5ee', color: '#1B6B3A' }}>MEAN%</th>
+                <th style={{ ...thBs, background: '#e8f5ee', color: '#1B6B3A' }}>GRD</th>
+                {hasKcpe && <th style={{ ...thBs, background: '#eaf2fa' }}>KCPE</th>}
+                {hasKcpe && <th style={{ ...thBs, background: '#eaf2fa' }}>V.A.P</th>}
+              </tr>
+            </thead>
             <tbody>
-              {rows.map(r => (
-                <tr key={r.student.id}>
-                  <td style={{ ...tdC, fontWeight: 800, color: '#1B6B3A' }}>{r.rank}</td>
-                  <td style={td}>{r.student.adm_no}</td>
-                  <td style={{ ...td, fontWeight: 600 }}>{r.student.first_name} {r.student.last_name}</td>
-                  <td style={td}>{streamById[r.student.stream_id] || '—'}</td>
-                  <td style={tdC}>{r.subjectsCount}</td>
-                  <td style={{ ...tdC, fontWeight: 700 }}>{r.belowMinimum ? '—' : Math.round(r.mean)}</td>
-                  <td style={{ ...tdC, fontWeight: 700, color: '#d35400' }}>{r.belowMinimum ? 'BELOW MIN' : r.grade}</td>
-                </tr>
-              ))}
-              {rows.length === 0 && <tr><td colSpan={7} style={{ ...tdC, color: '#8a8fa8', padding: 24 }}>No marks captured for this selection.</td></tr>}
+              {rows.map((r, idx) => {
+                const vapVal = vapFor(r.meanPoints, r.student.kcpe_score);
+                const vap = vapVal !== null ? vapVal.toFixed(2) : null;
+                return (
+                  <tr key={r.student.id} style={{ background: idx % 2 === 0 ? '#fff' : '#faf8f5' }}>
+                    <td style={{ ...tdBs, fontWeight: 800, color: '#1B6B3A', position: 'sticky', left: 0, background: idx % 2 === 0 ? '#fff' : '#faf8f5', zIndex: 1 }}>{r.rank}</td>
+                    <td style={{ ...tdBs, fontSize: 10, position: 'sticky', left: 40, background: idx % 2 === 0 ? '#fff' : '#faf8f5', zIndex: 1 }}>{r.student.adm_no}</td>
+                    <td style={{ ...tdBs, textAlign: 'left', fontWeight: 600, fontSize: 10.5, whiteSpace: 'nowrap', position: 'sticky', left: 100, background: idx % 2 === 0 ? '#fff' : '#faf8f5', zIndex: 1 }}>{r.student.first_name} {r.student.last_name}</td>
+                    <td style={{ ...tdBs, fontSize: 10 }}>{streamById[r.student.stream_id] || '—'}</td>
+                    {classSubjects.map(sub => {
+                      const d = r.subjectDetail[sub.id];
+                      return (
+                        <td key={sub.id} style={{ ...tdBs, color: d ? '#2a2421' : '#c9c4bd', fontSize: 10 }}>
+                          {d ? (
+                            showGrades ? `${d.score} ${d.grade}` : d.score
+                          ) : '—'}
+                        </td>
+                      );
+                    })}
+                    <td style={{ ...tdBs, fontWeight: 700, background: '#f0faf3' }}>{r.belowMinimum ? '—' : r.totalPoints}</td>
+                    <td style={{ ...tdBs, fontWeight: 700, background: '#f0faf3' }}>{r.belowMinimum ? '—' : r.meanPoints.toFixed(2)}</td>
+                    <td style={{ ...tdBs, fontWeight: 800, color: '#d35400', background: '#f0faf3' }}>{r.belowMinimum ? '—' : r.meanGrade}</td>
+                    <td style={{ ...tdBs, fontWeight: 700, background: '#f0faf3' }}>{r.belowMinimum ? '—' : Math.round(r.mean)}</td>
+                    <td style={{ ...tdBs, fontWeight: 800, color: '#d35400', background: '#f0faf3' }}>{r.belowMinimum ? 'BM' : r.grade}</td>
+                    {hasKcpe && <td style={{ ...tdBs, background: '#f4f8fc' }}>{r.student.kcpe_score || '—'}</td>}
+                    {hasKcpe && (
+                      <td style={{ ...tdBs, fontWeight: 700, background: '#f4f8fc', color: vap !== null ? (parseFloat(vap) >= 0 ? '#1B6B3A' : '#C0392B') : '#c9c4bd' }}>
+                        {vap !== null ? (parseFloat(vap) >= 0 ? `+${vap}` : vap) : '—'}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && <tr><td colSpan={totalCols} style={{ ...tdC, color: '#8a8fa8', padding: 24 }}>No marks captured for this selection.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -702,6 +851,7 @@ const Analysis = ({ schoolConfig, examsList }) => {
           <label style={filterLabel}>Year</label>
           <select value={selectedYear} onChange={e => setSelectedYear(parseInt(e.target.value))} style={filterSelect}>{[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}</select>
         </div>
+        <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} />
         <div>
           <button onClick={handlePrint} style={{ padding: '10px 20px', background: '#1B6B3A', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', height: 40, whiteSpace: 'nowrap' }}>🖨️ Print</button>
         </div>
@@ -720,14 +870,16 @@ const Analysis = ({ schoolConfig, examsList }) => {
       </div>
 
       {/* Report body */}
-      <div id="analysis-print">
-        <Letterhead
+      <div style={{ overflowX: 'auto', background: '#f5f4f1', padding: 20, borderRadius: 12, border: '1px solid #e6dfd8', display: 'flex', justifyContent: 'center' }}>
+        <div id="analysis-print" style={{ zoom: printScale / 100, width: '100%', maxWidth: reportType === 'merit' ? 'none' : 1000, background: '#fff', padding: 24, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+          <Letterhead
           schoolConfig={schoolConfig}
           schoolInfo={schoolInfo}
           title={reportLabel}
           subtitle={scopeSubtitle}
         />
         {loading ? <div style={{ ...card, textAlign: 'center', color: '#8a8fa8', padding: 40 }}>Loading…</div> : renderReport()}
+        </div>
       </div>
     </div>
   );

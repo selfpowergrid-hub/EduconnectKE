@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import * as XLSXLib from 'xlsx';
 import { CLASSES, FEE_STRUCTURE, ACADEMIC_GRADES, getClassesByType, defaultSubjectsFor } from '../data/mockData';
+import PrintSizer, { printCellFont } from '../components/PrintSizer';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import SchoolCodeCard from '../components/school/SchoolCodeCard';
@@ -33,7 +34,8 @@ const Settings = ({ schoolConfig, initialTab }) => {
     mission: "",
     principal_name: "",
     website: "",
-    logo_url: ""
+    logo_url: "",
+    next_term_begins: ""
   });
 
   useEffect(() => {
@@ -249,6 +251,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
       const payload = {
         school_id: schoolConfig.id,
         ...schoolInfo,
+        next_term_begins: schoolInfo.next_term_begins || null, // "" breaks the DATE column
         logo_url: logoPreview || schoolInfo.logo_url
       };
 
@@ -1305,6 +1308,10 @@ const Settings = ({ schoolConfig, initialTab }) => {
     XLSXLib.writeFile(wb, `fee_structure_${feeYear}_${safe(levelLabel)}.xlsx`);
   };
 
+  // Print sizing for the fee-structure report.
+  const [feePrintScale, setFeePrintScale] = useState(100);
+  const [feePrintFont, setFeePrintFont] = useState('auto');
+
   const handlePrintFeeStructure = () => {
     const { grades, levelLabel } = exportRowsForLevel();
     const w = window.open('', '_blank');
@@ -1336,7 +1343,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
       schoolInfo?.website || '',
     ].filter(Boolean).join(' · ');
     w.document.write(`<!doctype html><html><head><title>Fee Structure ${feeYear} — ${levelLabel}</title><style>
-      body { font-family: Arial, sans-serif; font-size: 12px; color: #111; margin: 26px; }
+      body { font-family: Arial, sans-serif; font-size: 12px; color: #111; margin: 26px; zoom: ${feePrintScale / 100}; }
       .letterhead { display: flex; align-items: center; gap: 18px; justify-content: center; }
       .letterhead img { width: 74px; height: 74px; object-fit: contain; }
       .lh-text { text-align: center; }
@@ -1350,8 +1357,8 @@ const Settings = ({ schoolConfig, initialTab }) => {
       h4 { margin: 12px 0 4px; font-size: 12.5px; color: #1A5F9C; }
       .note { font-weight: normal; color: #777; font-size: 10.5px; }
       table { width: 100%; border-collapse: collapse; page-break-inside: avoid; margin-bottom: 4px; }
-      th, td { border: 1px solid #bbb; padding: 5px 8px; text-align: left; }
-      th { background: #f0f0f0; font-size: 10px; text-transform: uppercase; }
+      th, td { border: 1px solid #bbb; padding: ${printCellFont(feePrintFont, 12) <= 9 ? '2px 5px' : '5px 8px'}; text-align: left; font-size: ${printCellFont(feePrintFont, 12)}px; }
+      th { background: #f0f0f0; font-size: ${Math.max(8, printCellFont(feePrintFont, 12) - 2)}px; text-transform: uppercase; }
       .num { text-align: right; font-family: 'Courier New', monospace; }
       .total td { font-weight: bold; background: #fafafa; }
       .empty { color: #777; font-style: italic; font-size: 11.5px; }
@@ -1685,6 +1692,18 @@ const Settings = ({ schoolConfig, initialTab }) => {
                           value={schoolInfo.principal_name}
                           onChange={(e) => setSchoolInfo({...schoolInfo, principal_name: e.target.value})}
                           placeholder="e.g. Dr. Jane Doe"
+                          style={inputStyle}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Next Term Begins (printed on report cards)</label>
+                      <div style={{ position: "relative" }}>
+                        <span style={iconStyle}>📅</span>
+                        <input
+                          type="date"
+                          value={schoolInfo.next_term_begins || ""}
+                          onChange={(e) => setSchoolInfo({...schoolInfo, next_term_begins: e.target.value})}
                           style={inputStyle}
                         />
                       </div>
@@ -2725,6 +2744,7 @@ const Settings = ({ schoolConfig, initialTab }) => {
                {/* Level report: every grade in the chosen level, ALL categories
                    (All Students / Boarder / Day Scholar / specials), labelled. */}
                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                 <PrintSizer scale={feePrintScale} setScale={setFeePrintScale} font={feePrintFont} setFont={setFeePrintFont} />
                  <button
                    onClick={handlePrintFeeStructure}
                    title={`Print / save as PDF: all ${PRICING_BANDS[pricingBand].label} grades, every category`}

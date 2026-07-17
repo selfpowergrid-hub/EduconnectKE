@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { GRADE_CODE_TO_NAME, GRADE_NAME_TO_CODE, gradesByLevelForSchool } from '../lib/schoolLevels';
 import Letterhead from '../components/Letterhead';
+import PrintSizer, { printCellFont, usePageEstimate } from '../components/PrintSizer';
 
 // General & statutory school reports: student lists, guardians, emergency
 // contacts, KEMIS learner register, termly enrolment returns.
@@ -37,6 +38,8 @@ const SchoolReports = ({ schoolConfig }) => {
   const [dbStreams, setDbStreams] = useState([]);
   const [schoolInfo, setSchoolInfo] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [printScale, setPrintScale] = useState(100);
+  const [printFont, setPrintFont] = useState('auto');
 
   useEffect(() => {
     if (!schoolConfig?.id) return;
@@ -120,6 +123,13 @@ const SchoolReports = ({ schoolConfig }) => {
     selectedStream !== 'all' ? (dbStreams.find(s => s.id === selectedStream)?.name || '') : null,
   ].filter(Boolean).join(' · ');
 
+  const estPages = usePageEstimate({
+    containerId: 'school-report-print',
+    scale: printScale, font: printFont, autoPx: 11,
+    screenZoom: printScale / 100,
+    deps: [reportType, scoped, loading],
+  });
+
   const className = (code) => GRADE_CODE_TO_NAME[code] || code;
   const primaryGuardian = (s) => (guardiansByStudent[s.id] || [])[0] ||
     (s.parent_phone ? { full_name: '', phone: s.parent_phone, relationship: 'guardian' } : null);
@@ -176,10 +186,11 @@ const SchoolReports = ({ schoolConfig }) => {
     const win = window.open('', '_blank');
     // The letterhead lives inside the printable container, so the export
     // carries it (with logo) without a separate header here.
+    const cellFont = printCellFont(printFont, 11);
     win.document.write(`<html><head><title>${effectiveTitle}</title><style>
-      body{font-family:Arial,sans-serif;font-size:12px;padding:16px;color:#111}
+      body{font-family:Arial,sans-serif;font-size:12px;padding:16px;color:#111;zoom:${printScale / 100}}
       table{width:100%;border-collapse:collapse;margin-bottom:14px}
-      th,td{border:1px solid #333;padding:5px 8px;font-size:11px}th{background:#eee;text-align:left}
+      th,td{border:1px solid #333;padding:${cellFont <= 8 ? '2px 4px' : '5px 8px'};font-size:${cellFont}px}th{background:#eee;text-align:left}
       img{max-width:80px;max-height:80px}
       @media print{@page{margin:12mm}}
     </style></head><body>
@@ -431,6 +442,7 @@ const SchoolReports = ({ schoolConfig }) => {
             {streamsForScope.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </div>
+        <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} />
         <button onClick={exportExcel} style={{ padding: '10px 18px', background: '#1A5F9C', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', height: 40, whiteSpace: 'nowrap' }}>📥 Excel</button>
         <button onClick={handlePrint} style={{ padding: '10px 18px', background: '#1B6B3A', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', height: 40, whiteSpace: 'nowrap' }}>🖨️ Print</button>
       </div>
@@ -451,14 +463,16 @@ const SchoolReports = ({ schoolConfig }) => {
         )}
       </div>
 
-      <div id="school-report-print">
-        <Letterhead
+      <div style={{ overflowX: 'auto', background: '#f5f4f1', padding: 20, borderRadius: 12, border: '1px solid #e6dfd8', display: 'flex', justifyContent: 'center' }}>
+        <div id="school-report-print" style={{ zoom: printScale / 100, width: '100%', maxWidth: 1000, background: '#fff', padding: 24, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+          <Letterhead
           schoolConfig={schoolConfig}
           schoolInfo={schoolInfo}
           title={effectiveTitle}
           subtitle={`${scopeLabel} · ${new Date().toLocaleDateString()}`}
         />
         {loading ? <div style={{ ...card, textAlign: 'center', color: '#8a8fa8', padding: 40 }}>Loading…</div> : renderReport()}
+        </div>
       </div>
     </div>
   );

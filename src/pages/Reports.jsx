@@ -5,6 +5,7 @@ import { getClassesByType, defaultGradesFor } from '../data/mockData';
 import { LEVELS, GRADE_CODE_TO_NAME, GRADE_NAME_TO_CODE, gradesByLevelForSchool } from '../lib/schoolLevels';
 import { applyAggregationPolicy } from '../lib/aggregation';
 import { resolveComment, renderCommentTokens } from '../lib/reportComments';
+import PrintSizer, { printCellFont, usePageEstimate } from '../components/PrintSizer';
 
 // The academic level ("Senior Secondary") a class id ("f3") belongs to — the
 // grading system stores its scales against the level name and/or the class.
@@ -23,6 +24,11 @@ const Reports = ({ schoolConfig, examsList }) => {
   const [aggPolicy, setAggPolicy] = useState(null); // totalling policy row; null = count all
   const [dbComments, setDbComments] = useState([]); // report_comments rows (general + overrides)
   const [classTeachers, setClassTeachers] = useState([]); // class_teachers rows with staff name
+  const [assignments, setAssignments] = useState([]);     // teacher_assignments for this class
+  const [staffList, setStaffList] = useState([]);         // staff id -> full_name (initials on subject rows)
+  const [trendMarks, setTrendMarks] = useState([]);       // ALL marks (every year/term) for this class's students
+  const [feeData, setFeeData] = useState(null);           // fees bundle for the optional fees box
+  const [showFees, setShowFees] = useState(false);        // fees box on the card is opt-in
   const [dbStreams, setDbStreams] = useState([]);
   const [allMarks, setAllMarks] = useState([]); // marks for ALL students in grade
   const [schoolInfo, setSchoolInfo] = useState(null);
@@ -56,6 +62,8 @@ const Reports = ({ schoolConfig, examsList }) => {
   const [selectedTerm, setSelectedTerm] = useState('Term 1');
   // Class/stream position defaults ON for Form 3/4 (8-4-4 ranking convention)
   // and OFF for CBC grades — the user can still toggle it per selection.
+  const [printScale, setPrintScale] = useState(100);
+  const [printFont, setPrintFont] = useState('auto');
   const [showPositions, setShowPositions] = useState(
     () => selectedClass === 'f3' || selectedClass === 'f4'
   );
@@ -122,8 +130,22 @@ const Reports = ({ schoolConfig, examsList }) => {
       fetchAggPolicy();
       fetchComments();
       fetchClassTeachers();
+      fetchAssignments();
     }
   }, [schoolConfig?.id, selectedClass]);
+
+  // Trend marks follow the loaded student list; fees load only when toggled on.
+  useEffect(() => {
+    if (schoolConfig?.id) fetchTrendMarks(students.map(s => s.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schoolConfig?.id, students]);
+
+  useEffect(() => {
+    if (schoolConfig?.id && showFees && !feeData) fetchFeeData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schoolConfig?.id, showFees, selectedYear]);
+
+  useEffect(() => { setFeeData(null); }, [selectedYear]);
 
   useEffect(() => {
     if (schoolConfig?.id && students.length > 0) {
@@ -177,6 +199,46 @@ const Reports = ({ schoolConfig, examsList }) => {
       .select('*, staff(full_name)')
       .eq('school_id', schoolConfig.id);
     setClassTeachers(data || []);
+  };
+
+  // Subject-teacher allocations + staff names, for the initials column.
+  const fetchAssignments = async () => {
+    const [asg, stf] = await Promise.all([
+      supabase.from('teacher_assignments').select('*').eq('school_id', schoolConfig.id).eq('level_id', selectedClass),
+      supabase.from('staff').select('id, full_name').eq('school_id', schoolConfig.id),
+    ]);
+    setAssignments(asg.data || []);
+    setStaffList(stf.data || []);
+  };
+
+  // Every mark this class's students have EVER scored (all years/terms) —
+  // powers the Trend Analysis block.
+  const fetchTrendMarks = async (studentIds) => {
+    if (!studentIds.length) { setTrendMarks([]); return; }
+    const { data } = await supabase.from('marks').select('*').in('student_id', studentIds);
+    setTrendMarks(data || []);
+  };
+
+  // Fees bundle for the optional fees box (only fetched when toggled on).
+  const fetchFeeData = async () => {
+    const yr = selectedYear;
+    const [structures, vhs, cats, sfc, pays, adjs, burs] = await Promise.all([
+      supabase.from('fee_structures').select('fee_level, votehead_id, category_id, t1, t2, t3, status').eq('school_id', schoolConfig.id).eq('year', yr),
+      supabase.from('voteheads').select('id, applies_to, is_active').eq('school_id', schoolConfig.id),
+      supabase.from('fee_categories').select('id, name, kind').eq('school_id', schoolConfig.id),
+      supabase.from('student_fee_categories').select('*').eq('school_id', schoolConfig.id).eq('year', yr),
+      supabase.from('fee_payments').select('student_id, amount, status').eq('school_id', schoolConfig.id).eq('year', yr),
+      supabase.from('fee_adjustments').select('student_id, amount, status').eq('school_id', schoolConfig.id).eq('year', yr),
+      supabase.from('fee_bursary_awards').select('student_id, amount, status').eq('school_id', schoolConfig.id).eq('year', yr),
+    ]);
+    setFeeData({
+      structures: (structures.data || []).filter(r => r.status === 'published'),
+      voteheads: vhs.data || [],
+      cats: cats.data || [],
+      sfc: sfc.data || [],
+      pays: (pays.data || []).filter(p => p.status === 'active'),
+      concessions: [...(adjs.data || []), ...(burs.data || [])].filter(a => a.status === 'active'),
+    });
   };
 
   // The signing class teacher for a student: stream-specific beats grade-wide.
@@ -369,8 +431,195 @@ const Reports = ({ schoolConfig, examsList }) => {
   const labelStyle = { fontSize: 10, color: '#8A8FA8', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase' };
   const selectStyle = { width: '100%', padding: '8px', borderRadius: 6, border: '1px solid #E8EAF0', fontSize: 12, background: '#fff', outline: 'none' };
 
+  // ------- Points, V.A.P, subject positions, teacher initials, trend, fees --
+
+  // The grading scale used by getGrade, exposed for points math.
+  const cardScale = useMemo(() => {
+    const gradeName = GRADE_CODE_TO_NAME[selectedClass];
+    const levelName = levelNameForClass(selectedClass);
+    let scale = dbGrades.filter(g => g.school_grade === gradeName);
+    if (!scale.length) scale = dbGrades.filter(g => g.school_level === levelName && (g.school_grade === 'All' || !g.school_grade));
+    if (!scale.length) scale = dbGrades.filter(g => g.school_level === levelName);
+    if (!scale.length) scale = defaultGradesFor(selectedClass);
+    return [...scale].sort((a, b) => (b.min_score || 0) - (a.min_score || 0));
+  }, [dbGrades, selectedClass]);
+  const maxPoints = useMemo(() => Math.max(1, ...cardScale.map(g => g.points || 0)), [cardScale]);
+  const gradeByPoints = useCallback((points) => {
+    const rounded = Math.round(points);
+    const exact = cardScale.find(g => g.points === rounded);
+    if (exact) return exact.grade || exact.code || '-';
+    let nearest = null, diff = Infinity;
+    cardScale.forEach(g => { const d = Math.abs((g.points || 0) - points); if (d < diff) { diff = d; nearest = g; } });
+    return nearest?.grade || nearest?.code || '-';
+  }, [cardScale]);
+
+  // Points summary for a card: policy-counted subjects → total points, mean
+  // grade, and the maximum possible ("out of N").
+  const pointsSummaryFor = useCallback((rows) => {
+    const entries = rows.filter(r => r.score > 0).map(r => ({ score: r.score, group: r.sub.subject_group || 1 }));
+    const { counted } = applyAggregationPolicy(aggPolicy, entries);
+    const pts = counted.reduce((a, e) => a + (getGrade(e.score).points || 0), 0);
+    const meanPts = counted.length ? pts / counted.length : 0;
+    return { pts, meanGrade: counted.length ? gradeByPoints(meanPts) : '-', outOf: counted.length * maxPoints, meanPts };
+  }, [aggPolicy, getGrade, gradeByPoints, maxPoints]);
+
+  // V.A.P exactly as broadsheets print it (both sides as percentages).
+  const vapFor = useCallback((meanPts, kcpe) => {
+    if (!kcpe) return null;
+    return (meanPts / maxPoints * 100) - (kcpe / 500 * 100);
+  }, [maxPoints]);
+
+  // Per-subject standing: for each subject, students' scores sorted so a
+  // card can print "POS n / m" per subject row.
+  const subjectStandings = useMemo(() => {
+    const map = {};
+    gradeSubjects.forEach(sub => {
+      const scores = students
+        .map(s => ({ id: s.id, score: getStudentSubjectScore(s.id, sub.id) }))
+        .filter(x => x.score > 0)
+        .sort((a, b) => b.score - a.score);
+      map[sub.id] = scores;
+    });
+    return map;
+  }, [gradeSubjects, students, getStudentSubjectScore]);
+  const subjectPosFor = useCallback((studentId, subjectId) => {
+    const list = subjectStandings[subjectId] || [];
+    const mine = list.find(x => x.id === studentId);
+    if (!mine) return null;
+    const rank = 1 + list.filter(x => Math.round(x.score) > Math.round(mine.score)).length;
+    return { pos: rank, outOf: list.length };
+  }, [subjectStandings]);
+
+  // Subject teacher initials from Teacher Allocations (stream-specific wins).
+  const initialsFor = useCallback((student, subjectId) => {
+    const forSubject = assignments.filter(a => a.subject_id === subjectId);
+    if (!forSubject.length) return '';
+    const match = forSubject.find(a => a.stream_id && a.stream_id === student.stream_id)
+      || forSubject.find(a => !a.stream_id) || forSubject[0];
+    const name = staffList.find(t => t.id === match.teacher_staff_id)?.full_name || '';
+    return name
+      .replace(/\b(mr|mrs|ms|miss|dr|prof|rev|fr|sr)\.?\s*/gi, ' ')
+      .trim().split(/[\s.]+/).filter(Boolean).map(w => w[0].toUpperCase()).slice(0, 3).join('');
+  }, [assignments, staffList]);
+
+  // KCPE entry position within the class (among students with a KCPE score).
+  const kcpeEntryPosFor = useCallback((student) => {
+    if (!student.kcpe_score) return null;
+    const withK = students.filter(s => s.kcpe_score);
+    const rank = 1 + withK.filter(s => s.kcpe_score > student.kcpe_score).length;
+    return { pos: rank, outOf: withK.length };
+  }, [students]);
+
+  // Grading scale for ANY level (trend rows cross levels/years).
+  const scaleForLevel = useCallback((levelId) => {
+    const gradeName = GRADE_CODE_TO_NAME[levelId];
+    const levelName = levelNameForClass(levelId);
+    let scale = dbGrades.filter(g => g.school_grade === gradeName);
+    if (!scale.length) scale = dbGrades.filter(g => g.school_level === levelName && (g.school_grade === 'All' || !g.school_grade));
+    if (!scale.length) scale = dbGrades.filter(g => g.school_level === levelName);
+    if (!scale.length) scale = defaultGradesFor(levelId);
+    return [...scale].sort((a, b) => (b.min_score || 0) - (a.min_score || 0));
+  }, [dbGrades]);
+
+  // Trend Analysis: for each (year, term, level) period the student has marks
+  // in, total points + mean grade, and position among CURRENT classmates who
+  // also sat that period. Includes the current term as its latest column.
+  const trendFor = useCallback((student) => {
+    const byExam = {};
+    examsList.forEach(e => { byExam[e.id] = e; });
+    // periods the student has marks in
+    const periodsSet = new Map();
+    trendMarks.filter(m => m.student_id === student.id).forEach(m => {
+      const ex = byExam[m.exam_id];
+      if (!ex) return;
+      const key = `${m.year}|${m.term}|${m.level_id}`;
+      if (!periodsSet.has(key)) periodsSet.set(key, { year: m.year, term: m.term, level: m.level_id });
+    });
+    const termNo = (t) => parseInt(String(t).replace(/\D/g, ''), 10) || 0;
+    const periods = [...periodsSet.values()].sort((a, b) => a.year - b.year || termNo(a.term) - termNo(b.term));
+
+    const pointsIn = (sid, p) => {
+      const scale = scaleForLevel(p.level);
+      const gradeOf = (pct) => { for (const g of scale) if (pct >= (g.min_score || 0)) return g; return { points: 0 }; };
+      const perSubject = {};
+      trendMarks.filter(m => m.student_id === sid && m.year === p.year && m.term === p.term && m.level_id === p.level).forEach(m => {
+        const ex = byExam[m.exam_id];
+        if (!ex || m.score === null || m.score === undefined) return;
+        const outOf = ex.total_marks || 100;
+        (perSubject[m.subject_id] = perSubject[m.subject_id] || []).push({ pct: outOf > 0 ? m.score / outOf * 100 : 0, w: ex.weight || 0 });
+      });
+      const subjectPcts = Object.values(perSubject).map(list => {
+        const wSum = list.reduce((a, x) => a + x.w, 0);
+        return wSum > 0 ? list.reduce((a, x) => a + x.pct * (x.w / 100), 0) : list.reduce((a, x) => a + x.pct, 0) / list.length;
+      });
+      if (!subjectPcts.length) return null;
+      const pts = subjectPcts.reduce((a, pct) => a + (gradeOf(pct).points || 0), 0);
+      const meanPts = pts / subjectPcts.length;
+      const scaleMax = Math.max(1, ...scale.map(g => g.points || 0));
+      return { pts, meanPts, grade: (() => { const r = Math.round(meanPts); const ex2 = scale.find(g => g.points === r); if (ex2) return ex2.grade || ex2.code; let n = null, d = Infinity; scale.forEach(g => { const dd = Math.abs((g.points || 0) - meanPts); if (dd < d) { d = dd; n = g; } }); return n?.grade || '-'; })(), pctOfMax: meanPts / scaleMax * 100 };
+    };
+
+    return periods.map(p => {
+      const mine = pointsIn(student.id, p);
+      if (!mine) return null;
+      const cohort = students.map(s => pointsIn(s.id, p)).filter(Boolean);
+      const pos = 1 + cohort.filter(c => c.pts > mine.pts).length;
+      return { ...p, ...mine, pos, outOf: cohort.length };
+    }).filter(Boolean);
+  }, [trendMarks, examsList, students, scaleForLevel]);
+
+  // Fees box numbers: arrears to date, next term's bill, total.
+  const feesFor = useCallback((student) => {
+    if (!feeData) return null;
+    const vhById = Object.fromEntries(feeData.voteheads.map(v => [v.id, v]));
+    const boarderCat = feeData.cats.find(c => c.kind === 'boarder')?.id || null;
+    const isBoarder = (s) => (s.boarding_status || '').toLowerCase() === 'boarder';
+    const catForTerm = (t) => {
+      const sfc = feeData.sfc.find(x => x.student_id === student.id && x[`t${t}`]);
+      if (sfc) return sfc.category_id;
+      if (student.fee_category_id) return student.fee_category_id;
+      if (isBoarder(student)) return boarderCat;
+      return null;
+    };
+    const billedTerm = (t) => {
+      const cat = catForTerm(t);
+      const merged = new Map();
+      [false, true].forEach(sp => feeData.structures.forEach(r => {
+        if (r.fee_level !== student.level_id) return;
+        const isSpec = !!r.category_id;
+        if (isSpec !== sp) return;
+        if (isSpec && r.category_id !== cat) return;
+        const vh = vhById[r.votehead_id];
+        if (vh) {
+          if (vh.is_active === false) return;
+          const sc = vh.applies_to || 'all';
+          if (sc === 'boarders' && !isBoarder(student)) return;
+          if (sc === 'day' && isBoarder(student)) return;
+        }
+        merged.set(r.votehead_id, Number(r[`t${t}`]) || 0);
+      }));
+      return [...merged.values()].reduce((a, b) => a + b, 0);
+    };
+    const cur = parseInt(String(selectedTerm).replace(/\D/g, ''), 10) || 1;
+    let billedToDate = 0;
+    for (let t = 1; t <= cur; t++) billedToDate += billedTerm(t);
+    const paid = feeData.pays.filter(p => p.student_id === student.id).reduce((a, p) => a + Number(p.amount), 0);
+    const conc = feeData.concessions.filter(c => c.student_id === student.id).reduce((a, c) => a + Number(c.amount), 0);
+    const arrears = billedToDate - paid - conc;
+    const nextTermFees = cur < 3 ? billedTerm(cur + 1) : 0;
+    return { arrears, nextTermFees, total: arrears + nextTermFees };
+  }, [feeData, selectedTerm]);
+
   // Position "n / total", or "—" for below-minimum students.
   const posText = (pos, size) => (pos ? `${pos} / ${size}` : '—');
+
+  // Live page estimate for the previewed card (each student prints on its own
+  // page(s), so bulk pages ≈ this × number of students).
+  const estPages = usePageEstimate({
+    containerId: 'report-preview',
+    scale: printScale, font: printFont, autoPx: 12,
+    deps: [selectedStudentId, allMarks, showPositions],
+  });
 
   // Single report card HTML (used for both preview + bulk PDF)
   const ReportCard = ({ student }) => {
@@ -385,6 +634,12 @@ const Reports = ({ schoolConfig, examsList }) => {
     const streamPosition = student.stream_id
       ? posText(rankings.streamPos[student.id], rankings.streamSize[student.stream_id] || 0)
       : '—';
+    const psum = pointsSummaryFor(rows);
+    const vap = vapFor(psum.meanPts, student.kcpe_score);
+    const kEntry = kcpeEntryPosFor(student);
+    const trend = trendFor(student);
+    const fees = showFees ? feesFor(student) : null;
+    const fmtKes = (n) => `KES ${Math.round(n).toLocaleString()}`;
 
     return (
       <div style={{ maxWidth: 750, margin: '0 auto', border: '1px solid #000', padding: '20px', background: '#fff', fontSize: 12 }}>
@@ -444,6 +699,7 @@ const Reports = ({ schoolConfig, examsList }) => {
             <div><b style={{ fontWeight: 800 }}>STREAM:</b>&nbsp; {streamName}</div>
             <div><b style={{ fontWeight: 800 }}>TERM:</b>&nbsp; {selectedTerm.toUpperCase()}</div>
             <div><b style={{ fontWeight: 800 }}>YEAR:</b>&nbsp; {selectedYear}</div>
+            {student.kcpe_score && <div><b style={{ fontWeight: 800 }}>KCPE:</b>&nbsp; {student.kcpe_score}</div>}
           </div>
           {showPositions && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20, padding: '10px 14px', background: '#f2f5f2' }}>
@@ -467,11 +723,15 @@ const Reports = ({ schoolConfig, examsList }) => {
               <th style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', background: '#e8f5ee' }}>TOTAL</th>
               <th style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center' }}>GRADE</th>
               <th style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', background: '#fff4e5' }}>CLASS BEST</th>
+              <th style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center' }} title="Position in subject">POS</th>
               <th style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'left' }}>REMARKS</th>
+              <th style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center' }} title="Subject teacher">TR</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ sub, score, best, grade, examScores }) => (
+            {rows.map(({ sub, score, best, grade, examScores }) => {
+              const sp = subjectPosFor(student.id, sub.id);
+              return (
               <tr key={sub.id}>
                 <td style={{ border: '1px solid #000', padding: '6px 8px' }}>{sub.name}</td>
                 {examScores.map((sc, i) => (
@@ -480,9 +740,12 @@ const Reports = ({ schoolConfig, examsList }) => {
                 <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 700, background: '#e8f5ee' }}>{Math.round(score)}</td>
                 <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 700 }}>{grade.grade}</td>
                 <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', background: '#fff4e5', color: '#BF6A02', fontWeight: 700 }}>{Math.round(best)}</td>
+                <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 700 }}>{sp ? `${sp.pos}/${sp.outOf}` : '—'}</td>
                 <td style={{ border: '1px solid #000', padding: '6px 8px', color: '#555', fontSize: 11 }}>{gradeComment(grade)}</td>
+                <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontSize: 10.5, color: '#333' }}>{initialsFor(student, sub.id)}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
           <tfoot>
             <tr style={{ background: '#e8f5ee', color: '#1A1A2E' }}>
@@ -491,10 +754,96 @@ const Reports = ({ schoolConfig, examsList }) => {
               <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 900 }}>{belowMinimum ? '—' : Math.round(total)}</td>
               <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 900 }}>{belowMinimum ? '—' : overallGrade.grade}</td>
               <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center' }}>AVG: {belowMinimum ? '—' : `${Math.round(average)}%`}</td>
-              <td style={{ border: '1px solid #000', padding: '6px 8px' }}>{belowMinimum ? remark : gradeComment(overallGrade)}</td>
+              <td style={{ border: '1px solid #000' }} />
+              <td style={{ border: '1px solid #000', padding: '6px 8px' }} colSpan={2}>{belowMinimum ? remark : gradeComment(overallGrade)}</td>
             </tr>
           </tfoot>
         </table>
+
+        {/* Points · KCPE entry · V.A.P strip */}
+        <div style={{ border: '1px solid #000', marginBottom: 12, display: 'grid', gridTemplateColumns: kEntry ? 'repeat(3, 1fr)' : '1fr', fontSize: 12.5 }}>
+          <div style={{ padding: '8px 12px', borderRight: kEntry ? '1px solid #bbb' : 'none' }}>
+            <b style={{ fontWeight: 800 }}>TOTAL POINTS:</b>&nbsp; <span style={{ fontWeight: 900 }}>{belowMinimum ? '—' : `${psum.pts} ${psum.meanGrade}`}</span>
+            <span style={{ color: '#555' }}> out of {psum.outOf} points</span>
+          </div>
+          {kEntry && (
+            <div style={{ padding: '8px 12px', borderRight: '1px solid #bbb' }}>
+              <b style={{ fontWeight: 800 }}>KCPE ENTRY POSITION:</b>&nbsp; <span style={{ fontWeight: 900 }}>{kEntry.pos} / {kEntry.outOf}</span>
+            </div>
+          )}
+          {kEntry && (
+            <div style={{ padding: '8px 12px' }}>
+              <b style={{ fontWeight: 800 }}>V.A.P:</b>&nbsp;
+              <span style={{ fontWeight: 900, color: vap >= 0 ? '#1B6B3A' : '#C0392B' }}>{vap === null ? '—' : `${vap >= 0 ? '+' : ''}${vap.toFixed(1)}`}</span>
+              <span style={{ color: '#555', fontSize: 10.5 }}> (value added vs entry)</span>
+            </div>
+          )}
+        </div>
+
+        {/* Trend Analysis — points & position per term, with grade chart */}
+        {trend.length > 0 && (
+          <div style={{ border: '1px solid #000', padding: 10, marginBottom: 12 }}>
+            <div style={{ fontWeight: 800, marginBottom: 6, fontSize: 12 }}>TREND ANALYSIS — TOTAL POINTS &amp; POSITION PER TERM</div>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <table style={{ borderCollapse: 'collapse', fontSize: 10.5 }}>
+                <thead>
+                  <tr>
+                    <th style={{ border: '1px solid #999', padding: '3px 8px', background: '#f0f0f0' }}></th>
+                    {trend.map((t, i) => (
+                      <th key={i} style={{ border: '1px solid #999', padding: '3px 8px', background: '#f0f0f0', whiteSpace: 'nowrap' }}>
+                        {(GRADE_CODE_TO_NAME[t.level] || t.level).replace('Grade ', 'G').replace('Form ', 'F')} {String(t.term).replace('Term ', 'T')} '{String(t.year).slice(2)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style={{ border: '1px solid #999', padding: '3px 8px', fontWeight: 700 }}>Points</td>
+                    {trend.map((t, i) => <td key={i} style={{ border: '1px solid #999', padding: '3px 8px', textAlign: 'center' }}>{t.pts}</td>)}
+                  </tr>
+                  <tr>
+                    <td style={{ border: '1px solid #999', padding: '3px 8px', fontWeight: 700 }}>Position</td>
+                    {trend.map((t, i) => <td key={i} style={{ border: '1px solid #999', padding: '3px 8px', textAlign: 'center' }}>{t.pos}/{t.outOf}</td>)}
+                  </tr>
+                </tbody>
+              </table>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', paddingBottom: 2 }}>
+                {student.kcpe_score && (
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ width: 22, height: Math.max(4, (student.kcpe_score / 500) * 60), background: '#8A8FA8', margin: '0 auto', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }} />
+                    <div style={{ fontSize: 8.5, fontWeight: 700, marginTop: 2 }}>KCPE</div>
+                  </div>
+                )}
+                {trend.map((t, i) => (
+                  <div key={i} style={{ textAlign: 'center' }}>
+                    <div style={{ width: 22, height: Math.max(4, (t.pctOfMax / 100) * 60), background: '#1A1A2E', margin: '0 auto', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }} />
+                    <div style={{ fontSize: 8.5, fontWeight: 700, marginTop: 2 }}>{t.grade}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* School fees box (opt-in) + next-term date */}
+        {(fees || schoolInfo?.next_term_begins) && (
+          <div style={{ display: 'flex', gap: 12, marginBottom: 12, alignItems: 'stretch', flexWrap: 'wrap' }}>
+            {schoolInfo?.next_term_begins && (
+              <div style={{ flex: 1, minWidth: 200, border: '1px solid #000', padding: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ fontWeight: 800 }}>NEXT TERM BEGINS:&nbsp;</span>
+                <span style={{ fontWeight: 900, textDecoration: 'underline' }}>{new Date(schoolInfo.next_term_begins).toLocaleDateString('en-GB')}</span>
+              </div>
+            )}
+            {fees && (
+              <div style={{ flex: 1.4, minWidth: 240, border: '2px solid #000', padding: '8px 12px' }}>
+                <div style={{ fontWeight: 900, fontSize: 12.5, borderBottom: '1px solid #999', paddingBottom: 4, marginBottom: 4 }}>SCHOOL FEES (KSHS)</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}><span>Outstanding arrears</span><b style={{ fontFamily: 'monospace' }}>{fmtKes(fees.arrears)}</b></div>
+                {fees.nextTermFees > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}><span>Next term fees</span><b style={{ fontFamily: 'monospace' }}>{fmtKes(fees.nextTermFees)}</b></div>}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderTop: '1px solid #999', fontWeight: 900 }}><span>Total amount</span><span style={{ fontFamily: 'monospace' }}>{fmtKes(fees.total)}</span></div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Class Teacher's remarks — auto-filled with the overall-grade comment,
             with space + signature line. */}
@@ -516,6 +865,12 @@ const Reports = ({ schoolConfig, examsList }) => {
             <span>Date: <u style={{ display: 'inline-block', minWidth: 90 }}>&nbsp;</u></span>
           </div>
         </div>
+
+        {/* Parent / Guardian acknowledgement */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, padding: '4px 2px 0', marginBottom: 8 }}>
+          <span><b style={{ fontWeight: 800 }}>Parent / Guardian:</b> Name: <u style={{ display: 'inline-block', minWidth: 150 }}>&nbsp;</u> &nbsp; Sign: <u style={{ display: 'inline-block', minWidth: 80 }}>&nbsp;</u></span>
+          <span>Date: <u style={{ display: 'inline-block', minWidth: 90 }}>&nbsp;</u></span>
+        </div>
       </div>
     );
   };
@@ -525,12 +880,13 @@ const Reports = ({ schoolConfig, examsList }) => {
     if (!printStudents.length) { alert('No students to print.'); return; }
 
     const win = window.open('', '_blank');
+    const cellFont = printCellFont(printFont, 12);
     win.document.write(`<html><head><title>Bulk Report Cards</title>
     <style>
-      body { font-family: Arial, sans-serif; font-size: 12px; }
+      body { font-family: Arial, sans-serif; font-size: ${cellFont}px; zoom: ${printScale / 100}; }
       table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-      th, td { border: 1px solid #000; padding: 6px 8px; }
-      .page { max-width: 750px; margin: 0 auto; padding: 20px; page-break-after: always; }
+      th, td { border: 1px solid #000; padding: ${cellFont <= 10 ? '3px 5px' : '6px 8px'}; font-size: ${cellFont}px; }
+      .page { max-width: 750px; margin: 0 auto; padding: calc(20px + 10mm); page-break-after: always; }
       .page:last-child { page-break-after: auto; }
       .header-grid { display: grid; grid-template-columns: 110px 1fr 110px; gap: 16px; align-items: center; border-bottom: 2px solid #000; padding-bottom: 16px; margin-bottom: 16px; }
       .header-school { text-align: center; }
@@ -552,7 +908,13 @@ const Reports = ({ schoolConfig, examsList }) => {
       .remarks { border: 1px solid #000; padding: 10px; margin-bottom: 12px; }
       .rem-sign { margin-top: 10px; display: flex; justify-content: space-between; font-size: 11px; }
       .rem-sign u { display: inline-block; }
-      @media print { @page { margin: 10mm; } }
+      .pts-strip { border: 1px solid #000; margin-bottom: 12px; display: flex; flex-wrap: wrap; font-size: 12px; }
+      .pts-strip > div { padding: 7px 12px; border-right: 1px solid #bbb; }
+      .pts-strip > div:last-child { border-right: none; }
+      .trend { border: 1px solid #000; padding: 8px 10px; margin-bottom: 12px; }
+      .trend table td, .trend table th { border: 1px solid #999; padding: 2px 7px; }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      @media print { @page { margin: 0; } }
     </style></head><body>`);
 
     printStudents.forEach(student => {
@@ -567,6 +929,12 @@ const Reports = ({ schoolConfig, examsList }) => {
       const streamPosition = student.stream_id
         ? posText(rankings.streamPos[student.id], rankings.streamSize[student.stream_id] || 0)
         : '—';
+      const psum = pointsSummaryFor(rows);
+      const vap = vapFor(psum.meanPts, student.kcpe_score);
+      const kEntry = kcpeEntryPosFor(student);
+      const trend = trendFor(student);
+      const fees = showFees ? feesFor(student) : null;
+      const fmtKes = (n) => `KES ${Math.round(n).toLocaleString()}`;
 
       win.document.write(`<div class="page">
         <div class="header-grid">
@@ -598,6 +966,7 @@ const Reports = ({ schoolConfig, examsList }) => {
             <div><b>STREAM:</b>&nbsp; ${streamName}</div>
             <div><b>TERM:</b>&nbsp; ${selectedTerm.toUpperCase()}</div>
             <div><b>YEAR:</b>&nbsp; ${selectedYear}</div>
+            ${student.kcpe_score ? `<div><b>KCPE:</b>&nbsp; ${student.kcpe_score}</div>` : ''}
           </div>
           ${showPositions ? `<div class="info-band info-pos">
             <div><b>CLASS POSITION:</b>&nbsp; <span style="font-weight:900">${classPosition}</span></div>
@@ -611,18 +980,25 @@ const Reports = ({ schoolConfig, examsList }) => {
             <th style="text-align:center;background:#e8f5ee">TOTAL</th>
             <th style="text-align:center">GRADE</th>
             <th style="text-align:center;background:#fff4e5">CLASS BEST</th>
+            <th style="text-align:center">POS</th>
             <th style="text-align:left">REMARKS</th>
+            <th style="text-align:center">TR</th>
           </tr></thead>
           <tbody>
-            ${rows.map(({ sub, score, best, grade, examScores }) => `
+            ${rows.map(({ sub, score, best, grade, examScores }) => {
+              const sp = subjectPosFor(student.id, sub.id);
+              return `
               <tr>
                 <td>${sub.name}</td>
                 ${examScores.map(sc => `<td style="text-align:center">${sc}</td>`).join('')}
                 <td style="text-align:center;font-weight:700;background:#e8f5ee">${Math.round(score)}</td>
                 <td style="text-align:center;font-weight:700">${grade.grade}</td>
                 <td style="text-align:center;background:#fff4e5;font-weight:700">${Math.round(best)}</td>
+                <td style="text-align:center;font-weight:700">${sp ? `${sp.pos}/${sp.outOf}` : '—'}</td>
                 <td style="font-size:11px;color:#555">${gradeComment(grade)}</td>
-              </tr>`).join('')}
+                <td style="text-align:center;font-size:10px">${initialsFor(student, sub.id)}</td>
+              </tr>`;
+            }).join('')}
           </tbody>
           <tfoot>
             <tr class="tfoot-row">
@@ -631,10 +1007,43 @@ const Reports = ({ schoolConfig, examsList }) => {
               <td style="text-align:center;font-weight:900">${belowMinimum ? '—' : Math.round(total)}</td>
               <td style="text-align:center;font-weight:900">${belowMinimum ? '—' : overallGrade.grade}</td>
               <td style="text-align:center">AVG: ${belowMinimum ? '—' : `${Math.round(average)}%`}</td>
-              <td>${belowMinimum ? remark : gradeComment(overallGrade)}</td>
+              <td></td>
+              <td colspan="2">${belowMinimum ? remark : gradeComment(overallGrade)}</td>
             </tr>
           </tfoot>
         </table>
+        <div class="pts-strip">
+          <div><b>TOTAL POINTS:</b>&nbsp; <span style="font-weight:900">${belowMinimum ? '—' : `${psum.pts} ${psum.meanGrade}`}</span> <span style="color:#555">out of ${psum.outOf} points</span></div>
+          ${kEntry ? `<div><b>KCPE ENTRY POSITION:</b>&nbsp; <span style="font-weight:900">${kEntry.pos} / ${kEntry.outOf}</span></div>` : ''}
+          ${kEntry ? `<div><b>V.A.P:</b>&nbsp; <span style="font-weight:900;color:${vap >= 0 ? '#1B6B3A' : '#C0392B'}">${vap === null ? '—' : `${vap >= 0 ? '+' : ''}${vap.toFixed(1)}`}</span></div>` : ''}
+        </div>
+        ${trend.length > 0 ? `
+        <div class="trend">
+          <b style="font-size:11px">TREND ANALYSIS — TOTAL POINTS &amp; POSITION PER TERM</b>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-top:5px">
+            <table style="width:auto;font-size:10px">
+              <thead><tr><th></th>${trend.map(t => `<th style="white-space:nowrap">${(GRADE_CODE_TO_NAME[t.level] || t.level).replace('Grade ', 'G').replace('Form ', 'F')} ${String(t.term).replace('Term ', 'T')} '${String(t.year).slice(2)}</th>`).join('')}</tr></thead>
+              <tbody>
+                <tr><td><b>Points</b></td>${trend.map(t => `<td style="text-align:center">${t.pts}</td>`).join('')}</tr>
+                <tr><td><b>Position</b></td>${trend.map(t => `<td style="text-align:center">${t.pos}/${t.outOf}</td>`).join('')}</tr>
+              </tbody>
+            </table>
+            <div style="display:flex;gap:8px;align-items:flex-end">
+              ${student.kcpe_score ? `<div style="text-align:center"><div style="width:22px;height:${Math.max(4, Math.round(student.kcpe_score / 500 * 60))}px;background:#8A8FA8;margin:0 auto"></div><div style="font-size:8px;font-weight:700;margin-top:2px">KCPE</div></div>` : ''}
+              ${trend.map(t => `<div style="text-align:center"><div style="width:22px;height:${Math.max(4, Math.round(t.pctOfMax / 100 * 60))}px;background:#1A1A2E;margin:0 auto"></div><div style="font-size:8px;font-weight:700;margin-top:2px">${t.grade}</div></div>`).join('')}
+            </div>
+          </div>
+        </div>` : ''}
+        ${(fees || schoolInfo?.next_term_begins) ? `
+        <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+          ${schoolInfo?.next_term_begins ? `<div style="flex:1;min-width:200px;border:1px solid #000;padding:10px;display:flex;align-items:center;justify-content:center"><b>NEXT TERM BEGINS:&nbsp;</b><span style="font-weight:900;text-decoration:underline">${new Date(schoolInfo.next_term_begins).toLocaleDateString('en-GB')}</span></div>` : ''}
+          ${fees ? `<div style="flex:1.4;min-width:240px;border:2px solid #000;padding:8px 12px">
+            <div style="font-weight:900;font-size:12px;border-bottom:1px solid #999;padding-bottom:4px;margin-bottom:4px">SCHOOL FEES (KSHS)</div>
+            <div style="display:flex;justify-content:space-between;padding:2px 0"><span>Outstanding arrears</span><b style="font-family:monospace">${fmtKes(fees.arrears)}</b></div>
+            ${fees.nextTermFees > 0 ? `<div style="display:flex;justify-content:space-between;padding:2px 0"><span>Next term fees</span><b style="font-family:monospace">${fmtKes(fees.nextTermFees)}</b></div>` : ''}
+            <div style="display:flex;justify-content:space-between;padding:3px 0;border-top:1px solid #999;font-weight:900"><span>Total amount</span><span style="font-family:monospace">${fmtKes(fees.total)}</span></div>
+          </div>` : ''}
+        </div>` : ''}
         <div class="remarks">
           <b>CLASS TEACHER'S REMARKS:</b>
           <div style="min-height:34px;background:#F9F9F9">${remark}</div>
@@ -645,6 +1054,7 @@ const Reports = ({ schoolConfig, examsList }) => {
           <div style="min-height:34px;background:#F9F9F9">${principalRemark || '&nbsp;'}</div>
           <div class="rem-sign"><span>Name: <u>&nbsp;&nbsp;${schoolInfo?.principal_name || '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'}&nbsp;&nbsp;</u> &nbsp; Sign: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span><span>Date: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span></div>
         </div>
+        <div class="rem-sign" style="padding:4px 2px 0"><span><b>Parent / Guardian:</b> Name: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u> &nbsp; Sign: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span><span>Date: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span></div>
       </div>`);
     });
 
@@ -718,6 +1128,16 @@ const Reports = ({ schoolConfig, examsList }) => {
             Show class &amp; stream position on report
           </label>
 
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#1A1A2E' }}>
+            <input
+              type="checkbox"
+              checked={showFees}
+              onChange={e => setShowFees(e.target.checked)}
+              style={{ width: 15, height: 15, accentColor: '#1B6B3A', cursor: 'pointer' }}
+            />
+            Show school fees box on report
+          </label>
+
           <button
             onClick={handleBulkPDF}
             style={{ width: '100%', padding: 10, background: '#1B6B3A', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
@@ -752,12 +1172,14 @@ const Reports = ({ schoolConfig, examsList }) => {
 
       {/* Preview Panel */}
       <div style={{ background: '#fff', border: '1px solid #E8EAF0', borderRadius: 12, padding: 20, overflowY: 'auto', minHeight: 400 }}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 20 }}>
+          <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} />
           <button
             onClick={() => {
               if (selectedStudent) {
+                const cellFont = printCellFont(printFont, 12);
                 const w = window.open('', '_blank');
-                w.document.write('<html><head><style>body{font-family:Arial;font-size:12px} table{width:100%;border-collapse:collapse} th,td{border:1px solid #000;padding:6px 8px} @media print{@page{margin:10mm}}</style></head><body>');
+                w.document.write(`<html><head><title>Report Card</title><style>body{font-family:Arial;font-size:${cellFont}px;zoom:${printScale / 100};padding:10mm;box-sizing:border-box} table{width:100%;border-collapse:collapse} th,td{border:1px solid #000;padding:${cellFont <= 10 ? '3px 5px' : '6px 8px'};font-size:${cellFont}px} @media print{@page{margin:0}}</style></head><body>`);
                 w.document.write(document.getElementById('report-preview').innerHTML);
                 w.document.write('</body></html>');
                 w.document.close();

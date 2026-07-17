@@ -158,7 +158,8 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
     birth_cert_no: "",
     date_of_birth: "",
     nationality: "Kenyan",
-    special_needs: ""
+    special_needs: "",
+    kcpe_score: ""
   });
 
   // Parents / guardians for the student being added or edited. Two blank rows
@@ -188,7 +189,8 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
       birth_cert_no: "",
       date_of_birth: "",
       nationality: "Kenyan",
-      special_needs: ""
+      special_needs: "",
+      kcpe_score: ""
     });
     setGuardians(emptyGuardians());
     setEditingStudentId(null);
@@ -214,7 +216,8 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
       birth_cert_no: student.birth_cert_no || "",
       date_of_birth: student.date_of_birth || "",
       nationality: student.nationality || "Kenyan",
-      special_needs: student.special_needs || ""
+      special_needs: student.special_needs || "",
+      kcpe_score: student.kcpe_score || ""
     });
     setEditingStudentId(student.id);
     setPendingPhotoBlob(null);
@@ -298,6 +301,7 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
       payload.date_of_birth = payload.date_of_birth || null;
       payload.nationality = (payload.nationality || "").trim() || 'Kenyan';
       payload.special_needs = (payload.special_needs || "").trim() || null;
+      payload.kcpe_score = payload.kcpe_score ? parseInt(payload.kcpe_score) : null;
       // Guardians drive the phone: mirror the first guardian's phone to the
       // legacy students.parent_phone so fees/reports keep working.
       const cleanGuardians = guardians
@@ -973,6 +977,11 @@ const Students = ({ schoolConfig, currentPlan, role, teacherInfo }) => {
                         <div style={{ gridColumn: "1 / -1" }}>
                           <label style={miniLabel}>Special Needs (leave blank if none)</label>
                           <input type="text" value={newStudent.special_needs} onChange={(e) => setNewStudent({ ...newStudent, special_needs: e.target.value })} placeholder="e.g. Visual impairment, physical disability…" style={fieldStyle} />
+                        </div>
+                        <div style={{ gridColumn: "1 / -1", borderTop: "1px dashed #e6dfd8", paddingTop: 10, marginTop: 4 }}>
+                          <label style={{ ...miniLabel, color: '#1B6B3A' }}>🏅 KCPE / Baseline Score (for V.A.P tracking)</label>
+                          <input type="number" min="0" max="500" value={newStudent.kcpe_score} onChange={(e) => setNewStudent({ ...newStudent, kcpe_score: e.target.value })} placeholder="e.g. 350 (out of 500)" style={fieldStyle} />
+                          <div style={{ fontSize: 10, color: '#8a8fa8', marginTop: 4 }}>Used on the broadsheet to calculate Value Added Progress (V.A.P).</div>
                         </div>
                       </>
                     );
