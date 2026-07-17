@@ -17,6 +17,103 @@ const levelNameForClass = (classId) => {
   return null;
 };
 
+// The full grade/form band the trend chart draws end to end: a student is
+// shown across their WHOLE level, terms and all, filled where marks exist.
+// Form 3 → Form 1..4; Grade 10 → Grade 10..12; JSS → Grade 7..9; etc.
+const trendBandFor = (levelCode) => {
+  const g = (code) => [code, GRADE_CODE_TO_NAME[code] || code];
+  if (levelCode === 'pp1' || levelCode === 'pp2') return [['pp1', 'PP1'], ['pp2', 'PP2']];
+  if (/^g[1-6]$/.test(levelCode)) return ['g1', 'g2', 'g3', 'g4', 'g5', 'g6'].map(g);
+  if (/^g[789]$/.test(levelCode)) return ['g7', 'g8', 'g9'].map(g);
+  if (['g10', 'g11', 'g12'].includes(levelCode)) return ['g10', 'g11', 'g12'].map(g);
+  if (['f1', 'f2', 'f3', 'f4'].includes(levelCode)) return [['f1', 'Form 1'], ['f2', 'Form 2'], ['f3', 'Form 3'], ['f4', 'Form 4']];
+  return [g(levelCode)];
+};
+
+const PRINT_COLOR = { WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' };
+const TREND_H = 120;              // plot height (px) — sized for clarity
+const TREND_BAR = '#6B7280';     // term bars: gray
+const TREND_KCPE = '#B4B8C4';    // KCPE baseline bar: lighter gray
+const shortGrade = (l) => l.replace('Grade ', 'Gr ');
+
+// Faint horizontal rule at each grade's height, drawn behind the bars so
+// every column reads cleanly against the axis.
+const GridLines = ({ axis }) => axis.map((a, i) => (
+  <div key={`gl${i}`} style={{ position: 'absolute', left: 0, right: 0, bottom: `${a.bottom}%`, borderTop: '1px solid #E5E7EB', ...PRINT_COLOR }} />
+));
+
+// Grouped bar chart spanning the whole band (React preview version).
+const TrendChart = ({ chart }) => (
+  <div style={{ overflowX: 'auto', paddingTop: 12 }}>
+    <div style={{ display: 'inline-flex', alignItems: 'flex-end' }}>
+      {/* Y axis: grade codes at their points height */}
+      <div style={{ position: 'relative', width: 30, height: TREND_H, flexShrink: 0 }}>
+        {chart.axis.map((a, i) => (
+          <div key={i} style={{ position: 'absolute', right: 6, bottom: `calc(${a.bottom}% - 4px)`, fontSize: 8.5, fontWeight: 700, color: '#333', lineHeight: 1, letterSpacing: 0.3 }}>{a.label}</div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', borderLeft: '1px solid #333' }}>
+        {chart.kcpeH > 0 && (
+          <div style={{ borderRight: '1px solid #ccc' }}>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', height: TREND_H, width: 34, borderBottom: '1px solid #333' }}>
+              <GridLines axis={chart.axis} />
+              <div style={{ position: 'relative', width: 18, height: chart.kcpeH, background: TREND_KCPE, ...PRINT_COLOR }} />
+            </div>
+            <div style={{ height: 12 }} />
+            <div style={{ fontSize: 8, fontWeight: 700, textAlign: 'center', borderTop: '1px solid #999', paddingTop: 2, letterSpacing: 0.3 }}>KCPE</div>
+          </div>
+        )}
+        {chart.groups.map((gp, gi) => (
+          <div key={gi} style={{ borderRight: gi < chart.groups.length - 1 ? '1px solid #ccc' : 'none' }}>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', height: TREND_H, borderBottom: '1px solid #333' }}>
+              <GridLines axis={chart.axis} />
+              {gp.terms.map((tm, ti) => (
+                <div key={ti} style={{ position: 'relative', width: 26, height: TREND_H, display: 'flex', justifyContent: 'center', alignItems: 'flex-end' }}>
+                  {tm.h > 0 && (
+                    <>
+                      <div style={{ position: 'absolute', bottom: tm.h + 2, fontSize: 8, fontWeight: 800, color: '#1A1A2E', whiteSpace: 'nowrap' }}>{tm.grade}</div>
+                      <div style={{ position: 'relative', width: 16, height: tm.h, background: TREND_BAR, ...PRINT_COLOR }} />
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', paddingTop: 2 }}>
+              {gp.terms.map((tm, ti) => (
+                <div key={ti} style={{ width: 26, textAlign: 'center', fontSize: 7.5, fontWeight: 600, color: '#444' }}>T{tm.term}</div>
+              ))}
+            </div>
+            <div style={{ fontSize: 8.5, fontWeight: 800, textAlign: 'center', borderTop: '1px solid #999', paddingTop: 2, letterSpacing: 0.3 }}>{shortGrade(gp.label)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
+// Same chart as an HTML string (bulk-print version) — kept byte-identical in
+// layout to TrendChart so preview and PDF match.
+const trendChartHTML = (chart) => {
+  const pc = '-webkit-print-color-adjust:exact;print-color-adjust:exact';
+  const axis = chart.axis.map(a => `<div style="position:absolute;right:6px;bottom:calc(${a.bottom}% - 4px);font-size:8.5px;font-weight:700;color:#333;line-height:1;letter-spacing:0.3px">${a.label}</div>`).join('');
+  const grid = chart.axis.map(a => `<div style="position:absolute;left:0;right:0;bottom:${a.bottom}%;border-top:1px solid #E5E7EB;${pc}"></div>`).join('');
+  const kcpe = chart.kcpeH > 0 ? `<div style="border-right:1px solid #ccc">
+    <div style="position:relative;display:flex;align-items:flex-end;justify-content:center;height:${TREND_H}px;width:34px;border-bottom:1px solid #333">${grid}<div style="position:relative;width:18px;height:${chart.kcpeH}px;background:${TREND_KCPE};${pc}"></div></div>
+    <div style="height:12px"></div>
+    <div style="font-size:8px;font-weight:700;text-align:center;border-top:1px solid #999;padding-top:2px;letter-spacing:0.3px">KCPE</div></div>` : '';
+  const groups = chart.groups.map((gp, gi) => {
+    const bars = gp.terms.map(tm => `<div style="position:relative;width:26px;height:${TREND_H}px;display:flex;justify-content:center;align-items:flex-end">${tm.h > 0 ? `<div style="position:absolute;bottom:${tm.h + 2}px;font-size:8px;font-weight:800;color:#1A1A2E;white-space:nowrap">${tm.grade}</div><div style="position:relative;width:16px;height:${tm.h}px;background:${TREND_BAR};${pc}"></div>` : ''}</div>`).join('');
+    const terms = gp.terms.map(tm => `<div style="width:26px;text-align:center;font-size:7.5px;font-weight:600;color:#444">T${tm.term}</div>`).join('');
+    return `<div style="border-right:${gi < chart.groups.length - 1 ? '1px solid #ccc' : 'none'}">
+      <div style="position:relative;display:flex;align-items:flex-end;height:${TREND_H}px;border-bottom:1px solid #333">${grid}${bars}</div>
+      <div style="display:flex;padding-top:2px">${terms}</div>
+      <div style="font-size:8.5px;font-weight:800;text-align:center;border-top:1px solid #999;padding-top:2px;letter-spacing:0.3px">${shortGrade(gp.label)}</div></div>`;
+  }).join('');
+  return `<div style="overflow-x:auto;padding-top:12px"><div style="display:inline-flex;align-items:flex-end">
+    <div style="position:relative;width:30px;height:${TREND_H}px;flex-shrink:0">${axis}</div>
+    <div style="display:flex;align-items:flex-end;border-left:1px solid #333">${kcpe}${groups}</div></div></div>`;
+};
+
 const Reports = ({ schoolConfig, examsList }) => {
   const [students, setStudents] = useState([]);
   const [dbSubjects, setDbSubjects] = useState([]);
@@ -278,12 +375,12 @@ const Reports = ({ schoolConfig, examsList }) => {
 
   // Resolve a score to the school's own grading band. grading_systems stores
   // scales against school_level ("Senior Secondary") and school_grade (a class
-  // id like "f3", or "All" for the whole level). Narrowest wins: the scale set
-  // for this exact class, else the level-wide one, else a CBC default.
+  // NAME like "Form 3", or "All" for the whole level). Narrowest wins: the
+  // scale set for this exact class, else the level-wide one, else a default.
   const getGrade = useCallback((score) => {
     const levelName = levelNameForClass(selectedClass);
 
-    let scale = dbGrades.filter(g => g.school_grade === selectedClass);
+    let scale = dbGrades.filter(g => g.school_grade === GRADE_CODE_TO_NAME[selectedClass]);
     if (!scale.length) {
       scale = dbGrades.filter(g => g.school_level === levelName && (g.school_grade === 'All' || !g.school_grade));
     }
@@ -522,16 +619,17 @@ const Reports = ({ schoolConfig, examsList }) => {
   }, [dbGrades]);
 
   // Trend Analysis: for each (year, term, level) period the student has marks
-  // in, total points + mean grade, and position among CURRENT classmates who
-  // also sat that period. Includes the current term as its latest column.
+  // in — limited to the level band the chart draws — total points + mean grade
+  // and position among CURRENT classmates who also sat that period. Scoring is
+  // byte-identical to the card: the period's exam set, first mark per exam,
+  // pct × weight share, then the aggregation policy picks what counts. The
+  // current term's trend column therefore always equals the TOTAL POINTS strip.
   const trendFor = useCallback((student) => {
-    const byExam = {};
-    examsList.forEach(e => { byExam[e.id] = e; });
-    // periods the student has marks in
+    const band = trendBandFor(student.level_id).map(([code]) => code);
+    const groupOf = (sid) => dbSubjects.find(s => s.id === sid)?.subject_group || 1;
+    // periods the student has marks in, inside the band
     const periodsSet = new Map();
-    trendMarks.filter(m => m.student_id === student.id).forEach(m => {
-      const ex = byExam[m.exam_id];
-      if (!ex) return;
+    trendMarks.filter(m => m.student_id === student.id && band.includes(m.level_id)).forEach(m => {
       const key = `${m.year}|${m.term}|${m.level_id}`;
       if (!periodsSet.has(key)) periodsSet.set(key, { year: m.year, term: m.term, level: m.level_id });
     });
@@ -539,22 +637,28 @@ const Reports = ({ schoolConfig, examsList }) => {
     const periods = [...periodsSet.values()].sort((a, b) => a.year - b.year || termNo(a.term) - termNo(b.term));
 
     const pointsIn = (sid, p) => {
+      const exams = examsList.filter(e => e.level_id === p.level && e.term === p.term);
+      if (!exams.length) return null;
       const scale = scaleForLevel(p.level);
       const gradeOf = (pct) => { for (const g of scale) if (pct >= (g.min_score || 0)) return g; return { points: 0 }; };
-      const perSubject = {};
-      trendMarks.filter(m => m.student_id === sid && m.year === p.year && m.term === p.term && m.level_id === p.level).forEach(m => {
-        const ex = byExam[m.exam_id];
-        if (!ex || m.score === null || m.score === undefined) return;
-        const outOf = ex.total_marks || 100;
-        (perSubject[m.subject_id] = perSubject[m.subject_id] || []).push({ pct: outOf > 0 ? m.score / outOf * 100 : 0, w: ex.weight || 0 });
-      });
-      const subjectPcts = Object.values(perSubject).map(list => {
-        const wSum = list.reduce((a, x) => a + x.w, 0);
-        return wSum > 0 ? list.reduce((a, x) => a + x.pct * (x.w / 100), 0) : list.reduce((a, x) => a + x.pct, 0) / list.length;
-      });
-      if (!subjectPcts.length) return null;
-      const pts = subjectPcts.reduce((a, pct) => a + (gradeOf(pct).points || 0), 0);
-      const meanPts = pts / subjectPcts.length;
+      const mine = trendMarks.filter(m => m.student_id === sid && m.year === p.year && m.term === p.term && m.level_id === p.level);
+      if (!mine.length) return null;
+      // Per subject, the card's exact math: iterate the exam set, first mark
+      // per exam wins, missing exams contribute zero.
+      const entries = [...new Set(mine.map(m => m.subject_id))].map(subId => {
+        const score = exams.reduce((sum, ex) => {
+          const mk = mine.find(m => m.exam_id === ex.id && m.subject_id === subId);
+          const outOf = ex.total_marks || 100;
+          const pct = outOf > 0 ? ((mk?.score || 0) / outOf) * 100 : 0;
+          return sum + pct * ((ex.weight || 0) / 100);
+        }, 0);
+        return { score, group: groupOf(subId) };
+      }).filter(e => e.score > 0);
+      if (!entries.length) return null;
+      const { counted } = applyAggregationPolicy(aggPolicy, entries);
+      if (!counted.length) return null;
+      const pts = counted.reduce((a, e) => a + (gradeOf(e.score).points || 0), 0);
+      const meanPts = pts / counted.length;
       const scaleMax = Math.max(1, ...scale.map(g => g.points || 0));
       return { pts, meanPts, grade: (() => { const r = Math.round(meanPts); const ex2 = scale.find(g => g.points === r); if (ex2) return ex2.grade || ex2.code; let n = null, d = Infinity; scale.forEach(g => { const dd = Math.abs((g.points || 0) - meanPts); if (dd < d) { d = dd; n = g; } }); return n?.grade || '-'; })(), pctOfMax: meanPts / scaleMax * 100 };
     };
@@ -566,7 +670,32 @@ const Reports = ({ schoolConfig, examsList }) => {
       const pos = 1 + cohort.filter(c => c.pts > mine.pts).length;
       return { ...p, ...mine, pos, outOf: cohort.length };
     }).filter(Boolean);
-  }, [trendMarks, examsList, students, scaleForLevel]);
+  }, [trendMarks, examsList, students, scaleForLevel, dbSubjects, aggPolicy]);
+
+  // Shapes trendFor() output into the full-band grouped bar chart: every grade
+  // in the student's level, three terms each, filled where data exists. The
+  // y-axis is the current class scale (grade codes at their points height).
+  const trendChartFor = useCallback((student, trend) => {
+    const band = trendBandFor(student.level_id);
+    const termNo = (t) => parseInt(String(t).replace(/\D/g, ''), 10) || 0;
+    const bySlot = {};
+    trend.forEach(t => {
+      const key = `${t.level}|${termNo(t.term)}`;
+      if (!bySlot[key] || (t.year || 0) > (bySlot[key].year || 0)) bySlot[key] = t;
+    });
+    const groups = band.map(([code, label]) => ({
+      label,
+      terms: [1, 2, 3].map(n => {
+        const d = bySlot[`${code}|${n}`];
+        return d
+          ? { term: n, h: Math.max(4, Math.round(d.pctOfMax / 100 * TREND_H)), grade: d.grade }
+          : { term: n, h: 0 };
+      }),
+    }));
+    const axis = cardScale.map(g => ({ label: g.grade || g.code || '', bottom: (g.points || 0) / maxPoints * 100 }));
+    const kcpeH = student.kcpe_score ? Math.max(4, Math.round(student.kcpe_score / 500 * TREND_H)) : 0;
+    return { groups, axis, kcpeH };
+  }, [cardScale, maxPoints]);
 
   // Fees box numbers: arrears to date, next term's bill, total.
   const feesFor = useCallback((student) => {
@@ -780,11 +909,13 @@ const Reports = ({ schoolConfig, examsList }) => {
           )}
         </div>
 
-        {/* Trend Analysis — points & position per term, with grade chart */}
-        {trend.length > 0 && (
-          <div style={{ border: '1px solid #000', padding: 10, marginBottom: 12 }}>
-            <div style={{ fontWeight: 800, marginBottom: 6, fontSize: 12 }}>TREND ANALYSIS — TOTAL POINTS &amp; POSITION PER TERM</div>
-            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        {/* Trend Analysis — points & position table + full-band grade chart */}
+        {trend.length > 0 && (() => {
+          const chart = trendChartFor(student, trend);
+          const bandLabel = `${chart.groups[0].label} – ${chart.groups[chart.groups.length - 1].label}`;
+          return (
+            <div style={{ border: '1px solid #000', padding: 10, marginBottom: 12 }}>
+              <div style={{ fontWeight: 800, marginBottom: 6, fontSize: 12 }}>TREND ANALYSIS — {bandLabel.toUpperCase()}</div>
               <table style={{ borderCollapse: 'collapse', fontSize: 10.5 }}>
                 <thead>
                   <tr>
@@ -807,23 +938,10 @@ const Reports = ({ schoolConfig, examsList }) => {
                   </tr>
                 </tbody>
               </table>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', paddingBottom: 2 }}>
-                {student.kcpe_score && (
-                  <div style={{ textAlign: 'center' }}>
-                    <div style={{ width: 22, height: Math.max(4, (student.kcpe_score / 500) * 60), background: '#8A8FA8', margin: '0 auto', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }} />
-                    <div style={{ fontSize: 8.5, fontWeight: 700, marginTop: 2 }}>KCPE</div>
-                  </div>
-                )}
-                {trend.map((t, i) => (
-                  <div key={i} style={{ textAlign: 'center' }}>
-                    <div style={{ width: 22, height: Math.max(4, (t.pctOfMax / 100) * 60), background: '#1A1A2E', margin: '0 auto', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }} />
-                    <div style={{ fontSize: 8.5, fontWeight: 700, marginTop: 2 }}>{t.grade}</div>
-                  </div>
-                ))}
-              </div>
+              <TrendChart chart={chart} />
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* School fees box (opt-in) + next-term date */}
         {(fees || schoolInfo?.next_term_begins) && (
@@ -1017,23 +1135,22 @@ const Reports = ({ schoolConfig, examsList }) => {
           ${kEntry ? `<div><b>KCPE ENTRY POSITION:</b>&nbsp; <span style="font-weight:900">${kEntry.pos} / ${kEntry.outOf}</span></div>` : ''}
           ${kEntry ? `<div><b>V.A.P:</b>&nbsp; <span style="font-weight:900;color:${vap >= 0 ? '#1B6B3A' : '#C0392B'}">${vap === null ? '—' : `${vap >= 0 ? '+' : ''}${vap.toFixed(1)}`}</span></div>` : ''}
         </div>
-        ${trend.length > 0 ? `
+        ${trend.length > 0 ? (() => {
+          const chart = trendChartFor(student, trend);
+          const bandLabel = `${chart.groups[0].label} – ${chart.groups[chart.groups.length - 1].label}`;
+          return `
         <div class="trend">
-          <b style="font-size:11px">TREND ANALYSIS — TOTAL POINTS &amp; POSITION PER TERM</b>
-          <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-top:5px">
-            <table style="width:auto;font-size:10px">
-              <thead><tr><th></th>${trend.map(t => `<th style="white-space:nowrap">${(GRADE_CODE_TO_NAME[t.level] || t.level).replace('Grade ', 'G').replace('Form ', 'F')} ${String(t.term).replace('Term ', 'T')} '${String(t.year).slice(2)}</th>`).join('')}</tr></thead>
-              <tbody>
-                <tr><td><b>Points</b></td>${trend.map(t => `<td style="text-align:center">${t.pts}</td>`).join('')}</tr>
-                <tr><td><b>Position</b></td>${trend.map(t => `<td style="text-align:center">${t.pos}/${t.outOf}</td>`).join('')}</tr>
-              </tbody>
-            </table>
-            <div style="display:flex;gap:8px;align-items:flex-end">
-              ${student.kcpe_score ? `<div style="text-align:center"><div style="width:22px;height:${Math.max(4, Math.round(student.kcpe_score / 500 * 60))}px;background:#8A8FA8;margin:0 auto"></div><div style="font-size:8px;font-weight:700;margin-top:2px">KCPE</div></div>` : ''}
-              ${trend.map(t => `<div style="text-align:center"><div style="width:22px;height:${Math.max(4, Math.round(t.pctOfMax / 100 * 60))}px;background:#1A1A2E;margin:0 auto"></div><div style="font-size:8px;font-weight:700;margin-top:2px">${t.grade}</div></div>`).join('')}
-            </div>
-          </div>
-        </div>` : ''}
+          <b style="font-size:11px">TREND ANALYSIS — ${bandLabel.toUpperCase()}</b>
+          <table style="width:auto;font-size:10px;margin-top:5px">
+            <thead><tr><th></th>${trend.map(t => `<th style="white-space:nowrap">${(GRADE_CODE_TO_NAME[t.level] || t.level).replace('Grade ', 'G').replace('Form ', 'F')} ${String(t.term).replace('Term ', 'T')} '${String(t.year).slice(2)}</th>`).join('')}</tr></thead>
+            <tbody>
+              <tr><td><b>Points</b></td>${trend.map(t => `<td style="text-align:center">${t.pts}</td>`).join('')}</tr>
+              <tr><td><b>Position</b></td>${trend.map(t => `<td style="text-align:center">${t.pos}/${t.outOf}</td>`).join('')}</tr>
+            </tbody>
+          </table>
+          ${trendChartHTML(chart)}
+        </div>`;
+        })() : ''}
         ${(fees || schoolInfo?.next_term_begins) ? `
         <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
           ${schoolInfo?.next_term_begins ? `<div style="flex:1;min-width:200px;border:1px solid #000;padding:10px;display:flex;align-items:center;justify-content:center"><b>NEXT TERM BEGINS:&nbsp;</b><span style="font-weight:900;text-decoration:underline">${new Date(schoolInfo.next_term_begins).toLocaleDateString('en-GB')}</span></div>` : ''}

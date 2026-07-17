@@ -418,7 +418,7 @@ const TeacherModal = ({ teacher, schoolConfig, subjects, streams, assignments, o
 
   return (
     <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(42,36,33,0.6)', backdropFilter: 'blur(4px)',
+      position: 'fixed', inset: 0, background: 'rgba(42,36,33,0.6)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20,
     }}>
       <div style={{

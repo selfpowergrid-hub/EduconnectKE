@@ -148,6 +148,16 @@ const Fees = ({ schoolConfig }) => {
   const [isSavingCharge, setIsSavingCharge] = useState(false);
   const [chargeFormRows, setChargeFormRows] = useState([]); // array of { id?, votehead_id, t1, t2, t3, notes }
 
+  // Inline "edit fees" inside the breakdown modal — this ONE student's per-
+  // votehead amounts. Already-invoiced terms are locked (estimated-only edits).
+  const [feeEdit, setFeeEdit] = useState(false);
+  const [feeEditRows, setFeeEditRows] = useState([]); // [{ votehead_id, t1, t2, t3 }]
+  const [feeAddVh, setFeeAddVh] = useState('');
+  const [isSavingFees, setIsSavingFees] = useState(false);
+
+  // Collapsible "Payments & Receipts" list inside the breakdown modal.
+  const [showPayList, setShowPayList] = useState(false);
+
   const openStudentCharges = (student) => {
     const existing = studentCharges.filter(c => c.student_id === student.id);
     const initialRows = existing.map(e => ({
@@ -218,6 +228,87 @@ const Fees = ({ schoolConfig }) => {
         : 'Failed to save charges: ' + err.message);
     } finally {
       setIsSavingCharge(false);
+    }
+  };
+
+  // ---- Inline fee editing (breakdown modal) — this student only -------------
+
+  // Which terms are locked for the open student: any already invoiced.
+  const lockedTermsFor = (s) => invoicedTermByStudent[s.id] || new Set();
+
+  const startFeeEdit = (s) => {
+    const rows = effectiveRowsFor(s)
+      .map(r => ({ ...r, vh: voteheadsById[r.votehead_id] }))
+      .filter(({ vh }) => !!vh)
+      .sort((a, b) => (a.vh?.priority ?? 999) - (b.vh?.priority ?? 999) || (a.vh?.display_order ?? 0) - (b.vh?.display_order ?? 0))
+      .map(r => ({ votehead_id: r.votehead_id, t1: Number(r.t1) || 0, t2: Number(r.t2) || 0, t3: Number(r.t3) || 0 }));
+    setFeeEditRows(rows);
+    setFeeAddVh('');
+    setFeeEdit(true);
+  };
+
+  const cancelFeeEdit = () => { setFeeEdit(false); setFeeEditRows([]); setFeeAddVh(''); };
+
+  const setFeeCell = (vhId, termKey, val) => {
+    const clean = val === '' ? '' : Math.max(0, Number(val) || 0);
+    setFeeEditRows(rows => rows.map(r => r.votehead_id === vhId ? { ...r, [termKey]: clean } : r));
+  };
+
+  const addFeeVotehead = (vhId) => {
+    if (!vhId || feeEditRows.some(r => r.votehead_id === vhId)) return;
+    setFeeEditRows(rows => [...rows, { votehead_id: vhId, t1: 0, t2: 0, t3: 0 }]);
+    setFeeAddVh('');
+  };
+
+  const removeFeeVotehead = (vhId) => setFeeEditRows(rows => rows.filter(r => r.votehead_id !== vhId));
+
+  // Save this student's edits: only voteheads that DIFFER from the class fee
+  // structure become override rows; ones set back to the structure delete any
+  // existing override, so a student never carries a needless override.
+  const handleSaveFeeEdit = async () => {
+    setIsSavingFees(true);
+    try {
+      const s = studentModal;
+      const user = (await supabase.auth.getUser()).data.user;
+      const base = baseRowsFor(s); // Map<votehead_id, { t1, t2, t3 }>
+      const existing = studentCharges.filter(c => c.student_id === s.id);
+      const existingByVh = new Map(existing.map(c => [c.votehead_id, c]));
+
+      const toUpsert = [];
+      const toDelete = [];
+      feeEditRows.forEach(r => {
+        if (!r.votehead_id) return;
+        const t1 = Number(r.t1) || 0, t2 = Number(r.t2) || 0, t3 = Number(r.t3) || 0;
+        const b = base.get(r.votehead_id);
+        const sameAsBase = b && (Number(b.t1) || 0) === t1 && (Number(b.t2) || 0) === t2 && (Number(b.t3) || 0) === t3;
+        if (sameAsBase) {
+          const ex = existingByVh.get(r.votehead_id);
+          if (ex) toDelete.push(ex.id);
+        } else {
+          toUpsert.push({ school_id: schoolConfig.id, student_id: s.id, votehead_id: r.votehead_id, year, t1, t2, t3, created_by: user?.id || null });
+        }
+      });
+      // Voteheads removed from the editor that had an override → drop them.
+      const kept = new Set(feeEditRows.map(r => r.votehead_id));
+      existing.forEach(c => { if (!kept.has(c.votehead_id)) toDelete.push(c.id); });
+
+      if (toDelete.length) {
+        const { error } = await supabase.from('student_votehead_charges').delete().in('id', toDelete);
+        if (error) throw error;
+      }
+      if (toUpsert.length) {
+        const { error } = await supabase.from('student_votehead_charges')
+          .upsert(toUpsert, { onConflict: 'school_id,student_id,votehead_id,year' });
+        if (error) throw error;
+      }
+      await loadAll();
+      cancelFeeEdit();
+    } catch (err) {
+      alert((err.message || '').includes('row-level security')
+        ? 'Your sign-in session appears to have expired. Refresh the page and try again.'
+        : 'Failed to save fees: ' + err.message);
+    } finally {
+      setIsSavingFees(false);
     }
   };
 
@@ -2318,7 +2409,7 @@ const Fees = ({ schoolConfig }) => {
         const termsToShow = termFilter === 'all' ? [1, 2, 3] : [Number(termFilter)];
         return (
           <div
-            onClick={() => setStudentModal(null)}
+            onClick={() => { if (!feeEdit) { setStudentModal(null); setShowPayList(false); } }}
             style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}
           >
             <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, width: "100%", maxWidth: 640, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 12px 40px rgba(0,0,0,0.2)" }}>
@@ -2349,7 +2440,76 @@ const Fees = ({ schoolConfig }) => {
                   ))}
                 </div>
 
-                {termsToShow.map(t => {
+                {feeEdit && (() => {
+                  const locked = lockedTermsFor(studentModal);
+                  const inRows = new Set(feeEditRows.map(r => r.votehead_id));
+                  const addable = Object.values(voteheadsById)
+                    .filter(v => v.is_active !== false && !inRows.has(v.id))
+                    .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
+                  const cellStyle = { padding: "5px 6px", textAlign: "right" };
+                  const inputStyle = { width: 78, padding: "6px 7px", textAlign: "right", border: "1px solid #cddbe6", borderRadius: 6, fontSize: 12.5, fontFamily: "monospace", outline: "none" };
+                  const grand = feeEditRows.reduce((a, r) => a + (Number(r.t1) || 0) + (Number(r.t2) || 0) + (Number(r.t3) || 0), 0);
+                  return (
+                    <div style={{ marginTop: 16 }}>
+                      <div style={{ padding: "8px 12px", background: "#EAF2FA", border: "1px solid #C4E1FA", borderRadius: 8, fontSize: 11.5, color: "#1A5F9C", marginBottom: 10, lineHeight: 1.5 }}>
+                        ✏️ Editing fees for <strong>{studentName(studentModal)}</strong> only — other students are unaffected. Set any votehead's per-term amount; set it to <strong>0</strong> to waive it for this student. {locked.size > 0 && <>Terms already invoiced ({[...locked].sort().map(t => `Term ${t}`).join(', ')}) are 🔒 locked — reduce those via Discounts &amp; Bursaries.</>}
+                      </div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                        <thead>
+                          <tr style={{ borderBottom: "2px solid #E8EAF0" }}>
+                            <th style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, color: "#8A8FA8", fontWeight: 800 }}>VOTEHEAD</th>
+                            {[1, 2, 3].map(t => <th key={t} style={{ padding: "6px 6px", textAlign: "right", fontSize: 10, color: "#8A8FA8", fontWeight: 800 }}>TERM {t}{locked.has(t) ? " 🔒" : ""}</th>)}
+                            <th style={{ width: 26 }} />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {feeEditRows.map(r => {
+                            const vh = voteheadsById[r.votehead_id];
+                            return (
+                              <tr key={r.votehead_id} style={{ borderBottom: "1px solid #F0F2F5" }}>
+                                <td style={{ padding: "7px 8px", color: "#2a2421" }}>
+                                  <strong>{vh?.code || "—"}</strong> <span style={{ color: "#8A8FA8" }}>{vh?.description || ""}</span>
+                                </td>
+                                {[1, 2, 3].map(t => (
+                                  <td key={t} style={cellStyle}>
+                                    {locked.has(t) ? (
+                                      <span style={{ fontFamily: "monospace", color: "#8A8FA8" }}>{(Number(r[`t${t}`]) || 0).toLocaleString()}</span>
+                                    ) : (
+                                      <input type="number" min="0" value={r[`t${t}`]} onChange={e => setFeeCell(r.votehead_id, `t${t}`, e.target.value)} style={inputStyle} />
+                                    )}
+                                  </td>
+                                ))}
+                                <td style={{ textAlign: "center" }}>
+                                  <button onClick={() => removeFeeVotehead(r.votehead_id)} title="Remove this votehead for this student" style={{ background: "none", border: "none", cursor: "pointer", color: "#C0392B", fontSize: 14, opacity: 0.6 }}>🗑️</button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {feeEditRows.length === 0 && (
+                            <tr><td colSpan={5} style={{ padding: "12px 8px", color: "#8A8FA8", fontSize: 12 }}>No voteheads yet — add one below.</td></tr>
+                          )}
+                        </tbody>
+                        <tfoot>
+                          <tr style={{ borderTop: "2px solid #2a2421" }}>
+                            <td style={{ padding: "8px", fontWeight: 800 }}>Year total (this student)</td>
+                            <td colSpan={3} style={{ padding: "8px", textAlign: "right", fontFamily: "monospace", fontWeight: 800 }}>KES {grand.toLocaleString()}</td>
+                            <td />
+                          </tr>
+                        </tfoot>
+                      </table>
+                      {addable.length > 0 && (
+                        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                          <select value={feeAddVh} onChange={e => addFeeVotehead(e.target.value)} style={{ flex: 1, padding: "8px 10px", border: "1px solid #cddbe6", borderRadius: 8, fontSize: 12.5, background: "#fff", cursor: "pointer" }}>
+                            <option value="">＋ Add a votehead for this student…</option>
+                            {addable.map(v => <option key={v.id} value={v.id}>{v.code} — {v.description}</option>)}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {!feeEdit && termsToShow.map(t => {
                   const term = bd.terms[t];
                   return (
                     <div key={t} style={{ marginTop: 16 }}>
@@ -2398,29 +2558,98 @@ const Fees = ({ schoolConfig }) => {
                   );
                 })}
 
-                <div style={{ marginTop: 14, fontSize: 11, color: "#8A8FA8", lineHeight: 1.5 }}>
-                  {termsToShow.some(t => !bd.terms[t].isReal)
-                    ? `“Estimated” terms distribute this student's payments across voteheads using the ${allocModeDefault === 'percentage' ? 'percentage (pro-rata)' : 'priority'} method. Generate that term's invoices to lock in real allocations.`
-                    : "All shown terms use real invoice allocations tied to receipts and the ledger."}
-                </div>
+                {!feeEdit && (
+                  <div style={{ marginTop: 14, fontSize: 11, color: "#8A8FA8", lineHeight: 1.5 }}>
+                    {termsToShow.some(t => !bd.terms[t].isReal)
+                      ? `“Estimated” terms distribute this student's payments across voteheads using the ${allocModeDefault === 'percentage' ? 'percentage (pro-rata)' : 'priority'} method. Generate that term's invoices to lock in real allocations.`
+                      : "All shown terms use real invoice allocations tied to receipts and the ledger."}
+                  </div>
+                )}
+
+                {/* Collapsible: this student's payments, each reprintable. */}
+                {!feeEdit && (() => {
+                  const studentPays = payments
+                    .filter(p => p.student_id === studentModal.id)
+                    .sort((a, b) => new Date(b.paid_at) - new Date(a.paid_at));
+                  return (
+                    <div style={{ marginTop: 16, border: "1px solid #E8EAF0", borderRadius: 10, overflow: "hidden" }}>
+                      <button
+                        onClick={() => setShowPayList(v => !v)}
+                        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: "#F8FAFC", border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 800, color: "#2a2421" }}
+                      >
+                        <span>💳 Payments &amp; Receipts <span style={{ color: "#8A8FA8", fontWeight: 700 }}>({studentPays.length})</span></span>
+                        <span style={{ color: "#8A8FA8", fontSize: 12, transform: showPayList ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▸</span>
+                      </button>
+                      {showPayList && (
+                        studentPays.length === 0 ? (
+                          <div style={{ padding: "12px 14px", fontSize: 12, color: "#8A8FA8" }}>No payments recorded yet.</div>
+                        ) : (
+                          <div>
+                            {studentPays.map((p, idx) => {
+                              const rct = receiptByPayment[p.id];
+                              const voided = p.status === 'voided';
+                              return (
+                                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderTop: "1px solid #F0F2F5", background: idx % 2 ? "#FAFBFC" : "#fff", opacity: voided ? 0.65 : 1 }}>
+                                  <div style={{ width: 84, fontSize: 11.5, color: "#4A4A6A", flexShrink: 0 }}>{new Date(p.paid_at).toLocaleDateString()}</div>
+                                  <div style={{ width: 96, flexShrink: 0 }}>
+                                    <span style={{ fontWeight: 700, fontFamily: "monospace", fontSize: 12.5, color: voided ? "#8A8FA8" : "#1B6B3A", textDecoration: voided ? "line-through" : "none" }}>KES {Number(p.amount).toLocaleString()}</span>
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: "#8A8FA8", textTransform: "capitalize", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {p.method || "cash"}{p.reference ? ` · ${p.reference}` : ""}{p.term ? ` · T${p.term}` : ""}
+                                    {rct?.receipt_no && <span style={{ marginLeft: 6, fontFamily: "monospace", color: "#1A5F9C", textTransform: "none" }}>{rct.receipt_no}</span>}
+                                    {voided && <span style={{ marginLeft: 6, padding: "1px 7px", borderRadius: 999, fontSize: 9, fontWeight: 800, background: "#FDF0ED", color: "#C0392B" }}>VOID</span>}
+                                  </div>
+                                  <button onClick={() => handleViewReceipt(p)} title="View / reprint receipt"
+                                    style={{ padding: "5px 10px", background: "#fff", border: "1px solid #1A5F9C", borderRadius: 6, fontSize: 11, color: "#1A5F9C", fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+                                    🖨 Receipt
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               <div style={{ padding: "14px 24px", background: "#f5f2eb", borderTop: "1px solid #E8EAF0", display: "flex", justifyContent: "space-between", gap: 10, position: "sticky", bottom: 0 }}>
-                <button onClick={() => printStudentStatement(studentModal)}
-                  title="Print the full yearly statement — transactions, running balance, votehead annexure"
-                  style={{ padding: "10px 18px", borderRadius: 8, border: "1px solid #1A5F9C", background: "#fff", color: "#1A5F9C", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                  🧾 Statement (PDF)
-                </button>
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button onClick={() => { const s = studentModal; setStudentModal(null); openPayModal(s); }}
-                    style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: "#1B6B3A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                    + Record Payment
-                  </button>
-                  <button onClick={() => setStudentModal(null)}
-                    style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #e6dfd8", background: "#fff", color: "#8a8fa8", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                    Close
-                  </button>
-                </div>
+                {feeEdit ? (
+                  <>
+                    <button onClick={cancelFeeEdit}
+                      style={{ padding: "10px 18px", borderRadius: 8, border: "1px solid #e6dfd8", background: "#fff", color: "#8a8fa8", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                      Cancel
+                    </button>
+                    <button onClick={handleSaveFeeEdit} disabled={isSavingFees}
+                      style={{ padding: "10px 22px", borderRadius: 8, border: "none", background: isSavingFees ? "#8a8fa8" : "#1B6B3A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: isSavingFees ? "wait" : "pointer" }}>
+                      {isSavingFees ? "Saving…" : "💾 Save fees"}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => printStudentStatement(studentModal)}
+                      title="Print the full yearly statement — transactions, running balance, votehead annexure"
+                      style={{ padding: "10px 18px", borderRadius: 8, border: "1px solid #1A5F9C", background: "#fff", color: "#1A5F9C", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                      🧾 Statement (PDF)
+                    </button>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <button onClick={() => startFeeEdit(studentModal)}
+                        title="Adjust this student's per-votehead fees (this student only)"
+                        style={{ padding: "10px 18px", borderRadius: 8, border: "1px solid #B4690E", background: "#fff", color: "#B4690E", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                        ✏️ Edit fees
+                      </button>
+                      <button onClick={() => { const s = studentModal; setStudentModal(null); setShowPayList(false); openPayModal(s); }}
+                        style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: "#1B6B3A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                        + Record Payment
+                      </button>
+                      <button onClick={() => { setStudentModal(null); setShowPayList(false); cancelFeeEdit(); }}
+                        style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #e6dfd8", background: "#fff", color: "#8a8fa8", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                        Close
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>

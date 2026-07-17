@@ -1048,7 +1048,7 @@ const Exams = ({ schoolConfig, examsList, setExamsList }) => {
 
       {/* 3. EDIT EXAM MODAL */}
       {showEditModal && editingExam && (
-        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(42, 36, 33, 0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 }}>
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(42, 36, 33, 0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 }}>
           <div style={{ background: "#fff", width: "90%", maxWidth: 600, borderRadius: 16, boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.15)", overflow: "hidden" }}>
             <div style={{ padding: "20px 24px", borderBottom: "1px solid #E8EAF0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f5f2eb" }}>
               <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "#2a2421" }}>✏️ Edit Examination Details</h3>

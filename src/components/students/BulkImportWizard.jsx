@@ -146,7 +146,7 @@ const BulkImportWizard = ({ schoolConfig, streams, dorms, existingStudents, plan
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-      background: 'rgba(42, 36, 33, 0.6)', backdropFilter: 'blur(4px)',
+      background: 'rgba(42, 36, 33, 0.6)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
       padding: 20,
     }}>

@@ -12,7 +12,7 @@ const AskForHelp = ({ module, onClose }) => {
   const answer = picked || results[0] || null;
   const others = results.filter((a) => a.id !== answer?.id).slice(0, 4);
 
-  const overlay = { position: 'fixed', inset: 0, background: 'rgba(42,36,33,0.55)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1400, padding: 16 };
+  const overlay = { position: 'fixed', inset: 0, background: 'rgba(42,36,33,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1400, padding: 16 };
   const card = { background: '#fff', borderRadius: 16, width: '100%', maxWidth: 500, maxHeight: '88vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 50px rgba(0,0,0,0.25)', overflow: 'hidden' };
 
   return (

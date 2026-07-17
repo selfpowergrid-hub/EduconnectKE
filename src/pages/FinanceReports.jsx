@@ -86,6 +86,9 @@ const FinanceReports = ({ schoolConfig }) => {
   const [payments, setPayments] = useState([]);
   const [voteheads, setVoteheads] = useState([]);
   const [staffList, setStaffList] = useState([]);
+  const [adjustments, setAdjustments] = useState([]);  // discounts / waivers
+  const [bursaries, setBursaries] = useState([]);       // sponsor bursary awards
+  const [receiptByPayment, setReceiptByPayment] = useState({}); // payment_id -> receipt
 
   // Report-local filters
   const [arrearsGrade, setArrearsGrade] = useState('all');
@@ -98,8 +101,8 @@ const FinanceReports = ({ schoolConfig }) => {
     const load = async () => {
       setIsLoading(true);
       try {
-        const [studs, inv, its, alloc, pays, vhs, stf] = await Promise.all([
-          supabase.from('students').select('id, adm_no, first_name, last_name, level_id, stream_id, streams(name)')
+        const [studs, inv, its, alloc, pays, vhs, stf, adjs, burs, rcts] = await Promise.all([
+          supabase.from('students').select('id, adm_no, first_name, last_name, level_id, stream_id, boarding_status, parent_name, parent_phone, streams(name)')
             .eq('school_id', schoolConfig.id),
           supabase.from('fee_invoices').select('id, student_id, term, total, status, invoice_no')
             .eq('school_id', schoolConfig.id).eq('year', year),
@@ -110,13 +113,21 @@ const FinanceReports = ({ schoolConfig }) => {
             .select('amount, invoice_id, invoice_item_id, payment_id, adjustment_id, bursary_id, fee_invoices!inner(year, term), fee_payments(status), fee_adjustments(status), fee_bursary_awards(status)')
             .eq('school_id', schoolConfig.id).eq('fee_invoices.year', year),
           supabase.from('fee_payments')
-            .select('id, student_id, amount, method, reference, paid_at, status, recorded_by, fee_receipts(receipt_no, is_void)')
+            .select('id, student_id, amount, method, reference, paid_at, status, recorded_by')
             .eq('school_id', schoolConfig.id).eq('year', year)
             .order('paid_at', { ascending: false }),
           supabase.from('voteheads').select('id, code, description')
             .eq('school_id', schoolConfig.id),
           supabase.from('staff').select('auth_user_id, full_name')
             .eq('school_id', schoolConfig.id).not('auth_user_id', 'is', null),
+          supabase.from('fee_adjustments').select('id, student_id, amount, kind, reason, status')
+            .eq('school_id', schoolConfig.id).eq('year', year),
+          supabase.from('fee_bursary_awards').select('id, student_id, amount, reference, status, term, fee_sponsors(name, type)')
+            .eq('school_id', schoolConfig.id).eq('year', year),
+          // Receipts joined from the payments side come back as an empty array
+          // (one-to-many), so load them separately and key by payment_id.
+          supabase.from('fee_receipts').select('payment_id, receipt_no, is_void')
+            .eq('school_id', schoolConfig.id),
         ]);
         setStudents(studs.data || []);
         setInvoices((inv.data || []).filter(i => i.status !== 'cancelled'));
@@ -125,6 +136,9 @@ const FinanceReports = ({ schoolConfig }) => {
         setPayments(pays.data || []);
         setVoteheads(vhs.data || []);
         setStaffList(stf.data || []);
+        setAdjustments(adjs.data || []);
+        setBursaries(burs.data || []);
+        setReceiptByPayment(Object.fromEntries((rcts.data || []).map(r => [r.payment_id, r])));
       } catch (err) {
         console.error('Reports load failed:', err);
       } finally {
@@ -225,6 +239,119 @@ const FinanceReports = ({ schoolConfig }) => {
       .sort((a, b) => b.expected - a.expected);
   }, [items, activeAllocs, voteheads]);
 
+  // --- Shared per-student expected/settled, split by term ------------
+  // Settled nets cash AND concessions (both are invoice allocations).
+  const perStudent = useMemo(() => {
+    const exp = {}, set = {};
+    invoices.forEach(i => {
+      (exp[i.student_id] = exp[i.student_id] || { 1: 0, 2: 0, 3: 0 })[i.term] += Number(i.total);
+    });
+    activeAllocs.forEach(a => {
+      const inv = invById[a.invoice_id]; if (!inv) return;
+      (set[inv.student_id] = set[inv.student_id] || { 1: 0, 2: 0, 3: 0 })[inv.term] += Number(a.amount);
+    });
+    return Object.keys(exp).map(sid => {
+      const e = exp[sid], s = set[sid] || { 1: 0, 2: 0, 3: 0 };
+      const expTotal = e[1] + e[2] + e[3], setTotal = s[1] + s[2] + s[3];
+      return {
+        student: studentById[sid], sid,
+        expTotal, setTotal,
+        t1: Math.max(0, e[1] - s[1]), t2: Math.max(0, e[2] - s[2]), t3: Math.max(0, e[3] - s[3]),
+        outstanding: expTotal - setTotal, // negative = credit
+      };
+    });
+  }, [invoices, activeAllocs, invById, studentById]);
+
+  const lastPayBySid = useMemo(() => {
+    const m = {};
+    payments.forEach(p => {
+      if (p.status !== 'active') return;
+      const d = new Date(p.paid_at).getTime();
+      if (!m[p.student_id] || d > m[p.student_id]) m[p.student_id] = d;
+    });
+    return m;
+  }, [payments]);
+
+  const gradeOk = (r) => arrearsGrade === 'all' || r.student?.level_id === arrearsGrade;
+  const minAmt = parseFloat(arrearsMin) || 0.005;
+
+  // --- 5. Aged fee balances (arrears split by term) ------------------
+  const aged = useMemo(() =>
+    perStudent.filter(r => r.outstanding >= minAmt).filter(gradeOk)
+      .sort((a, b) => b.outstanding - a.outstanding),
+    [perStudent, arrearsGrade, arrearsMin]);
+
+  // --- 6. Defaulters & reminder list ---------------------------------
+  const defaulters = useMemo(() =>
+    perStudent.filter(r => r.outstanding >= minAmt).filter(gradeOk)
+      .sort((a, b) => b.outstanding - a.outstanding),
+    [perStudent, arrearsGrade, arrearsMin]);
+
+  // --- 7. Overpayments / credit balances -----------------------------
+  const overpayments = useMemo(() =>
+    perStudent.filter(r => r.outstanding <= -0.005).filter(gradeOk)
+      .map(r => ({ ...r, credit: -r.outstanding }))
+      .sort((a, b) => b.credit - a.credit),
+    [perStudent, arrearsGrade]);
+
+  // --- 8. Fee clearance (fully paid) ---------------------------------
+  const cleared = useMemo(() =>
+    perStudent.filter(r => r.expTotal > 0 && r.outstanding <= 0.005).filter(gradeOk)
+      .sort((a, b) => sName(a.student).localeCompare(sName(b.student))),
+    [perStudent, arrearsGrade]);
+
+  // --- 9. Receipts register / cash book ------------------------------
+  const receiptsRegister = useMemo(() => {
+    const rows = [...payments].sort((a, b) => new Date(a.paid_at) - new Date(b.paid_at));
+    let running = 0;
+    return rows.map(p => {
+      const active = p.status === 'active';
+      if (active) running += Number(p.amount);
+      return { p, running, active };
+    });
+  }, [payments]);
+
+  // --- 10. Cashier summary (collections by user) ---------------------
+  const cashierSummary = useMemo(() => {
+    const m = {};
+    payments.forEach(p => {
+      if (p.status !== 'active') return;
+      const key = p.recorded_by || 'unknown';
+      const c = (m[key] = m[key] || { name: staffByAuth[p.recorded_by] || 'Admin', count: 0, total: 0 });
+      c.count += 1; c.total += Number(p.amount);
+    });
+    return Object.values(m).sort((a, b) => b.total - a.total);
+  }, [payments, staffByAuth]);
+
+  // --- 11. Concessions register + sponsor utilization ----------------
+  const concessions = useMemo(() => {
+    const rows = [];
+    adjustments.filter(a => a.status === 'active').forEach(a => rows.push({
+      type: a.kind === 'waiver' ? 'Waiver' : 'Discount',
+      student: studentById[a.student_id], source: '—',
+      detail: a.reason || '', amount: Number(a.amount), term: a.term,
+    }));
+    bursaries.filter(b => b.status === 'active').forEach(b => rows.push({
+      type: 'Bursary', student: studentById[b.student_id],
+      source: b.fee_sponsors?.name || 'Sponsor',
+      detail: b.reference || '', amount: Number(b.amount), term: b.term,
+    }));
+    rows.sort((a, b) => b.amount - a.amount);
+    const bySponsor = {};
+    bursaries.filter(b => b.status === 'active').forEach(b => {
+      const k = b.fee_sponsors?.name || 'Unnamed sponsor';
+      (bySponsor[k] = bySponsor[k] || { count: 0, total: 0 });
+      bySponsor[k].count += 1; bySponsor[k].total += Number(b.amount);
+    });
+    const sponsorRows = Object.entries(bySponsor).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.total - a.total);
+    const totals = {
+      discount: rows.filter(r => r.type === 'Discount').reduce((s, r) => s + r.amount, 0),
+      waiver: rows.filter(r => r.type === 'Waiver').reduce((s, r) => s + r.amount, 0),
+      bursary: rows.filter(r => r.type === 'Bursary').reduce((s, r) => s + r.amount, 0),
+    };
+    return { rows, sponsorRows, totals };
+  }, [adjustments, bursaries, studentById]);
+
   // --- Export wiring ---------------------------------------------------
   const exportCurrent = (mode) => {
     let title, headers, rows;
@@ -249,14 +376,63 @@ const FinanceReports = ({ schoolConfig }) => {
       title = `Daily Collections ${dailyFrom}${dailyTo !== dailyFrom ? ` to ${dailyTo}` : ''}`;
       headers = ['Date', 'Receipt', 'Student', 'Amount (KES)', 'Method', 'Reference', 'Recorded By', 'Status'];
       rows = daily.rows.map(p => [
-        new Date(p.paid_at).toLocaleString(), p.fee_receipts?.receipt_no || '', sName(studentById[p.student_id]),
+        new Date(p.paid_at).toLocaleString(), receiptByPayment[p.id]?.receipt_no || '', sName(studentById[p.student_id]),
         kes(p.amount), (p.method || '').toUpperCase(), p.reference || '',
         staffByAuth[p.recorded_by] || 'Admin', p.status === 'voided' ? 'VOID' : 'OK',
       ]);
-    } else {
+    } else if (report === 'voteheads') {
       title = `Votehead Collections — ${year}`;
       headers = ['Votehead', 'Expected (KES)', 'Cash Collected', 'Concessions', 'Outstanding'];
       rows = voteheadReport.map(r => [r.label, kes(r.expected), kes(r.cash), kes(r.concession), kes(r.outstanding)]);
+    } else if (report === 'aged') {
+      title = `Aged Fee Balances — ${year}`;
+      headers = ['Adm No', 'Student', 'Grade', 'Stream', 'Term 1 Due', 'Term 2 Due', 'Term 3 Due', 'Total Due'];
+      rows = aged.map(r => [
+        r.student?.adm_no || '', sName(r.student), GRADE_LABEL[r.student?.level_id] || '',
+        r.student?.streams?.name || '', kes(r.t1), kes(r.t2), kes(r.t3), kes(r.outstanding),
+      ]);
+    } else if (report === 'defaulters') {
+      title = `Defaulters & Reminder List — ${year}`;
+      headers = ['Adm No', 'Student', 'Grade', 'Stream', 'Parent/Guardian', 'Phone', 'Balance (KES)', 'Last Payment'];
+      rows = defaulters.map(r => [
+        r.student?.adm_no || '', sName(r.student), GRADE_LABEL[r.student?.level_id] || '',
+        r.student?.streams?.name || '', r.student?.parent_name || '', r.student?.parent_phone || '',
+        kes(r.outstanding), lastPayBySid[r.sid] ? new Date(lastPayBySid[r.sid]).toLocaleDateString() : 'Never',
+      ]);
+    } else if (report === 'overpayments') {
+      title = `Overpayments / Credit Balances — ${year}`;
+      headers = ['Adm No', 'Student', 'Grade', 'Invoiced (KES)', 'Settled', 'Credit'];
+      rows = overpayments.map(r => [
+        r.student?.adm_no || '', sName(r.student), GRADE_LABEL[r.student?.level_id] || '',
+        kes(r.expTotal), kes(r.setTotal), kes(r.credit),
+      ]);
+    } else if (report === 'clearance') {
+      title = `Fee Clearance (fully paid) — ${year}`;
+      headers = ['Adm No', 'Student', 'Grade', 'Stream', 'Invoiced (KES)', 'Settled'];
+      rows = cleared.map(r => [
+        r.student?.adm_no || '', sName(r.student), GRADE_LABEL[r.student?.level_id] || '',
+        r.student?.streams?.name || '', kes(r.expTotal), kes(r.setTotal),
+      ]);
+    } else if (report === 'receipts') {
+      title = `Receipts Register / Cash Book — ${year}`;
+      headers = ['Receipt No', 'Date', 'Student', 'Amount (KES)', 'Method', 'Recorded By', 'Status', 'Running Total'];
+      rows = receiptsRegister.map(({ p, running, active }) => [
+        receiptByPayment[p.id]?.receipt_no || '—', new Date(p.paid_at).toLocaleString(), sName(studentById[p.student_id]),
+        kes(p.amount), (p.method || '').toUpperCase(), staffByAuth[p.recorded_by] || 'Admin',
+        active ? 'OK' : 'VOID', active ? kes(running) : '',
+      ]);
+    } else if (report === 'cashier') {
+      title = `Cashier Summary — ${year}`;
+      headers = ['Cashier', 'Receipts', 'Total Collected (KES)'];
+      rows = cashierSummary.map(c => [c.name, String(c.count), kes(c.total)]);
+    } else if (report === 'concessions') {
+      title = `Concessions Register — ${year}`;
+      headers = ['Type', 'Student', 'Sponsor', 'Detail / Reason', 'Term', 'Amount (KES)'];
+      rows = concessions.rows.map(r => [
+        r.type, sName(r.student), r.source, r.detail, r.term ? `T${r.term}` : 'All', kes(r.amount),
+      ]);
+    } else {
+      title = `Report — ${year}`; headers = []; rows = [];
     }
     if (mode === 'csv') downloadCsv(`${title.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}.csv`, headers, rows);
     else printTable(schoolConfig?.schoolName, title, headers, rows);
@@ -264,9 +440,16 @@ const FinanceReports = ({ schoolConfig }) => {
 
   const reportTabs = [
     { id: 'summary', label: '📊 Collection Summary' },
+    { id: 'aged', label: '📈 Aged Balances' },
     { id: 'arrears', label: '⏳ Arrears' },
+    { id: 'defaulters', label: '📣 Defaulters & Reminders' },
+    { id: 'overpayments', label: '💰 Overpayments' },
+    { id: 'clearance', label: '✅ Fee Clearance' },
     { id: 'daily', label: '📅 Daily Collections' },
+    { id: 'receipts', label: '🧾 Receipts Register' },
+    { id: 'cashier', label: '👤 Cashier Summary' },
     { id: 'voteheads', label: '🧮 Votehead Collections' },
+    { id: 'concessions', label: '🎁 Concessions Register' },
   ];
 
   return (
@@ -412,7 +595,7 @@ const FinanceReports = ({ schoolConfig }) => {
                   return (
                     <tr key={p.id} style={{ borderBottom: '1px solid #F0F2F5', opacity: voided ? 0.55 : 1 }}>
                       <td style={tdStyle}>{new Date(p.paid_at).toLocaleString()}</td>
-                      <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 11.5, color: '#1A5F9C' }}>{p.fee_receipts?.receipt_no || '—'}</td>
+                      <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 11.5, color: '#1A5F9C' }}>{receiptByPayment[p.id]?.receipt_no || '—'}</td>
                       <td style={{ ...tdStyle, fontWeight: 700 }}>{sName(studentById[p.student_id])}</td>
                       <td style={{ ...tdNum, color: voided ? '#8A8FA8' : '#1B6B3A', textDecoration: voided ? 'line-through' : 'none' }}>
                         {kes(p.amount)}{voided && <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, color: '#C0392B' }}>VOID</span>}
@@ -425,6 +608,223 @@ const FinanceReports = ({ schoolConfig }) => {
                 {daily.rows.length === 0 && <tr><td colSpan="6" style={{ ...tdStyle, textAlign: 'center', color: '#8A8FA8' }}>No payments in this period.</td></tr>}
               </tbody>
             </table>
+          </div>
+        ) : report === 'aged' ? (
+          <div style={{ padding: 18 }}>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+              <select value={arrearsGrade} onChange={(e) => setArrearsGrade(e.target.value)} style={filterSel}>
+                <option value="all">All grades</option>
+                {GRADE_ORDER.map(g => <option key={g} value={g}>{GRADE_LABEL[g]}</option>)}
+              </select>
+              <input type="number" placeholder="Min balance (KES)" value={arrearsMin} onChange={(e) => setArrearsMin(e.target.value)} style={{ ...filterSel, width: 150 }} />
+              <span style={{ fontSize: 12.5, color: '#8A8FA8' }}>{aged.length} owing · total <strong style={{ color: '#C0392B' }}>KES {kes(aged.reduce((s, r) => s + r.outstanding, 0))}</strong></span>
+            </div>
+            <table style={tableStyle}>
+              <thead><tr>
+                <th style={thStyle}>Adm No</th><th style={thStyle}>Student</th><th style={thStyle}>Grade</th>
+                <th style={thNum}>Term 1</th><th style={thNum}>Term 2</th><th style={thNum}>Term 3</th><th style={thNum}>Total Due</th>
+              </tr></thead>
+              <tbody>
+                {aged.slice(0, 400).map(r => (
+                  <tr key={r.sid} style={{ borderBottom: '1px solid #F0F2F5' }}>
+                    <td style={{ ...tdStyle, color: '#1A5F9C', fontWeight: 600 }}>{r.student?.adm_no}</td>
+                    <td style={{ ...tdStyle, fontWeight: 700 }}>{sName(r.student)}</td>
+                    <td style={tdStyle}>{GRADE_LABEL[r.student?.level_id] || '—'}{r.student?.streams?.name ? ` · ${r.student.streams.name}` : ''}</td>
+                    <td style={{ ...tdNum, color: r.t1 > 0 ? '#C0392B' : '#C9C9C9' }}>{r.t1 ? kes(r.t1) : '—'}</td>
+                    <td style={{ ...tdNum, color: r.t2 > 0 ? '#C0392B' : '#C9C9C9' }}>{r.t2 ? kes(r.t2) : '—'}</td>
+                    <td style={{ ...tdNum, color: r.t3 > 0 ? '#C0392B' : '#C9C9C9' }}>{r.t3 ? kes(r.t3) : '—'}</td>
+                    <td style={{ ...tdNum, fontWeight: 700, color: '#C0392B' }}>{kes(r.outstanding)}</td>
+                  </tr>
+                ))}
+                {aged.length === 0 && <tr><td colSpan="7" style={{ ...tdStyle, textAlign: 'center', color: '#8A8FA8' }}>No outstanding balances. 🎉</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        ) : report === 'defaulters' ? (
+          <div style={{ padding: 18 }}>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+              <select value={arrearsGrade} onChange={(e) => setArrearsGrade(e.target.value)} style={filterSel}>
+                <option value="all">All grades</option>
+                {GRADE_ORDER.map(g => <option key={g} value={g}>{GRADE_LABEL[g]}</option>)}
+              </select>
+              <input type="number" placeholder="Min balance (KES)" value={arrearsMin} onChange={(e) => setArrearsMin(e.target.value)} style={{ ...filterSel, width: 150 }} />
+              <span style={{ fontSize: 12.5, color: '#8A8FA8' }}>{defaulters.length} to follow up · export for SMS / calls</span>
+            </div>
+            <table style={tableStyle}>
+              <thead><tr>
+                <th style={thStyle}>Adm No</th><th style={thStyle}>Student</th><th style={thStyle}>Class</th>
+                <th style={thStyle}>Parent / Guardian</th><th style={thStyle}>Phone</th><th style={thNum}>Balance</th><th style={thStyle}>Last Paid</th>
+              </tr></thead>
+              <tbody>
+                {defaulters.slice(0, 400).map(r => (
+                  <tr key={r.sid} style={{ borderBottom: '1px solid #F0F2F5' }}>
+                    <td style={{ ...tdStyle, color: '#1A5F9C', fontWeight: 600 }}>{r.student?.adm_no}</td>
+                    <td style={{ ...tdStyle, fontWeight: 700 }}>{sName(r.student)}</td>
+                    <td style={tdStyle}>{GRADE_LABEL[r.student?.level_id] || '—'}{r.student?.streams?.name ? ` · ${r.student.streams.name}` : ''}</td>
+                    <td style={tdStyle}>{r.student?.parent_name || '—'}</td>
+                    <td style={{ ...tdStyle, fontFamily: 'monospace', color: '#1A5F9C' }}>{r.student?.parent_phone || '—'}</td>
+                    <td style={{ ...tdNum, fontWeight: 700, color: '#C0392B' }}>{kes(r.outstanding)}</td>
+                    <td style={{ ...tdStyle, color: lastPayBySid[r.sid] ? '#4A4A6A' : '#C0392B' }}>{lastPayBySid[r.sid] ? new Date(lastPayBySid[r.sid]).toLocaleDateString() : 'Never'}</td>
+                  </tr>
+                ))}
+                {defaulters.length === 0 && <tr><td colSpan="7" style={{ ...tdStyle, textAlign: 'center', color: '#8A8FA8' }}>No defaulters. 🎉</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        ) : report === 'overpayments' ? (
+          <div style={{ padding: 18 }}>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+              <select value={arrearsGrade} onChange={(e) => setArrearsGrade(e.target.value)} style={filterSel}>
+                <option value="all">All grades</option>
+                {GRADE_ORDER.map(g => <option key={g} value={g}>{GRADE_LABEL[g]}</option>)}
+              </select>
+              <span style={{ fontSize: 12.5, color: '#8A8FA8' }}>{overpayments.length} in credit · total <strong style={{ color: '#8A6A1F' }}>KES {kes(overpayments.reduce((s, r) => s + r.credit, 0))}</strong></span>
+            </div>
+            <table style={tableStyle}>
+              <thead><tr>
+                <th style={thStyle}>Adm No</th><th style={thStyle}>Student</th><th style={thStyle}>Class</th>
+                <th style={thNum}>Invoiced</th><th style={thNum}>Settled</th><th style={thNum}>Credit</th>
+              </tr></thead>
+              <tbody>
+                {overpayments.map(r => (
+                  <tr key={r.sid} style={{ borderBottom: '1px solid #F0F2F5' }}>
+                    <td style={{ ...tdStyle, color: '#1A5F9C', fontWeight: 600 }}>{r.student?.adm_no}</td>
+                    <td style={{ ...tdStyle, fontWeight: 700 }}>{sName(r.student)}</td>
+                    <td style={tdStyle}>{GRADE_LABEL[r.student?.level_id] || '—'}{r.student?.streams?.name ? ` · ${r.student.streams.name}` : ''}</td>
+                    <td style={tdNum}>{kes(r.expTotal)}</td>
+                    <td style={{ ...tdNum, color: '#1B6B3A' }}>{kes(r.setTotal)}</td>
+                    <td style={{ ...tdNum, fontWeight: 700, color: '#8A6A1F' }}>{kes(r.credit)}</td>
+                  </tr>
+                ))}
+                {overpayments.length === 0 && <tr><td colSpan="6" style={{ ...tdStyle, textAlign: 'center', color: '#8A8FA8' }}>No credit balances.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        ) : report === 'clearance' ? (
+          <div style={{ padding: 18 }}>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+              <select value={arrearsGrade} onChange={(e) => setArrearsGrade(e.target.value)} style={filterSel}>
+                <option value="all">All grades</option>
+                {GRADE_ORDER.map(g => <option key={g} value={g}>{GRADE_LABEL[g]}</option>)}
+              </select>
+              <span style={{ fontSize: 12.5, color: '#8A8FA8' }}>{cleared.length} fully paid ✅</span>
+            </div>
+            <table style={tableStyle}>
+              <thead><tr>
+                <th style={thStyle}>Adm No</th><th style={thStyle}>Student</th><th style={thStyle}>Class</th>
+                <th style={thNum}>Invoiced</th><th style={thNum}>Settled</th>
+              </tr></thead>
+              <tbody>
+                {cleared.slice(0, 400).map(r => (
+                  <tr key={r.sid} style={{ borderBottom: '1px solid #F0F2F5' }}>
+                    <td style={{ ...tdStyle, color: '#1A5F9C', fontWeight: 600 }}>{r.student?.adm_no}</td>
+                    <td style={{ ...tdStyle, fontWeight: 700 }}>{sName(r.student)}</td>
+                    <td style={tdStyle}>{GRADE_LABEL[r.student?.level_id] || '—'}{r.student?.streams?.name ? ` · ${r.student.streams.name}` : ''}</td>
+                    <td style={tdNum}>{kes(r.expTotal)}</td>
+                    <td style={{ ...tdNum, color: '#1B6B3A' }}>{kes(r.setTotal)}</td>
+                  </tr>
+                ))}
+                {cleared.length === 0 && <tr><td colSpan="5" style={{ ...tdStyle, textAlign: 'center', color: '#8A8FA8' }}>No fully-paid students yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        ) : report === 'receipts' ? (
+          <div style={{ padding: 18 }}>
+            <div style={{ fontSize: 12.5, color: '#8A8FA8', marginBottom: 12 }}>
+              {receiptsRegister.filter(x => x.active).length} active receipt(s) · running total{' '}
+              <strong style={{ color: '#1B6B3A' }}>KES {kes(receiptsRegister.filter(x => x.active).reduce((s, x) => s + Number(x.p.amount), 0))}</strong>
+            </div>
+            <table style={tableStyle}>
+              <thead><tr>
+                <th style={thStyle}>Receipt No</th><th style={thStyle}>Date</th><th style={thStyle}>Student</th>
+                <th style={thNum}>Amount</th><th style={thStyle}>Method</th><th style={thStyle}>Recorded By</th><th style={thNum}>Running Total</th>
+              </tr></thead>
+              <tbody>
+                {receiptsRegister.slice(0, 500).map(({ p, running, active }) => (
+                  <tr key={p.id} style={{ borderBottom: '1px solid #F0F2F5', opacity: active ? 1 : 0.55 }}>
+                    <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 11.5, color: '#1A5F9C' }}>{receiptByPayment[p.id]?.receipt_no || '—'}</td>
+                    <td style={tdStyle}>{new Date(p.paid_at).toLocaleDateString()}</td>
+                    <td style={{ ...tdStyle, fontWeight: 700 }}>{sName(studentById[p.student_id])}</td>
+                    <td style={{ ...tdNum, color: active ? '#1B6B3A' : '#8A8FA8', textDecoration: active ? 'none' : 'line-through' }}>{kes(p.amount)}{!active && <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, color: '#C0392B' }}>VOID</span>}</td>
+                    <td style={{ ...tdStyle, textTransform: 'capitalize' }}>{p.method || '—'}</td>
+                    <td style={tdStyle}>{staffByAuth[p.recorded_by] || 'Admin'}</td>
+                    <td style={{ ...tdNum, fontWeight: 600 }}>{active ? kes(running) : '—'}</td>
+                  </tr>
+                ))}
+                {receiptsRegister.length === 0 && <tr><td colSpan="7" style={{ ...tdStyle, textAlign: 'center', color: '#8A8FA8' }}>No receipts for {year} yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        ) : report === 'cashier' ? (
+          <div style={{ padding: 18 }}>
+            <table style={tableStyle}>
+              <thead><tr>
+                <th style={thStyle}>Cashier</th><th style={thNum}>Receipts</th><th style={thNum}>Total Collected</th>
+              </tr></thead>
+              <tbody>
+                {cashierSummary.map(c => (
+                  <tr key={c.name} style={{ borderBottom: '1px solid #F0F2F5' }}>
+                    <td style={{ ...tdStyle, fontWeight: 700 }}>{c.name}</td>
+                    <td style={tdNum}>{c.count}</td>
+                    <td style={{ ...tdNum, color: '#1B6B3A', fontWeight: 700 }}>{kes(c.total)}</td>
+                  </tr>
+                ))}
+                {cashierSummary.length === 0 && <tr><td colSpan="3" style={{ ...tdStyle, textAlign: 'center', color: '#8A8FA8' }}>No collections for {year} yet.</td></tr>}
+              </tbody>
+              {cashierSummary.length > 0 && (
+                <tfoot><tr style={{ borderTop: '2px solid #2a2421' }}>
+                  <td style={{ ...tdStyle, fontWeight: 800 }}>All cashiers</td>
+                  <td style={{ ...tdNum, fontWeight: 800 }}>{cashierSummary.reduce((s, c) => s + c.count, 0)}</td>
+                  <td style={{ ...tdNum, fontWeight: 800, color: '#1B6B3A' }}>{kes(cashierSummary.reduce((s, c) => s + c.total, 0))}</td>
+                </tr></tfoot>
+              )}
+            </table>
+          </div>
+        ) : report === 'concessions' ? (
+          <div style={{ padding: 18 }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+              {[['Discounts', concessions.totals.discount, '#1A5F9C'], ['Waivers', concessions.totals.waiver, '#6C3483'], ['Bursaries', concessions.totals.bursary, '#1B6B3A']].map(([lbl, val, col]) => (
+                <span key={lbl} style={{ padding: '6px 14px', background: '#F8FAFC', borderRadius: 999, fontSize: 12 }}>
+                  <span style={{ color: '#8A8FA8', fontWeight: 700 }}>{lbl}</span>{' '}<strong style={{ fontFamily: 'monospace', color: col }}>KES {kes(val)}</strong>
+                </span>
+              ))}
+            </div>
+            <table style={tableStyle}>
+              <thead><tr>
+                <th style={thStyle}>Type</th><th style={thStyle}>Student</th><th style={thStyle}>Sponsor</th>
+                <th style={thStyle}>Detail / Reason</th><th style={thStyle}>Term</th><th style={thNum}>Amount</th>
+              </tr></thead>
+              <tbody>
+                {concessions.rows.map((r, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid #F0F2F5' }}>
+                    <td style={tdStyle}><span style={{ padding: '2px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 800, background: r.type === 'Bursary' ? '#E8F5EE' : r.type === 'Waiver' ? '#F3EAF8' : '#EAF2FA', color: r.type === 'Bursary' ? '#1B6B3A' : r.type === 'Waiver' ? '#6C3483' : '#1A5F9C' }}>{r.type}</span></td>
+                    <td style={{ ...tdStyle, fontWeight: 700 }}>{sName(r.student)}</td>
+                    <td style={tdStyle}>{r.source}</td>
+                    <td style={{ ...tdStyle, color: '#8A8FA8' }}>{r.detail || '—'}</td>
+                    <td style={tdStyle}>{r.term ? `T${r.term}` : 'All'}</td>
+                    <td style={{ ...tdNum, fontWeight: 700, color: '#6C3483' }}>{kes(r.amount)}</td>
+                  </tr>
+                ))}
+                {concessions.rows.length === 0 && <tr><td colSpan="6" style={{ ...tdStyle, textAlign: 'center', color: '#8A8FA8' }}>No concessions recorded for {year}.</td></tr>}
+              </tbody>
+            </table>
+            {concessions.sponsorRows.length > 0 && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#8A8FA8', textTransform: 'uppercase', margin: '20px 0 8px' }}>Bursary utilization by sponsor</div>
+                <table style={tableStyle}>
+                  <thead><tr><th style={thStyle}>Sponsor</th><th style={thNum}>Awards</th><th style={thNum}>Total</th></tr></thead>
+                  <tbody>
+                    {concessions.sponsorRows.map(s => (
+                      <tr key={s.name} style={{ borderBottom: '1px solid #F0F2F5' }}>
+                        <td style={{ ...tdStyle, fontWeight: 700 }}>{s.name}</td>
+                        <td style={tdNum}>{s.count}</td>
+                        <td style={{ ...tdNum, fontWeight: 700, color: '#1B6B3A' }}>{kes(s.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
           </div>
         ) : (
           <div style={{ padding: 18 }}>
@@ -463,5 +863,6 @@ const thStyle = { padding: '10px 12px', textAlign: 'left', fontWeight: 700, colo
 const thNum = { ...thStyle, textAlign: 'right' };
 const tdStyle = { padding: '10px 12px', color: '#2a2421' };
 const tdNum = { ...tdStyle, textAlign: 'right', fontFamily: 'monospace' };
+const filterSel = { padding: '8px 12px', borderRadius: 8, border: '1px solid #E8EAF0', fontSize: 13, background: '#fff' };
 
 export default FinanceReports;
