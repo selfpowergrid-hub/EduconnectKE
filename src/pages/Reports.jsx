@@ -1208,6 +1208,103 @@ const Reports = ({ schoolConfig, examsList }) => {
     setTimeout(() => win.print(), 600);
   };
 
+  // ---- Download / Email the previewed card as a real PDF -------------------
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [isEmailing, setIsEmailing] = useState(false);
+
+  const cardFileName = (student) =>
+    `${student.adm_no || 'card'}_${(student.first_name || '').trim().replace(/\s+/g, '_')}_${String(selectedTerm).replace(/\s+/g, '')}_${selectedYear}_report_card.pdf`;
+
+  // Rasterise the on-screen preview into an A4 PDF (multi-page when long).
+  // Honours the PrintSizer settings exactly like printing does: the % scale
+  // (and any font override, folded in as a proportional shrink) reduces the
+  // card's size on the page — centered — so "≈ 1 page" on screen is 1 page
+  // in the file. Libraries load on demand so the main bundle stays lean.
+  const buildCardPdf = async () => {
+    const el = document.getElementById('report-preview');
+    if (!el) throw new Error('Preview not ready');
+    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+      import('html2canvas'),
+      import('jspdf'),
+    ]);
+    const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#fff', useCORS: true });
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const fontRatio = printFont === 'auto' ? 1 : Math.max(0.5, Number(printFont) / 12);
+    const shrink = Math.min(1, ((printScale || 100) / 100) * fontRatio);
+    const pageW = 210, pageH = 297, margin = 8;
+    const imgW = (pageW - margin * 2) * shrink;
+    const x = (pageW - imgW) / 2; // centered when shrunk
+    const imgH = canvas.height * imgW / canvas.width;
+    const img = canvas.toDataURL('image/jpeg', 0.92);
+    let heightLeft = imgH, position = margin;
+    pdf.addImage(img, 'JPEG', x, position, imgW, imgH);
+    heightLeft -= pageH - margin * 2;
+    while (heightLeft > 0) {
+      pdf.addPage();
+      position = margin - (imgH - heightLeft);
+      pdf.addImage(img, 'JPEG', x, position, imgW, imgH);
+      heightLeft -= pageH - margin * 2;
+    }
+    return pdf;
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!selectedStudent) return;
+    setIsDownloading(true);
+    try {
+      const pdf = await buildCardPdf();
+      pdf.save(cardFileName(selectedStudent));
+    } catch (err) {
+      alert('Failed to build the PDF: ' + err.message);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleEmailCard = async () => {
+    if (!selectedStudent) return;
+    setIsEmailing(true);
+    try {
+      const s = selectedStudent;
+      // Primary guardian with an email wins; else any guardian that has one.
+      const { data: gs } = await supabase
+        .from('student_guardians')
+        .select('full_name, email, is_primary')
+        .eq('student_id', s.id)
+        .order('is_primary', { ascending: false });
+      const g = (gs || []).find(x => (x.email || '').trim());
+      if (!g) {
+        alert(`No parent/guardian email on file for ${s.first_name}.\n\nAdd one under Students & Admission → edit the student → Parents / Guardians.`);
+        return;
+      }
+      const to = g.email.trim();
+      if (!window.confirm(`Email ${s.first_name}'s ${selectedTerm} ${selectedYear} report card to:\n\n${g.full_name || 'Guardian'} <${to}>?`)) return;
+      const pdf = await buildCardPdf();
+      const pdfB64 = pdf.output('datauristring').split(',')[1];
+      const { data, error } = await supabase.functions.invoke('send-report-card', {
+        body: {
+          student_id: s.id,
+          to,
+          subject: `${s.first_name} ${s.last_name || ''}`.trim() + ` — ${selectedTerm} ${selectedYear} Report Card — ${schoolInfo?.school_name || schoolConfig?.schoolName || ''}`.trim(),
+          pdf_base64: pdfB64,
+          filename: cardFileName(s),
+        },
+      });
+      if (error) {
+        // Edge functions put the useful message in the response body.
+        let msg = error.message || 'send failed';
+        try { const j = await error.context.json(); if (j?.error) msg = j.error; } catch { /* keep default */ }
+        throw new Error(msg);
+      }
+      if (data?.error) throw new Error(data.error);
+      alert(`✅ Report card emailed to ${to}`);
+    } catch (err) {
+      alert('Failed to email the report card: ' + err.message);
+    } finally {
+      setIsEmailing(false);
+    }
+  };
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16 }}>
       {/* Left Panel */}
@@ -1333,6 +1430,18 @@ const Reports = ({ schoolConfig, examsList }) => {
             }}
             style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #E8EAF0', background: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
           >🖨️ Print Report</button>
+          <button
+            onClick={handleDownloadPdf}
+            disabled={isDownloading || !selectedStudent}
+            title="Save this report card as a PDF file"
+            style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #1A5F9C', background: '#fff', color: '#1A5F9C', fontSize: 12, fontWeight: 700, cursor: isDownloading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+          >{isDownloading ? '⌛ Building…' : '⬇️ Download PDF'}</button>
+          <button
+            onClick={handleEmailCard}
+            disabled={isEmailing || !selectedStudent}
+            title="Email this report card (PDF attached) to the parent/guardian on file"
+            style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: isEmailing ? '#8a8fa8' : '#1B6B3A', color: '#fff', fontSize: 12, fontWeight: 700, cursor: isEmailing ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+          >{isEmailing ? '⌛ Sending…' : '✉️ Email Parent'}</button>
         </div>
 
         {selectedStudent ? (

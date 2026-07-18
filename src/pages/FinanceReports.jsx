@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { LEVELS, GRADE_NAME_TO_CODE, GRADE_CODE_TO_NAME, gradesByLevelForSchool } from '../lib/schoolLevels';
 
-const GRADE_LABEL = {
-  pp1: 'PP1', pp2: 'PP2',
-  g1: 'Grade 1', g2: 'Grade 2', g3: 'Grade 3', g4: 'Grade 4', g5: 'Grade 5', g6: 'Grade 6',
-  g7: 'Grade 7', g8: 'Grade 8', g9: 'Grade 9', g10: 'Grade 10', g11: 'Grade 11', g12: 'Grade 12',
-};
-const GRADE_ORDER = Object.keys(GRADE_LABEL);
+// Labels/order come from the shared level registry so Form 3/Form 4 (8-4-4)
+// filter and label correctly alongside the CBC grades.
+const GRADE_LABEL = GRADE_CODE_TO_NAME;
+const GRADE_ORDER = Object.values(LEVELS).flat().map(n => GRADE_NAME_TO_CODE[n]);
 
 const kes = (n) => Math.round(Number(n) || 0).toLocaleString();
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -90,11 +89,21 @@ const FinanceReports = ({ schoolConfig }) => {
   const [bursaries, setBursaries] = useState([]);       // sponsor bursary awards
   const [receiptByPayment, setReceiptByPayment] = useState({}); // payment_id -> receipt
 
-  // Report-local filters
+  // Report-local filters: Level → Grade/Form → Term (term where money is
+  // term-scoped), shared across the student-scoped reports.
+  const [filterLevel, setFilterLevel] = useState('all');
   const [arrearsGrade, setArrearsGrade] = useState('all');
+  const [filterTerm, setFilterTerm] = useState('all');
   const [arrearsMin, setArrearsMin] = useState('');
   const [dailyFrom, setDailyFrom] = useState(todayISO());
   const [dailyTo, setDailyTo] = useState(todayISO());
+
+  // Only the levels this school teaches; grade list narrows to the level.
+  const gradesByLevel = useMemo(() => gradesByLevelForSchool(schoolConfig?.schoolType), [schoolConfig?.schoolType]);
+  const gradeOptions = useMemo(() => {
+    const names = filterLevel === 'all' ? Object.values(gradesByLevel).flat() : (gradesByLevel[filterLevel] || []);
+    return names.map(n => GRADE_NAME_TO_CODE[n]);
+  }, [gradesByLevel, filterLevel]);
 
   useEffect(() => {
     if (!schoolConfig?.id) return;
@@ -178,25 +187,8 @@ const FinanceReports = ({ schoolConfig }) => {
     return { terms, gradeRows };
   }, [invoices, activeAllocs, invById, studentById]);
 
-  // --- 2. Arrears ----------------------------------------------------
-  const arrears = useMemo(() => {
-    const expected = {}, settled = {};
-    invoices.forEach(i => { expected[i.student_id] = (expected[i.student_id] || 0) + Number(i.total); });
-    activeAllocs.forEach(a => {
-      const inv = invById[a.invoice_id];
-      if (!inv) return;
-      settled[inv.student_id] = (settled[inv.student_id] || 0) + Number(a.amount);
-    });
-    const min = parseFloat(arrearsMin) || 0.005;
-    return Object.entries(expected)
-      .map(([sid, exp]) => {
-        const s = studentById[sid];
-        return { student: s, expected: exp, settled: settled[sid] || 0, outstanding: exp - (settled[sid] || 0) };
-      })
-      .filter(r => r.outstanding >= min)
-      .filter(r => arrearsGrade === 'all' || r.student?.level_id === arrearsGrade)
-      .sort((a, b) => b.outstanding - a.outstanding);
-  }, [invoices, activeAllocs, invById, studentById, arrearsGrade, arrearsMin]);
+  // --- 2. Arrears — derived below from the shared per-student splits so the
+  // Level/Grade/Term filters apply identically everywhere. (See `arrears`.)
 
   // --- 3. Daily collections ------------------------------------------
   const daily = useMemo(() => {
@@ -216,15 +208,18 @@ const FinanceReports = ({ schoolConfig }) => {
     return { rows, byMethod, total };
   }, [payments, dailyFrom, dailyTo]);
 
-  // --- 4. Votehead collections ----------------------------------------
+  // --- 4. Votehead collections (term-aware) ----------------------------
   const voteheadReport = useMemo(() => {
     const vh = {};
+    const termOk = (t) => filterTerm === 'all' || Number(t) === Number(filterTerm);
     const itemVotehead = Object.fromEntries(items.map(i => [i.id, i.votehead_id]));
     items.forEach(i => {
+      if (!termOk(i.fee_invoices?.term)) return;
       const k = i.votehead_id || 'custom';
       (vh[k] = vh[k] || { expected: 0, cash: 0, concession: 0 }).expected += Number(i.amount);
     });
     activeAllocs.forEach(a => {
+      if (!termOk(a.fee_invoices?.term)) return;
       const k = itemVotehead[a.invoice_item_id] || 'custom';
       if (!vh[k]) vh[k] = { expected: 0, cash: 0, concession: 0 };
       vh[k][allocIsCash(a) ? 'cash' : 'concession'] += Number(a.amount);
@@ -237,7 +232,7 @@ const FinanceReports = ({ schoolConfig }) => {
     return Object.entries(vh)
       .map(([k, v]) => ({ label: label(k), ...v, outstanding: v.expected - v.cash - v.concession }))
       .sort((a, b) => b.expected - a.expected);
-  }, [items, activeAllocs, voteheads]);
+  }, [items, activeAllocs, voteheads, filterTerm]);
 
   // --- Shared per-student expected/settled, split by term ------------
   // Settled nets cash AND concessions (both are invoice allocations).
@@ -254,13 +249,25 @@ const FinanceReports = ({ schoolConfig }) => {
       const e = exp[sid], s = set[sid] || { 1: 0, 2: 0, 3: 0 };
       const expTotal = e[1] + e[2] + e[3], setTotal = s[1] + s[2] + s[3];
       return {
-        student: studentById[sid], sid,
+        student: studentById[sid], sid, e, s,
         expTotal, setTotal,
         t1: Math.max(0, e[1] - s[1]), t2: Math.max(0, e[2] - s[2]), t3: Math.max(0, e[3] - s[3]),
         outstanding: expTotal - setTotal, // negative = credit
       };
     });
   }, [invoices, activeAllocs, invById, studentById]);
+
+  // Term view: when a term is selected, invoiced/settled/outstanding narrow
+  // to that term only (Aged Balances keeps all three columns regardless).
+  const perStudentScoped = useMemo(() => {
+    if (filterTerm === 'all') return perStudent;
+    const t = Number(filterTerm);
+    return perStudent.map(r => ({
+      ...r,
+      expTotal: r.e[t], setTotal: r.s[t],
+      outstanding: r.e[t] - r.s[t],
+    }));
+  }, [perStudent, filterTerm]);
 
   const lastPayBySid = useMemo(() => {
     const m = {};
@@ -272,33 +279,44 @@ const FinanceReports = ({ schoolConfig }) => {
     return m;
   }, [payments]);
 
-  const gradeOk = (r) => arrearsGrade === 'all' || r.student?.level_id === arrearsGrade;
+  const gradeOk = (r) => {
+    const lid = r.student?.level_id;
+    if (filterLevel !== 'all' && !gradeOptions.includes(lid)) return false;
+    return arrearsGrade === 'all' || lid === arrearsGrade;
+  };
   const minAmt = parseFloat(arrearsMin) || 0.005;
 
   // --- 5. Aged fee balances (arrears split by term) ------------------
   const aged = useMemo(() =>
     perStudent.filter(r => r.outstanding >= minAmt).filter(gradeOk)
       .sort((a, b) => b.outstanding - a.outstanding),
-    [perStudent, arrearsGrade, arrearsMin]);
+    [perStudent, filterLevel, gradeOptions, arrearsGrade, arrearsMin]);
+
+  // --- 2. Arrears (level/grade/term-aware) ----------------------------
+  const arrears = useMemo(() =>
+    perStudentScoped.filter(r => r.outstanding >= minAmt).filter(gradeOk)
+      .map(r => ({ student: r.student, expected: r.expTotal, settled: r.setTotal, outstanding: r.outstanding }))
+      .sort((a, b) => b.outstanding - a.outstanding),
+    [perStudentScoped, filterLevel, gradeOptions, arrearsGrade, arrearsMin]);
 
   // --- 6. Defaulters & reminder list ---------------------------------
   const defaulters = useMemo(() =>
-    perStudent.filter(r => r.outstanding >= minAmt).filter(gradeOk)
+    perStudentScoped.filter(r => r.outstanding >= minAmt).filter(gradeOk)
       .sort((a, b) => b.outstanding - a.outstanding),
-    [perStudent, arrearsGrade, arrearsMin]);
+    [perStudentScoped, filterLevel, gradeOptions, arrearsGrade, arrearsMin]);
 
   // --- 7. Overpayments / credit balances -----------------------------
   const overpayments = useMemo(() =>
-    perStudent.filter(r => r.outstanding <= -0.005).filter(gradeOk)
+    perStudentScoped.filter(r => r.outstanding <= -0.005).filter(gradeOk)
       .map(r => ({ ...r, credit: -r.outstanding }))
       .sort((a, b) => b.credit - a.credit),
-    [perStudent, arrearsGrade]);
+    [perStudentScoped, filterLevel, gradeOptions, arrearsGrade]);
 
   // --- 8. Fee clearance (fully paid) ---------------------------------
   const cleared = useMemo(() =>
-    perStudent.filter(r => r.expTotal > 0 && r.outstanding <= 0.005).filter(gradeOk)
+    perStudentScoped.filter(r => r.expTotal > 0 && r.outstanding <= 0.005).filter(gradeOk)
       .sort((a, b) => sName(a.student).localeCompare(sName(b.student))),
-    [perStudent, arrearsGrade]);
+    [perStudentScoped, filterLevel, gradeOptions, arrearsGrade]);
 
   // --- 9. Receipts register / cash book ------------------------------
   const receiptsRegister = useMemo(() => {
@@ -352,6 +370,27 @@ const FinanceReports = ({ schoolConfig }) => {
     return { rows, sponsorRows, totals };
   }, [adjustments, bursaries, studentById]);
 
+  // Shared Level → Grade/Form → Term selectors (used by the student reports).
+  const levelSel = (
+    <select value={filterLevel} onChange={(e) => { setFilterLevel(e.target.value); setArrearsGrade('all'); }} style={filterSel}>
+      <option value="all">All levels</option>
+      {Object.keys(gradesByLevel).map(l => <option key={l} value={l}>{l}</option>)}
+    </select>
+  );
+  const gradeSel = (
+    <select value={arrearsGrade} onChange={(e) => setArrearsGrade(e.target.value)} style={filterSel}>
+      <option value="all">All grades</option>
+      {gradeOptions.map(g => <option key={g} value={g}>{GRADE_LABEL[g]}</option>)}
+    </select>
+  );
+  const termSel = (
+    <select value={filterTerm} onChange={(e) => setFilterTerm(e.target.value)} style={filterSel}>
+      <option value="all">Full year</option>
+      {[1, 2, 3].map(t => <option key={t} value={t}>Term {t}</option>)}
+    </select>
+  );
+  const termTag = filterTerm !== 'all' ? ` — Term ${filterTerm}` : '';
+
   // --- Export wiring ---------------------------------------------------
   const exportCurrent = (mode) => {
     let title, headers, rows;
@@ -366,7 +405,7 @@ const FinanceReports = ({ schoolConfig }) => {
         ...summary.gradeRows.map(r => [r.grade, kes(r.expected), kes(r.cash), kes(r.concession), kes(r.outstanding)]),
       ];
     } else if (report === 'arrears') {
-      title = `Arrears Report — ${year}`;
+      title = `Arrears Report — ${year}${termTag}`;
       headers = ['Adm No', 'Student', 'Grade', 'Stream', 'Invoiced (KES)', 'Settled', 'Outstanding'];
       rows = arrears.map(r => [
         r.student?.adm_no || '', sName(r.student), GRADE_LABEL[r.student?.level_id] || '',
@@ -381,7 +420,7 @@ const FinanceReports = ({ schoolConfig }) => {
         staffByAuth[p.recorded_by] || 'Admin', p.status === 'voided' ? 'VOID' : 'OK',
       ]);
     } else if (report === 'voteheads') {
-      title = `Votehead Collections — ${year}`;
+      title = `Votehead Collections — ${year}${termTag}`;
       headers = ['Votehead', 'Expected (KES)', 'Cash Collected', 'Concessions', 'Outstanding'];
       rows = voteheadReport.map(r => [r.label, kes(r.expected), kes(r.cash), kes(r.concession), kes(r.outstanding)]);
     } else if (report === 'aged') {
@@ -392,7 +431,7 @@ const FinanceReports = ({ schoolConfig }) => {
         r.student?.streams?.name || '', kes(r.t1), kes(r.t2), kes(r.t3), kes(r.outstanding),
       ]);
     } else if (report === 'defaulters') {
-      title = `Defaulters & Reminder List — ${year}`;
+      title = `Defaulters & Reminder List — ${year}${termTag}`;
       headers = ['Adm No', 'Student', 'Grade', 'Stream', 'Parent/Guardian', 'Phone', 'Balance (KES)', 'Last Payment'];
       rows = defaulters.map(r => [
         r.student?.adm_no || '', sName(r.student), GRADE_LABEL[r.student?.level_id] || '',
@@ -400,14 +439,14 @@ const FinanceReports = ({ schoolConfig }) => {
         kes(r.outstanding), lastPayBySid[r.sid] ? new Date(lastPayBySid[r.sid]).toLocaleDateString() : 'Never',
       ]);
     } else if (report === 'overpayments') {
-      title = `Overpayments / Credit Balances — ${year}`;
+      title = `Overpayments / Credit Balances — ${year}${termTag}`;
       headers = ['Adm No', 'Student', 'Grade', 'Invoiced (KES)', 'Settled', 'Credit'];
       rows = overpayments.map(r => [
         r.student?.adm_no || '', sName(r.student), GRADE_LABEL[r.student?.level_id] || '',
         kes(r.expTotal), kes(r.setTotal), kes(r.credit),
       ]);
     } else if (report === 'clearance') {
-      title = `Fee Clearance (fully paid) — ${year}`;
+      title = `Fee Clearance (fully paid) — ${year}${termTag}`;
       headers = ['Adm No', 'Student', 'Grade', 'Stream', 'Invoiced (KES)', 'Settled'];
       rows = cleared.map(r => [
         r.student?.adm_no || '', sName(r.student), GRADE_LABEL[r.student?.level_id] || '',
@@ -531,11 +570,9 @@ const FinanceReports = ({ schoolConfig }) => {
         ) : report === 'arrears' ? (
           <div style={{ padding: 18 }}>
             <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-              <select value={arrearsGrade} onChange={(e) => setArrearsGrade(e.target.value)}
-                style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #E8EAF0', fontSize: 13, background: '#fff' }}>
-                <option value="all">All grades</option>
-                {GRADE_ORDER.map(g => <option key={g} value={g}>{GRADE_LABEL[g]}</option>)}
-              </select>
+              {levelSel}
+              {gradeSel}
+              {termSel}
               <input type="number" placeholder="Min balance (KES)" value={arrearsMin}
                 onChange={(e) => setArrearsMin(e.target.value)}
                 style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #E8EAF0', fontSize: 13, width: 150 }} />
@@ -612,10 +649,8 @@ const FinanceReports = ({ schoolConfig }) => {
         ) : report === 'aged' ? (
           <div style={{ padding: 18 }}>
             <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-              <select value={arrearsGrade} onChange={(e) => setArrearsGrade(e.target.value)} style={filterSel}>
-                <option value="all">All grades</option>
-                {GRADE_ORDER.map(g => <option key={g} value={g}>{GRADE_LABEL[g]}</option>)}
-              </select>
+              {levelSel}
+              {gradeSel}
               <input type="number" placeholder="Min balance (KES)" value={arrearsMin} onChange={(e) => setArrearsMin(e.target.value)} style={{ ...filterSel, width: 150 }} />
               <span style={{ fontSize: 12.5, color: '#8A8FA8' }}>{aged.length} owing · total <strong style={{ color: '#C0392B' }}>KES {kes(aged.reduce((s, r) => s + r.outstanding, 0))}</strong></span>
             </div>
@@ -643,11 +678,10 @@ const FinanceReports = ({ schoolConfig }) => {
         ) : report === 'defaulters' ? (
           <div style={{ padding: 18 }}>
             <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-              <select value={arrearsGrade} onChange={(e) => setArrearsGrade(e.target.value)} style={filterSel}>
-                <option value="all">All grades</option>
-                {GRADE_ORDER.map(g => <option key={g} value={g}>{GRADE_LABEL[g]}</option>)}
-              </select>
+              {levelSel}
+              {gradeSel}
               <input type="number" placeholder="Min balance (KES)" value={arrearsMin} onChange={(e) => setArrearsMin(e.target.value)} style={{ ...filterSel, width: 150 }} />
+              {termSel}
               <span style={{ fontSize: 12.5, color: '#8A8FA8' }}>{defaulters.length} to follow up · export for SMS / calls</span>
             </div>
             <table style={tableStyle}>
@@ -674,10 +708,9 @@ const FinanceReports = ({ schoolConfig }) => {
         ) : report === 'overpayments' ? (
           <div style={{ padding: 18 }}>
             <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-              <select value={arrearsGrade} onChange={(e) => setArrearsGrade(e.target.value)} style={filterSel}>
-                <option value="all">All grades</option>
-                {GRADE_ORDER.map(g => <option key={g} value={g}>{GRADE_LABEL[g]}</option>)}
-              </select>
+              {levelSel}
+              {gradeSel}
+              {termSel}
               <span style={{ fontSize: 12.5, color: '#8A8FA8' }}>{overpayments.length} in credit · total <strong style={{ color: '#8A6A1F' }}>KES {kes(overpayments.reduce((s, r) => s + r.credit, 0))}</strong></span>
             </div>
             <table style={tableStyle}>
@@ -703,11 +736,10 @@ const FinanceReports = ({ schoolConfig }) => {
         ) : report === 'clearance' ? (
           <div style={{ padding: 18 }}>
             <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-              <select value={arrearsGrade} onChange={(e) => setArrearsGrade(e.target.value)} style={filterSel}>
-                <option value="all">All grades</option>
-                {GRADE_ORDER.map(g => <option key={g} value={g}>{GRADE_LABEL[g]}</option>)}
-              </select>
-              <span style={{ fontSize: 12.5, color: '#8A8FA8' }}>{cleared.length} fully paid ✅</span>
+              {levelSel}
+              {gradeSel}
+              {termSel}
+              <span style={{ fontSize: 12.5, color: '#8A8FA8' }}>{cleared.length} fully paid ✅{filterTerm !== 'all' ? ` for Term ${filterTerm}` : ''}</span>
             </div>
             <table style={tableStyle}>
               <thead><tr>
@@ -828,6 +860,10 @@ const FinanceReports = ({ schoolConfig }) => {
           </div>
         ) : (
           <div style={{ padding: 18 }}>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 14, alignItems: 'center' }}>
+              {termSel}
+              {filterTerm !== 'all' && <span style={{ fontSize: 12.5, color: '#8A8FA8' }}>Showing Term {filterTerm} invoice lines only</span>}
+            </div>
             <table style={tableStyle}>
               <thead><tr>
                 <th style={thStyle}>Votehead</th><th style={thNum}>Expected</th><th style={thNum}>Cash Collected</th>
