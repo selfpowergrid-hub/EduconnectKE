@@ -31,7 +31,9 @@ const trendBandFor = (levelCode) => {
 };
 
 const PRINT_COLOR = { WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' };
-const TREND_H = 120;              // plot height (px) — sized for clarity
+const TREND_H = 150;              // plot height (px) — stretched for clarity
+const TREND_SLOT = 34;           // width per term slot
+const TREND_BARW = 20;           // bar width inside a slot
 const TREND_BAR = '#6B7280';     // term bars: gray
 const TREND_KCPE = '#B4B8C4';    // KCPE baseline bar: lighter gray
 const shortGrade = (l) => l.replace('Grade ', 'Gr ');
@@ -43,23 +45,24 @@ const GridLines = ({ axis }) => axis.map((a, i) => (
 ));
 
 // Grouped bar chart spanning the whole band (React preview version).
+// Centered; bars are plain (no labels) — heights align to the grade axis.
 const TrendChart = ({ chart }) => (
-  <div style={{ overflowX: 'auto', paddingTop: 12 }}>
+  <div style={{ display: 'flex', justifyContent: 'center', overflowX: 'auto', paddingTop: 14 }}>
     <div style={{ display: 'inline-flex', alignItems: 'flex-end' }}>
-      {/* Y axis: grade codes at their points height */}
-      <div style={{ position: 'relative', width: 30, height: TREND_H, flexShrink: 0 }}>
+      {/* Y axis: grades evenly down the points ladder */}
+      <div style={{ position: 'relative', width: 36, height: TREND_H, flexShrink: 0 }}>
         {chart.axis.map((a, i) => (
-          <div key={i} style={{ position: 'absolute', right: 6, bottom: `calc(${a.bottom}% - 4px)`, fontSize: 8.5, fontWeight: 700, color: '#333', lineHeight: 1, letterSpacing: 0.3 }}>{a.label}</div>
+          <div key={i} style={{ position: 'absolute', right: 7, bottom: `calc(${a.bottom}% - 4px)`, fontSize: 9, fontWeight: 700, color: '#333', lineHeight: 1, letterSpacing: 0.3 }}>{a.label}</div>
         ))}
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-end', borderLeft: '1px solid #333' }}>
         {chart.kcpeH > 0 && (
           <div style={{ borderRight: '1px solid #ccc' }}>
-            <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', height: TREND_H, width: 34, borderBottom: '1px solid #333' }}>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', height: TREND_H, width: 40, borderBottom: '1px solid #333' }}>
               <GridLines axis={chart.axis} />
-              <div style={{ position: 'relative', width: 18, height: chart.kcpeH, background: TREND_KCPE, ...PRINT_COLOR }} />
+              <div style={{ position: 'relative', width: TREND_BARW, height: chart.kcpeH, background: TREND_KCPE, ...PRINT_COLOR }} />
             </div>
-            <div style={{ height: 12 }} />
+            <div style={{ height: 14 }} />
             <div style={{ fontSize: 8, fontWeight: 700, textAlign: 'center', borderTop: '1px solid #999', paddingTop: 2, letterSpacing: 0.3 }}>KCPE</div>
           </div>
         )}
@@ -68,19 +71,14 @@ const TrendChart = ({ chart }) => (
             <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', height: TREND_H, borderBottom: '1px solid #333' }}>
               <GridLines axis={chart.axis} />
               {gp.terms.map((tm, ti) => (
-                <div key={ti} style={{ position: 'relative', width: 26, height: TREND_H, display: 'flex', justifyContent: 'center', alignItems: 'flex-end' }}>
-                  {tm.h > 0 && (
-                    <>
-                      <div style={{ position: 'absolute', bottom: tm.h + 2, fontSize: 8, fontWeight: 800, color: '#1A1A2E', whiteSpace: 'nowrap' }}>{tm.grade}</div>
-                      <div style={{ position: 'relative', width: 16, height: tm.h, background: TREND_BAR, ...PRINT_COLOR }} />
-                    </>
-                  )}
+                <div key={ti} style={{ position: 'relative', width: TREND_SLOT, height: TREND_H, display: 'flex', justifyContent: 'center', alignItems: 'flex-end' }}>
+                  {tm.h > 0 && <div style={{ position: 'relative', width: TREND_BARW, height: tm.h, background: TREND_BAR, ...PRINT_COLOR }} />}
                 </div>
               ))}
             </div>
             <div style={{ display: 'flex', paddingTop: 2 }}>
               {gp.terms.map((tm, ti) => (
-                <div key={ti} style={{ width: 26, textAlign: 'center', fontSize: 7.5, fontWeight: 600, color: '#444' }}>T{tm.term}</div>
+                <div key={ti} style={{ width: TREND_SLOT, textAlign: 'center', fontSize: 7.5, fontWeight: 600, color: '#444' }}>T{tm.term}</div>
               ))}
             </div>
             <div style={{ fontSize: 8.5, fontWeight: 800, textAlign: 'center', borderTop: '1px solid #999', paddingTop: 2, letterSpacing: 0.3 }}>{shortGrade(gp.label)}</div>
@@ -95,22 +93,22 @@ const TrendChart = ({ chart }) => (
 // layout to TrendChart so preview and PDF match.
 const trendChartHTML = (chart) => {
   const pc = '-webkit-print-color-adjust:exact;print-color-adjust:exact';
-  const axis = chart.axis.map(a => `<div style="position:absolute;right:6px;bottom:calc(${a.bottom}% - 4px);font-size:8.5px;font-weight:700;color:#333;line-height:1;letter-spacing:0.3px">${a.label}</div>`).join('');
+  const axis = chart.axis.map(a => `<div style="position:absolute;right:7px;bottom:calc(${a.bottom}% - 4px);font-size:9px;font-weight:700;color:#333;line-height:1;letter-spacing:0.3px">${a.label}</div>`).join('');
   const grid = chart.axis.map(a => `<div style="position:absolute;left:0;right:0;bottom:${a.bottom}%;border-top:1px solid #E5E7EB;${pc}"></div>`).join('');
   const kcpe = chart.kcpeH > 0 ? `<div style="border-right:1px solid #ccc">
-    <div style="position:relative;display:flex;align-items:flex-end;justify-content:center;height:${TREND_H}px;width:34px;border-bottom:1px solid #333">${grid}<div style="position:relative;width:18px;height:${chart.kcpeH}px;background:${TREND_KCPE};${pc}"></div></div>
-    <div style="height:12px"></div>
+    <div style="position:relative;display:flex;align-items:flex-end;justify-content:center;height:${TREND_H}px;width:40px;border-bottom:1px solid #333">${grid}<div style="position:relative;width:${TREND_BARW}px;height:${chart.kcpeH}px;background:${TREND_KCPE};${pc}"></div></div>
+    <div style="height:14px"></div>
     <div style="font-size:8px;font-weight:700;text-align:center;border-top:1px solid #999;padding-top:2px;letter-spacing:0.3px">KCPE</div></div>` : '';
   const groups = chart.groups.map((gp, gi) => {
-    const bars = gp.terms.map(tm => `<div style="position:relative;width:26px;height:${TREND_H}px;display:flex;justify-content:center;align-items:flex-end">${tm.h > 0 ? `<div style="position:absolute;bottom:${tm.h + 2}px;font-size:8px;font-weight:800;color:#1A1A2E;white-space:nowrap">${tm.grade}</div><div style="position:relative;width:16px;height:${tm.h}px;background:${TREND_BAR};${pc}"></div>` : ''}</div>`).join('');
-    const terms = gp.terms.map(tm => `<div style="width:26px;text-align:center;font-size:7.5px;font-weight:600;color:#444">T${tm.term}</div>`).join('');
+    const bars = gp.terms.map(tm => `<div style="position:relative;width:${TREND_SLOT}px;height:${TREND_H}px;display:flex;justify-content:center;align-items:flex-end">${tm.h > 0 ? `<div style="position:relative;width:${TREND_BARW}px;height:${tm.h}px;background:${TREND_BAR};${pc}"></div>` : ''}</div>`).join('');
+    const terms = gp.terms.map(tm => `<div style="width:${TREND_SLOT}px;text-align:center;font-size:7.5px;font-weight:600;color:#444">T${tm.term}</div>`).join('');
     return `<div style="border-right:${gi < chart.groups.length - 1 ? '1px solid #ccc' : 'none'}">
       <div style="position:relative;display:flex;align-items:flex-end;height:${TREND_H}px;border-bottom:1px solid #333">${grid}${bars}</div>
       <div style="display:flex;padding-top:2px">${terms}</div>
       <div style="font-size:8.5px;font-weight:800;text-align:center;border-top:1px solid #999;padding-top:2px;letter-spacing:0.3px">${shortGrade(gp.label)}</div></div>`;
   }).join('');
-  return `<div style="overflow-x:auto;padding-top:12px"><div style="display:inline-flex;align-items:flex-end">
-    <div style="position:relative;width:30px;height:${TREND_H}px;flex-shrink:0">${axis}</div>
+  return `<div style="display:flex;justify-content:center;overflow-x:auto;padding-top:14px"><div style="display:inline-flex;align-items:flex-end">
+    <div style="position:relative;width:36px;height:${TREND_H}px;flex-shrink:0">${axis}</div>
     <div style="display:flex;align-items:flex-end;border-left:1px solid #333">${kcpe}${groups}</div></div></div>`;
 };
 
@@ -673,8 +671,11 @@ const Reports = ({ schoolConfig, examsList }) => {
   }, [trendMarks, examsList, students, scaleForLevel, dbSubjects, aggPolicy]);
 
   // Shapes trendFor() output into the full-band grouped bar chart: every grade
-  // in the student's level, three terms each, filled where data exists. The
-  // y-axis is the current class scale (grade codes at their points height).
+  // in the student's level, three terms each, filled where data exists. Both
+  // the y-axis grade labels AND the bar heights are placed on the points
+  // ladder (lowest grade → highest grade), so with consecutive point values
+  // the grades space evenly down the axis and every bar top sits exactly at
+  // its grade's line. Bars carry no labels — the axis reads the value.
   const trendChartFor = useCallback((student, trend) => {
     const band = trendBandFor(student.level_id);
     const termNo = (t) => parseInt(String(t).replace(/\D/g, ''), 10) || 0;
@@ -683,19 +684,29 @@ const Reports = ({ schoolConfig, examsList }) => {
       const key = `${t.level}|${termNo(t.term)}`;
       if (!bySlot[key] || (t.year || 0) > (bySlot[key].year || 0)) bySlot[key] = t;
     });
+    const ptsList = cardScale.map(g => g.points || 0);
+    const maxP = Math.max(...ptsList), minP = Math.min(...ptsList);
+    const span = Math.max(1, maxP - minP);
+    const frac = (p) => Math.min(1, Math.max(0, (p - minP) / span));
     const groups = band.map(([code, label]) => ({
       label,
       terms: [1, 2, 3].map(n => {
         const d = bySlot[`${code}|${n}`];
-        return d
-          ? { term: n, h: Math.max(4, Math.round(d.pctOfMax / 100 * TREND_H)), grade: d.grade }
-          : { term: n, h: 0 };
+        return d ? { term: n, h: Math.max(6, Math.round(frac(d.meanPts) * TREND_H)) } : { term: n, h: 0 };
       }),
     }));
-    const axis = cardScale.map(g => ({ label: g.grade || g.code || '', bottom: (g.points || 0) / maxPoints * 100 }));
-    const kcpeH = student.kcpe_score ? Math.max(4, Math.round(student.kcpe_score / 500 * TREND_H)) : 0;
-    return { groups, axis, kcpeH };
-  }, [cardScale, maxPoints]);
+    const axis = [...cardScale]
+      .sort((a, b) => (b.points || 0) - (a.points || 0))
+      .map(g => ({ label: g.grade || g.code || '', bottom: frac(g.points || 0) * 100 }));
+    // KCPE baseline: entry % → the scale's grade → that grade's points height.
+    let kcpeH = 0;
+    if (student.kcpe_score) {
+      const pctK = student.kcpe_score / 500 * 100;
+      const gK = cardScale.find(g => pctK >= (g.min_score || 0)); // cardScale is sorted desc
+      kcpeH = Math.max(6, Math.round(frac(gK?.points ?? minP) * TREND_H));
+    }
+    return { groups, axis, kcpeH, band, bySlot };
+  }, [cardScale]);
 
   // Fees box numbers: arrears to date, next term's bill, total.
   const feesFor = useCallback((student) => {
@@ -909,33 +920,41 @@ const Reports = ({ schoolConfig, examsList }) => {
           )}
         </div>
 
-        {/* Trend Analysis — points & position table + full-band grade chart */}
+        {/* Trend Analysis — full-band table (every grade × 3 terms) + chart */}
         {trend.length > 0 && (() => {
           const chart = trendChartFor(student, trend);
           const bandLabel = `${chart.groups[0].label} – ${chart.groups[chart.groups.length - 1].label}`;
+          const thT = { border: '1px solid #999', padding: '3px 4px', background: '#f0f0f0', textAlign: 'center', fontSize: 9.5 };
+          const tdT = { border: '1px solid #999', padding: '3px 4px', textAlign: 'center', fontSize: 9.5 };
+          const slot = (code, n) => chart.bySlot[`${code}|${n}`];
+          const row = (label, fn) => (
+            <tr>
+              <td style={{ ...tdT, fontWeight: 700, textAlign: 'left', whiteSpace: 'nowrap' }}>{label}</td>
+              {chart.band.map(([code]) => [1, 2, 3].map(n => {
+                const d = slot(code, n);
+                return <td key={`${code}${n}`} style={{ ...tdT, color: d ? '#000' : '#bbb' }}>{d ? fn(d) : '—'}</td>;
+              }))}
+            </tr>
+          );
           return (
             <div style={{ border: '1px solid #000', padding: 10, marginBottom: 12 }}>
               <div style={{ fontWeight: 800, marginBottom: 6, fontSize: 12 }}>TREND ANALYSIS — {bandLabel.toUpperCase()}</div>
-              <table style={{ borderCollapse: 'collapse', fontSize: 10.5 }}>
+              <table style={{ borderCollapse: 'collapse', width: '100%', tableLayout: 'fixed' }}>
                 <thead>
                   <tr>
-                    <th style={{ border: '1px solid #999', padding: '3px 8px', background: '#f0f0f0' }}></th>
-                    {trend.map((t, i) => (
-                      <th key={i} style={{ border: '1px solid #999', padding: '3px 8px', background: '#f0f0f0', whiteSpace: 'nowrap' }}>
-                        {(GRADE_CODE_TO_NAME[t.level] || t.level).replace('Grade ', 'G').replace('Form ', 'F')} {String(t.term).replace('Term ', 'T')} '{String(t.year).slice(2)}
-                      </th>
+                    <th rowSpan={2} style={{ ...thT, width: 66 }}></th>
+                    {chart.band.map(([code, label]) => (
+                      <th key={code} colSpan={3} style={thT}>{shortGrade(label)}</th>
                     ))}
+                  </tr>
+                  <tr>
+                    {chart.band.map(([code]) => [1, 2, 3].map(n => <th key={`${code}${n}`} style={thT}>T{n}</th>))}
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    <td style={{ border: '1px solid #999', padding: '3px 8px', fontWeight: 700 }}>Points</td>
-                    {trend.map((t, i) => <td key={i} style={{ border: '1px solid #999', padding: '3px 8px', textAlign: 'center' }}>{t.pts}</td>)}
-                  </tr>
-                  <tr>
-                    <td style={{ border: '1px solid #999', padding: '3px 8px', fontWeight: 700 }}>Position</td>
-                    {trend.map((t, i) => <td key={i} style={{ border: '1px solid #999', padding: '3px 8px', textAlign: 'center' }}>{t.pos}/{t.outOf}</td>)}
-                  </tr>
+                  {row('Points', d => d.pts)}
+                  {row('Position', d => `${d.pos}/${d.outOf}`)}
+                  {row('Mean Grade', d => d.grade)}
                 </tbody>
               </table>
               <TrendChart chart={chart} />
@@ -1138,14 +1157,23 @@ const Reports = ({ schoolConfig, examsList }) => {
         ${trend.length > 0 ? (() => {
           const chart = trendChartFor(student, trend);
           const bandLabel = `${chart.groups[0].label} – ${chart.groups[chart.groups.length - 1].label}`;
+          const cell = (code, n, fn) => {
+            const d = chart.bySlot[`${code}|${n}`];
+            return `<td style="text-align:center;${d ? '' : 'color:#bbb'}">${d ? fn(d) : '—'}</td>`;
+          };
+          const row = (label, fn) => `<tr><td style="font-weight:700;white-space:nowrap">${label}</td>${chart.band.map(([code]) => [1, 2, 3].map(n => cell(code, n, fn)).join('')).join('')}</tr>`;
           return `
         <div class="trend">
           <b style="font-size:11px">TREND ANALYSIS — ${bandLabel.toUpperCase()}</b>
-          <table style="width:auto;font-size:10px;margin-top:5px">
-            <thead><tr><th></th>${trend.map(t => `<th style="white-space:nowrap">${(GRADE_CODE_TO_NAME[t.level] || t.level).replace('Grade ', 'G').replace('Form ', 'F')} ${String(t.term).replace('Term ', 'T')} '${String(t.year).slice(2)}</th>`).join('')}</tr></thead>
+          <table style="width:100%;table-layout:fixed;font-size:9px;margin-top:5px">
+            <thead>
+              <tr><th rowspan="2" style="width:60px"></th>${chart.band.map(([, label]) => `<th colspan="3" style="text-align:center">${shortGrade(label)}</th>`).join('')}</tr>
+              <tr>${chart.band.map(() => [1, 2, 3].map(n => `<th style="text-align:center">T${n}</th>`).join('')).join('')}</tr>
+            </thead>
             <tbody>
-              <tr><td><b>Points</b></td>${trend.map(t => `<td style="text-align:center">${t.pts}</td>`).join('')}</tr>
-              <tr><td><b>Position</b></td>${trend.map(t => `<td style="text-align:center">${t.pos}/${t.outOf}</td>`).join('')}</tr>
+              ${row('Points', d => d.pts)}
+              ${row('Position', d => `${d.pos}/${d.outOf}`)}
+              ${row('Mean Grade', d => d.grade)}
             </tbody>
           </table>
           ${trendChartHTML(chart)}
