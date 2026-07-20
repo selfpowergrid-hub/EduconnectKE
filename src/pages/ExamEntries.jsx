@@ -41,6 +41,7 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
   const [entryStream, setEntryStream] = useState("All");
   const [entrySubject, setEntrySubject] = useState("");
   const [entryTerm, setEntryTerm] = useState("Term 1");
+  const [entrySort, setEntrySort] = useState({ key: 'adm', dir: 'asc' }); // roster order
   const [rowHeight, setRowHeight] = useState(28);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [totalDrafts, setTotalDrafts] = useState(0);
@@ -372,7 +373,29 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
     );
   }, [examsList, entryTerm, entryGrade]);
 
-  const entryStudents = students;
+  // Roster order for the marks grid — sortable by admission number or name so
+  // the teacher can match whatever order their mark sheet is in. Marks are
+  // keyed by student id, so re-sorting never disturbs entered scores.
+  const entryStudents = useMemo(() => {
+    const arr = [...students];
+    const dir = entrySort.dir === 'asc' ? 1 : -1;
+    arr.sort((a, b) => {
+      if (entrySort.key === 'name') {
+        const an = `${a.first_name || ''} ${a.last_name || ''}`.trim().toLowerCase();
+        const bn = `${b.first_name || ''} ${b.last_name || ''}`.trim().toLowerCase();
+        return an.localeCompare(bn) * dir;
+      }
+      const ax = String(a.adm_no ?? ''), bx = String(b.adm_no ?? '');
+      const an = parseInt(ax, 10), bn = parseInt(bx, 10);
+      if (!isNaN(an) && !isNaN(bn) && an !== bn) return (an - bn) * dir;
+      return ax.localeCompare(bx, undefined, { numeric: true }) * dir;
+    });
+    return arr;
+  }, [students, entrySort]);
+
+  const toggleEntrySort = (key) =>
+    setEntrySort(s => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
+  const sortArrow = (key) => (entrySort.key === key ? (entrySort.dir === 'asc' ? ' ▲' : ' ▼') : ' ⇅');
 
   const handleScoreChange = (studentId, examId, value) => {
     const exam = examsList.find(e => e.id === examId);
@@ -808,8 +831,8 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
           <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
             <thead style={{ background: "#fafafa", borderBottom: "1px solid #e6dfd8" }}>
               <tr>
-                <th className="sticky-col sticky-left-0" style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", width: 80, color: "#2a2421", fontWeight: 700 }}>ADM NO</th>
-                <th className="sticky-col sticky-left-1" style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", minWidth: 150, color: "#2a2421", fontWeight: 700 }}>STUDENT NAME</th>
+                <th className="sticky-col sticky-left-0" onClick={() => toggleEntrySort('adm')} title="Sort by admission number" style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", width: 80, color: entrySort.key === 'adm' ? activeColor : "#2a2421", fontWeight: 700, cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>ADM NO<span style={{ fontSize: 10 }}>{sortArrow('adm')}</span></th>
+                <th className="sticky-col sticky-left-1" onClick={() => toggleEntrySort('name')} title="Sort by student name" style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", minWidth: 150, color: entrySort.key === 'name' ? activeColor : "#2a2421", fontWeight: 700, cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>STUDENT NAME<span style={{ fontSize: 10 }}>{sortArrow('name')}</span></th>
                 {entryExams.map(exam => (
                   <th key={exam.id} style={{ padding: "8px 12px", borderRight: "1px solid #e6dfd8", textAlign: "center", width: 120 }}>
                     <div style={{ fontSize: 10, color: "#8a8fa8", textTransform: "uppercase", letterSpacing: "0.05em" }}>{exam.name}</div>
