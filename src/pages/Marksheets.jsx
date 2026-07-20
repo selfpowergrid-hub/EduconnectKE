@@ -365,6 +365,31 @@ const Marksheets = ({ schoolConfig, examsList }) => {
     [bsData, selectedStream]
   );
 
+  // Class averages for the broadsheet footer. Per subject: the mean of the
+  // students who actually sat it (blank AND zero marks excluded, per request),
+  // shown as score + grade. Overall: mean PTS, mean of the mean-points, and the
+  // grade for that — computed only over students who count (not below-minimum).
+  const bsFooter = useMemo(() => {
+    const rows = bsRows.filter(r => !r.belowMinimum);
+    if (!rows.length) return null;
+    const subj = {};
+    gradeSubjects.forEach(sub => {
+      const vals = rows
+        .map(r => r.subjectDetail[sub.id]?.score)
+        .filter(v => v !== undefined && v !== null && v > 0);
+      if (vals.length) {
+        const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+        const g = getGrade(mean);
+        subj[sub.id] = { mean, grade: g.grade || g.code || '-', n: vals.length };
+      } else {
+        subj[sub.id] = null;
+      }
+    });
+    const avgPts = rows.reduce((a, r) => a + r.pts, 0) / rows.length;
+    const avgMeanPts = rows.reduce((a, r) => a + r.meanPts, 0) / rows.length;
+    return { subj, avgPts, avgMeanPts, meanGrade: gradeByPoints(avgMeanPts), n: rows.length };
+  }, [bsRows, gradeSubjects, getGrade, gradeByPoints]);
+
   // Live estimate of printed pages (landscape A4) at the current settings.
   const estPages = usePageEstimate({
     containerId: 'marksheet-table-container',
@@ -570,11 +595,34 @@ const Marksheets = ({ schoolConfig, examsList }) => {
                         </tr>
                       ))}
                     </tbody>
+                    {bsFooter && (
+                      <tfoot>
+                        <tr>
+                          <td colSpan={showStr ? 4 : 3} style={{ ...tdB, textAlign: 'right', fontWeight: 800, background: '#e8f5ee', color: '#1B6B3A' }}>
+                            SUBJECT MEAN →
+                          </td>
+                          {gradeSubjects.map(sub => {
+                            const m = bsFooter.subj[sub.id];
+                            return (
+                              <td key={sub.id} style={{ ...tdB, fontSize: 10, fontWeight: 700, background: '#f0efe8', color: m ? '#2a2421' : '#c9c4bd' }}>
+                                {m ? `${Math.round(m.mean)} ${m.grade}` : '—'}
+                              </td>
+                            );
+                          })}
+                          <td style={{ ...tdB, fontWeight: 800, background: '#e8f5ee', color: '#1B6B3A' }}>{bsFooter.avgPts.toFixed(1)}</td>
+                          <td style={{ ...tdB, fontWeight: 700, background: '#e8f5ee', color: '#1B6B3A' }}>{bsFooter.avgMeanPts.toFixed(2)}</td>
+                          <td style={{ ...tdB, fontWeight: 800, color: '#d35400', background: '#e8f5ee' }}>{bsFooter.meanGrade}</td>
+                          <td style={{ ...tdB, background: '#eef3ee' }}></td>
+                          <td style={{ ...tdB, background: '#eef3ee' }}></td>
+                        </tr>
+                      </tfoot>
+                    )}
                   </table>
                   <div style={{ padding: '8px 14px', fontSize: 10, color: '#8a8fa8' }}>
                     Printed {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}
                     {aggPolicy && aggPolicy.count_all === false ? ` · PTS uses the ${aggPolicy.min_subjects ? `best-${aggPolicy.min_subjects}` : 'configured'} point cluster selection` : ''}
                     {' · CLp = class (stream) position · POS = overall position'}
+                    {bsFooter ? ` · SUBJECT MEAN over ${bsFooter.n} student${bsFooter.n === 1 ? '' : 's'} who sat (blank & zero marks excluded)` : ''}
                   </div>
                 </>
               );
