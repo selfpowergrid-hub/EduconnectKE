@@ -36,6 +36,7 @@ const REPORTS = [
   { group: 'Cross-cutting', items: [
     { id: 'gender', label: 'Gender Analysis' },
     { id: 'projection', label: 'KCSE / KSSEA Projection (Form 3/4)' },
+    { id: 'comparative', label: 'Comparative Exam Analysis' },
   ]},
 ];
 
@@ -223,6 +224,17 @@ const Analysis = ({ schoolConfig, examsList }) => {
     return has ? weighted : null;
   }, [examsForTerm, allMarks]);
 
+  // Sit-status for a subject this term: 'X' (missed) / 'Y' (cheating) / null.
+  // Only meaningful for a student with no scored paper in the subject.
+  const subjectStatus = useCallback((studentId, subjectId, term) => {
+    for (const ex of examsForTerm(term)) {
+      const m = allMarks.find(mk => mk.student_id === studentId && mk.exam_id === ex.id && mk.subject_id === subjectId && mk.term === term);
+      if (m?.status === 'missed') return 'X';
+      if (m?.status === 'cheating') return 'Y';
+    }
+    return null;
+  }, [examsForTerm, allMarks]);
+
   // Policy-aware overall mean for a student in a term.
   const overallMean = useCallback((studentId, term) => {
     const entries = classSubjects
@@ -293,8 +305,8 @@ const Analysis = ({ schoolConfig, examsList }) => {
   const estPages = usePageEstimate({
     containerId: 'analysis-print',
     scale: printScale, font: printFont,
-    autoPx: reportType === 'merit' ? 8 : 11,
-    landscape: reportType === 'merit',
+    autoPx: reportType === 'merit' ? 8 : reportType === 'comparative' ? 9 : 11,
+    landscape: reportType === 'merit' || reportType === 'comparative',
     screenZoom: printScale / 100, // the on-screen container is zoomed too
     deps: [reportType, students, allMarks, selectedTerm, selectedStream, loading],
   });
@@ -306,7 +318,7 @@ const Analysis = ({ schoolConfig, examsList }) => {
     const el = document.getElementById('analysis-print');
     if (!el) return;
     const win = window.open('', '_blank');
-    const isLandscape = reportType === 'merit';
+    const isLandscape = reportType === 'merit' || reportType === 'comparative';
     // The letterhead is inside the printable container, so it carries over.
     const cellFont = printCellFont(printFont, isLandscape ? 8 : 11);
     win.document.write(`<html><head><title>${reportLabel}</title><style>
@@ -799,6 +811,116 @@ const Analysis = ({ schoolConfig, examsList }) => {
     );
   };
 
+  // Comparative Exam Analysis — the classic KCSE-style grade distribution
+  // matrix: an AGGREGATE row (overall) plus one row per subject, each showing
+  // Entry, a count per grade band, X (missed) / Y (cheating), MEAN (points)
+  // and G (mean grade). Z (incomplete / no aggregate) applies to the
+  // AGGREGATE row only, per the school's own definition.
+  const buildComparative = useCallback(() => {
+    const gradeLabels = gradeScale.map(g => g.grade || g.code);
+
+    const subjectRows = classSubjects.map(sub => {
+      const scored = [];
+      let xCount = 0, yCount = 0;
+      scopedStudents.forEach(s => {
+        const sc = subjectTermScore(s.id, sub.id, selectedTerm);
+        if (sc !== null) { scored.push(sc); return; }
+        const status = subjectStatus(s.id, sub.id, selectedTerm);
+        if (status === 'Y') yCount++;
+        else if (status === 'X') xCount++;
+      });
+      const dist = gradeDistribution(scored);
+      const pts = scored.map(sc => getGrade(sc).points || 0);
+      const meanPts = pts.length ? pts.reduce((a, b) => a + b, 0) / pts.length : 0;
+      return { sub, entry: scored.length, dist, x: xCount, y: yCount, meanPts, meanGrade: pts.length ? gradeByPoints(meanPts) : '-' };
+    });
+
+    const merit = buildMerit(scopedStudents, selectedTerm); // subjectsCount > 0 (graded or below-minimum)
+    const graded = merit.filter(r => !r.belowMinimum);
+    const incomplete = merit.filter(r => r.belowMinimum); // Z — sat something, but short of the minimum needed for an aggregate
+    const notGraded = scopedStudents.filter(s => !merit.some(r => r.student.id === s.id)); // sat nothing at all this term
+    let aggX = 0, aggY = 0;
+    notGraded.forEach(s => {
+      const flags = classSubjects.map(sub => subjectStatus(s.id, sub.id, selectedTerm)).filter(Boolean);
+      if (flags.includes('Y')) aggY++;
+      else if (flags.includes('X')) aggX++;
+    });
+    const aggDist = gradeDistribution(graded.map(r => r.mean));
+    const aggMeanPts = graded.length ? graded.reduce((a, r) => a + r.meanPoints, 0) / graded.length : 0;
+
+    return {
+      gradeLabels,
+      aggregate: { entry: graded.length, dist: aggDist, x: aggX, y: aggY, z: incomplete.length, meanPts: aggMeanPts, meanGrade: graded.length ? gradeByPoints(aggMeanPts) : '-' },
+      subjectRows,
+    };
+  }, [gradeScale, classSubjects, scopedStudents, subjectTermScore, subjectStatus, gradeDistribution, getGrade, gradeByPoints]);
+
+  const renderComparative = () => {
+    const { gradeLabels, aggregate, subjectRows } = buildComparative();
+    const thCA = { ...th, textAlign: 'center', padding: '6px 5px', fontSize: 10.5, whiteSpace: 'nowrap' };
+    const tdCA = { ...tdC, padding: '5px 4px', fontSize: 11.5 };
+    const rowStyle = (i) => ({ background: i % 2 === 0 ? '#fff' : '#faf8f5' });
+    const distCells = (dist) => gradeLabels.map(label => {
+      const d = dist.find(x => x.label === label);
+      return <td key={label} style={tdCA}>{d?.count || 0}</td>;
+    });
+    // Title + scope already appear once in the Letterhead just above this
+    // card — repeating them here only ate page space without adding
+    // information, so this report starts straight into the table.
+    return (
+      <div style={{ ...card, paddingTop: 10 }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={{ ...thCA, textAlign: 'left', minWidth: 130 }}>SUBJECT</th>
+                <th style={thCA} title="Students graded">Entry</th>
+                {gradeLabels.map(g => <th key={g} style={thCA}>{g}</th>)}
+                <th style={{ ...thCA, color: '#C0392B' }} title="Missed the exam">X</th>
+                <th style={{ ...thCA, color: '#B4690E' }} title="Cheating case">Y</th>
+                <th style={{ ...thCA, color: '#6C3483' }} title="Incomplete — no aggregate (AGGREGATE row only)">Z</th>
+                <th style={{ ...thCA, background: '#e8f5ee', color: '#1B6B3A' }} title="Mean grade-points">MEAN</th>
+                <th style={{ ...thCA, background: '#e8f5ee', color: '#1B6B3A' }}>G</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style={{ ...rowStyle(0), fontWeight: 800 }}>
+                <td style={{ ...tdCA, textAlign: 'left' }}>AGGREGATE</td>
+                <td style={tdCA}>{aggregate.entry}</td>
+                {distCells(aggregate.dist)}
+                <td style={{ ...tdCA, color: '#C0392B' }}>{aggregate.x || ''}</td>
+                <td style={{ ...tdCA, color: '#B4690E' }}>{aggregate.y || ''}</td>
+                <td style={{ ...tdCA, color: '#6C3483' }}>{aggregate.z || ''}</td>
+                <td style={{ ...tdCA, background: '#f0faf3' }}>{aggregate.entry ? aggregate.meanPts.toFixed(3) : '—'}</td>
+                <td style={{ ...tdCA, background: '#f0faf3', color: '#d35400' }}>{aggregate.meanGrade}</td>
+              </tr>
+              {subjectRows.map((r, i) => (
+                <tr key={r.sub.id} style={rowStyle(i + 1)}>
+                  <td style={{ ...tdCA, textAlign: 'left', fontWeight: 600 }}>{r.sub.name}</td>
+                  <td style={{ ...tdCA, fontWeight: 700 }}>{r.entry}</td>
+                  {distCells(r.dist)}
+                  <td style={{ ...tdCA, color: '#C0392B' }}>{r.x || ''}</td>
+                  <td style={{ ...tdCA, color: '#B4690E' }}>{r.y || ''}</td>
+                  <td style={tdCA}></td>
+                  <td style={{ ...tdCA, background: '#f0faf3' }}>{r.entry ? r.meanPts.toFixed(3) : '—'}</td>
+                  <td style={{ ...tdCA, background: '#f0faf3', color: '#d35400' }}>{r.meanGrade}</td>
+                </tr>
+              ))}
+              {subjectRows.length === 0 && (
+                <tr><td colSpan={5 + gradeLabels.length} style={{ ...tdC, color: '#8a8fa8', padding: 24 }}>No marks captured.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ marginTop: 12, fontSize: 10.5, color: '#8a8fa8', lineHeight: 1.5 }}>
+          Entry = graded (or, for AGGREGATE, students with a valid overall mean) · <strong style={{ color: '#C0392B' }}>X</strong> = missed the exam ·{' '}
+          <strong style={{ color: '#B4690E' }}>Y</strong> = cheating case · <strong style={{ color: '#6C3483' }}>Z</strong> = incomplete result, no aggregate (AGGREGATE row only) ·
+          MEAN = mean grade-points · G = grade for that mean.
+        </div>
+      </div>
+    );
+  };
+
   const renderReport = () => {
     switch (reportType) {
       case 'merit': return renderMerit();
@@ -813,6 +935,7 @@ const Analysis = ({ schoolConfig, examsList }) => {
       case 'trend': return renderTrend();
       case 'gender': return renderGender();
       case 'projection': return renderProjection();
+      case 'comparative': return renderComparative();
       default: return null;
     }
   };
@@ -871,7 +994,7 @@ const Analysis = ({ schoolConfig, examsList }) => {
 
       {/* Report body */}
       <div style={{ overflowX: 'auto', background: '#f5f4f1', padding: 20, borderRadius: 12, border: '1px solid #e6dfd8', display: 'flex', justifyContent: 'center' }}>
-        <div id="analysis-print" style={{ zoom: printScale / 100, width: '100%', maxWidth: reportType === 'merit' ? 'none' : 1000, background: '#fff', padding: 24, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+        <div id="analysis-print" style={{ zoom: printScale / 100, width: '100%', maxWidth: (reportType === 'merit' || reportType === 'comparative') ? 'none' : 1000, background: '#fff', padding: 24, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
           <Letterhead
           schoolConfig={schoolConfig}
           schoolInfo={schoolInfo}

@@ -288,7 +288,9 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
     let formatted = {};
     data?.forEach(m => {
       if (!formatted[m.student_id]) formatted[m.student_id] = {};
-      formatted[m.student_id][m.exam_id] = m.score;
+      // A sit-status shows as its letter in the grid; otherwise the score.
+      formatted[m.student_id][m.exam_id] =
+        m.status === 'missed' ? 'X' : m.status === 'cheating' ? 'Y' : m.score;
     });
 
     if (schoolConfig?.id) {
@@ -400,9 +402,20 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
   const handleScoreChange = (studentId, examId, value) => {
     const exam = examsList.find(e => e.id === examId);
     const maxAllowed = exam?.total_marks || 100;
-    let val = parseInt(value) || 0;
-    if (val > maxAllowed) val = maxAllowed;
-    if (val < 0) val = 0;
+    // Sit-status shorthands: X = missed exam, Y = cheating case. Anything else
+    // is treated as a numeric score (clamped to the exam's range).
+    const letter = String(value).trim().toUpperCase();
+    let val;
+    if (letter === 'X' || letter === 'Y') {
+      val = letter;
+    } else if (letter === '') {
+      val = '';                       // cleared — stays blank, never a stray 0
+    } else {
+      val = parseInt(value, 10);
+      if (isNaN(val)) val = '';       // non-numeric junk → treat as blank
+      else if (val > maxAllowed) val = maxAllowed;
+      else if (val < 0) val = 0;      // a genuine typed "0" is kept as 0
+    }
     setMarksData(prev => {
       const next = {
         ...prev,
@@ -429,14 +442,25 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
       const gid = getGradeId(entryGrade);
       const subjectRow = currentSubjectRow();
 
+      // Cells with a value (score or X/Y) are upserted; cleared cells are
+      // removed so a deleted mark leaves the DB truly blank, not a 0.
       const records = [];
+      const clearsByExam = {};   // exam_id -> [student_id] to delete
       Object.keys(marksData).forEach(studentId => {
         Object.keys(marksData[studentId]).forEach(examId => {
           const exam = examsList.find(e => e.id === examId);
+          const raw = marksData[studentId][examId];
+          const isBlank = raw === '' || raw === null || raw === undefined;
+          if (isBlank) {
+            (clearsByExam[examId] = clearsByExam[examId] || []).push(studentId);
+            return;
+          }
+          const isStatus = raw === 'X' || raw === 'Y';
           records.push({
             student_id: studentId,
             exam_id: examId,
-            score: marksData[studentId][examId],
+            score: isStatus ? null : raw,
+            status: raw === 'X' ? 'missed' : raw === 'Y' ? 'cheating' : null,
             subject_id: subjectRow?.id || null,
             level_id: gid,
             term: exam?.term || entryTerm,
@@ -445,13 +469,28 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
         });
       });
 
-      if (records.length === 0) return;
+      if (records.length === 0 && Object.keys(clearsByExam).length === 0) return;
 
-      const { error } = await supabase
-        .from('marks')
-        .upsert(records, { onConflict: 'exam_id,student_id,subject_id,level_id,term,year' });
+      // Remove cleared marks (one delete per exam column, precise by student).
+      for (const [examId, studentIds] of Object.entries(clearsByExam)) {
+        const exam = examsList.find(e => e.id === examId);
+        let q = supabase.from('marks').delete()
+          .eq('exam_id', examId)
+          .in('student_id', studentIds)
+          .eq('level_id', gid)
+          .eq('term', exam?.term || entryTerm)
+          .eq('year', exam?.year || new Date().getFullYear());
+        q = subjectRow?.id ? q.eq('subject_id', subjectRow.id) : q.is('subject_id', null);
+        const { error: delErr } = await q;
+        if (delErr) throw delErr;
+      }
 
-      if (error) throw error;
+      if (records.length > 0) {
+        const { error } = await supabase
+          .from('marks')
+          .upsert(records, { onConflict: 'exam_id,student_id,subject_id,level_id,term,year' });
+        if (error) throw error;
+      }
       
       // Clear draft
       const subject = currentSubjectRow();
@@ -847,12 +886,17 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
             <tbody>
               {entryStudents.map((s, sIdx) => {
                 const studentMarks = marksData[s.id] || {};
+                const isStatusVal = (v) => v === 'X' || v === 'Y';
                 const hasAnyMark = entryExams.some(exam => {
                   const v = studentMarks[exam.id];
-                  return v !== undefined && v !== null && v !== "";
+                  return v !== undefined && v !== null && v !== "" && !isStatusVal(v);
                 });
+                // X / Y (missed / cheating) carry no score — skip them so the
+                // student's average and grade reflect only papers actually sat.
                 const total = entryExams.reduce((sum, exam) => {
-                  const raw = parseInt(studentMarks[exam.id]) || 0;
+                  const v = studentMarks[exam.id];
+                  if (isStatusVal(v)) return sum;
+                  const raw = parseInt(v) || 0;
                   const outOf = exam.total_marks || 100;
                   const pct = outOf > 0 ? (raw / outOf) * 100 : 0;
                   return sum + pct * ((exam.weight || 0) / 100);
@@ -906,6 +950,9 @@ const ExamEntries = ({ schoolConfig, examsList, marksData, setMarksData, role, t
               )}
             </tbody>
           </table>
+        </div>
+        <div style={{ padding: "6px 14px", fontSize: 11, color: "#8a8fa8" }}>
+          Tip: type <strong style={{ color: "#C0392B" }}>X</strong> for a missed exam or <strong style={{ color: "#B4690E" }}>Y</strong> for a cheating case instead of a mark — these are excluded from the average and appear in the Comparative Exam Analysis.
         </div>
         </>)}
 
