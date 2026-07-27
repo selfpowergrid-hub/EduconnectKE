@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { GRADE_NAME_TO_CODE, gradesByLevelForSchool } from '../lib/schoolLevels';
-import PrintSizer, { printCellFont, usePageEstimate } from '../components/PrintSizer';
+import PrintSizer, { printCellFont, usePageEstimate, BW_FILTER } from '../components/PrintSizer';
 
 // Daily class attendance register + termly summary report.
 // One row per student per day in attendance_records (upsert on re-mark).
@@ -163,6 +163,7 @@ const Attendance = ({ schoolConfig, userEmail }) => {
 
   const [printScale, setPrintScale] = useState(100);
   const [printFont, setPrintFont] = useState('auto');
+  const [printBW, setPrintBW] = useState(false); // black & white output
   const estPages = usePageEstimate({
     containerId: 'attendance-print',
     scale: printScale, font: printFont, autoPx: 11,
@@ -177,7 +178,7 @@ const Attendance = ({ schoolConfig, userEmail }) => {
     const cls = classesForLevel.find(c => c.code === selectedClass)?.name || '';
     const cellFont = printCellFont(printFont, 11);
     win.document.write(`<html><head><title>${label}</title><style>
-      body{font-family:Arial,sans-serif;font-size:12px;padding:16px;color:#111;zoom:${printScale / 100}}
+      body{font-family:Arial,sans-serif;font-size:12px;padding:16px;color:#111;zoom:${printScale / 100}${printBW ? `;filter:${BW_FILTER}` : ''}}
       h1{font-size:18px;margin:0 0 2px}.sub{color:#555;margin-bottom:14px}
       table{width:100%;border-collapse:collapse}th,td{border:1px solid #333;padding:${cellFont <= 8 ? '2px 4px' : '5px 8px'};font-size:${cellFont}px}th{background:#eee;text-align:left}
       button{display:none}
@@ -250,12 +251,12 @@ const Attendance = ({ schoolConfig, userEmail }) => {
           </>
         )}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} />
+          <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} bw={printBW} setBw={setPrintBW} />
           <button onClick={handlePrint} style={{ padding: '10px 18px', background: '#1B6B3A', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', height: 40, whiteSpace: 'nowrap' }}>🖨️ Print</button>
         </div>
       </div>
 
-      <div id="attendance-print">
+      <div id="attendance-print" style={{ filter: printBW ? BW_FILTER : 'none' }}>
         {viewMode === 'register' ? (
           <div style={card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>

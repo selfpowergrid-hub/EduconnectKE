@@ -32,13 +32,13 @@ function downloadCsv(filename, headers, rows) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function printTable(schoolName, title, headers, rows) {
+function printTable(schoolName, title, headers, rows, bw) {
   const w = window.open('', '_blank');
   if (!w) { alert('Allow pop-ups to print reports.'); return; }
   const head = headers.map(h => `<th>${h}</th>`).join('');
   const body = rows.map(r => `<tr>${r.map((c, i) => `<td class="${i > 0 && /^[\d,.-]+$/.test(String(c)) ? 'num' : ''}">${c ?? ''}</td>`).join('')}</tr>`).join('');
   w.document.write(`<!doctype html><html><head><title>${title}</title><style>
-    body { font-family: Arial, sans-serif; font-size: 12px; color: #111; margin: 24px; }
+    body { font-family: Arial, sans-serif; font-size: 12px; color: #111; margin: 24px; ${bw ? 'filter: grayscale(1) contrast(1.05);' : ''} }
     h2 { margin: 0 0 2px; } .sub { color: #555; margin: 0 0 14px; font-size: 11px; }
     table { width: 100%; border-collapse: collapse; }
     th, td { border: 1px solid #bbb; padding: 5px 8px; text-align: left; }
@@ -94,6 +94,7 @@ const FinanceReports = ({ schoolConfig }) => {
   const [filterLevel, setFilterLevel] = useState('all');
   const [arrearsGrade, setArrearsGrade] = useState('all');
   const [filterTerm, setFilterTerm] = useState('all');
+  const [printBW, setPrintBW] = useState(false); // black & white print output
   const [arrearsMin, setArrearsMin] = useState('');
   const [dailyFrom, setDailyFrom] = useState(todayISO());
   const [dailyTo, setDailyTo] = useState(todayISO());
@@ -474,7 +475,7 @@ const FinanceReports = ({ schoolConfig }) => {
       title = `Report — ${year}`; headers = []; rows = [];
     }
     if (mode === 'csv') downloadCsv(`${title.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}.csv`, headers, rows);
-    else printTable(schoolConfig?.schoolName, title, headers, rows);
+    else printTable(schoolConfig?.schoolName, title, headers, rows, printBW);
   };
 
   const reportTabs = [
@@ -503,6 +504,7 @@ const FinanceReports = ({ schoolConfig }) => {
             style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #E8EAF0', fontSize: 13, background: '#fff' }}>
             {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1].map(y => <option key={y} value={y}>{y}</option>)}
           </select>
+          <button onClick={() => setPrintBW(v => !v)} title="Black & white printing" style={{ ...btnStyle(printBW ? '#2a2421' : '#fff'), color: printBW ? '#fff' : '#4A4A6A', border: '1px solid #d1dee5' }}>◑ B&W{printBW ? ' ON' : ''}</button>
           <button onClick={() => exportCurrent('csv')} style={btnStyle('#1B6B3A')}>⬇ CSV</button>
           <button onClick={() => exportCurrent('print')} style={btnStyle('#1A5F9C')}>🖨 Print</button>
         </div>

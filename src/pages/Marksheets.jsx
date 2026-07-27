@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { getClassesByType, defaultGradesFor } from '../data/mockData';
 import { applyAggregationPolicy } from '../lib/aggregation';
 import { LEVELS, GRADE_CODE_TO_NAME } from '../lib/schoolLevels';
-import PrintSizer, { printCellFont, usePageEstimate } from '../components/PrintSizer';
+import PrintSizer, { printCellFont, usePageEstimate, BW_FILTER } from '../components/PrintSizer';
 
 // Class-type → level label, so the Level dropdown only offers types the
 // school actually teaches.
@@ -52,6 +52,7 @@ const Marksheets = ({ schoolConfig, examsList }) => {
   // can be squeezed onto one page; font is an explicit override on top.
   const [printScale, setPrintScale] = useState(100);   // 50–120 %
   const [printFont, setPrintFont] = useState('auto');  // 'auto' | px number
+  const [printBW, setPrintBW] = useState(false);       // black & white output
 
   // Filter Classes by Level
   const filteredClasses = useMemo(() => {
@@ -420,7 +421,7 @@ const Marksheets = ({ schoolConfig, examsList }) => {
     win.document.write(`<html><head><title>Exam Marksheet</title>
       <style>
         @page { size: landscape; margin: 8mm; }
-        body { font-family: Arial, sans-serif; font-size: 11px; color: #000; zoom: ${printScale / 100}; }
+        body { font-family: Arial, sans-serif; font-size: 11px; color: #000; zoom: ${printScale / 100}; ${printBW ? `filter: ${BW_FILTER};` : ''} }
         .header { text-align: center; margin-bottom: 14px; }
         .school-name { font-size: 20px; font-weight: bold; margin: 5px 0; }
         .report-title { font-size: 16px; font-weight: bold; margin: 8px 0; text-decoration: underline; }
@@ -518,7 +519,7 @@ const Marksheets = ({ schoolConfig, examsList }) => {
         </div>
         <div>
           <div style={labelStyle} title="Scale and font for the printout — the badge estimates printed pages">Print Size</div>
-          <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} />
+          <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} bw={printBW} setBw={setPrintBW} />
         </div>
         <div>
           <div style={labelStyle}>&nbsp;</div>
@@ -538,7 +539,7 @@ const Marksheets = ({ schoolConfig, examsList }) => {
             <span>No data available for this selection.</span>
           </div>
         ) : displayMode === 'broadsheet' ? (
-          <div id="marksheet-table-container" style={{ flex: 1, overflow: 'auto' }}>
+          <div id="marksheet-table-container" style={{ flex: 1, overflow: 'auto', filter: printBW ? BW_FILTER : 'none' }}>
             {(() => {
               const showStr = selectedStream === 'all';
               const thB = { border: '1px solid #d8d2c8', padding: '5px 4px', textAlign: 'center', fontWeight: 800, fontSize: 10, background: '#faf8f5', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 5 };
@@ -629,7 +630,7 @@ const Marksheets = ({ schoolConfig, examsList }) => {
             })()}
           </div>
         ) : (
-          <div id="marksheet-table-container" style={{ flex: 1, overflow: 'auto' }}>
+          <div id="marksheet-table-container" style={{ flex: 1, overflow: 'auto', filter: printBW ? BW_FILTER : 'none' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 800 }}>
               <thead style={{ position: 'sticky', top: 0, background: '#fafafa', zIndex: 10, boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                 <tr>

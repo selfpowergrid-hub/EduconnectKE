@@ -5,7 +5,7 @@ import { getClassesByType, defaultGradesFor } from '../data/mockData';
 import { LEVELS, GRADE_CODE_TO_NAME, GRADE_NAME_TO_CODE, gradesByLevelForSchool } from '../lib/schoolLevels';
 import { applyAggregationPolicy } from '../lib/aggregation';
 import { resolveComment, renderCommentTokens } from '../lib/reportComments';
-import PrintSizer, { printCellFont, usePageEstimate } from '../components/PrintSizer';
+import PrintSizer, { printCellFont, usePageEstimate, BW_FILTER } from '../components/PrintSizer';
 
 // The academic level ("Senior Secondary") a class id ("f3") belongs to — the
 // grading system stores its scales against the level name and/or the class.
@@ -159,6 +159,7 @@ const Reports = ({ schoolConfig, examsList }) => {
   // and OFF for CBC grades — the user can still toggle it per selection.
   const [printScale, setPrintScale] = useState(100);
   const [printFont, setPrintFont] = useState('auto');
+  const [printBW, setPrintBW] = useState(false); // black & white print output
   const [showPositions, setShowPositions] = useState(
     () => selectedClass === 'f3' || selectedClass === 'f4'
   );
@@ -873,16 +874,16 @@ const Reports = ({ schoolConfig, examsList }) => {
               const sp = subjectPosFor(student.id, sub.id);
               return (
               <tr key={sub.id}>
-                <td style={{ border: '1px solid #000', padding: '6px 8px' }}>{sub.name}</td>
+                <td style={{ border: '1px solid #000', padding: '6px 8px', color: '#1A1A2E' }}>{sub.name}</td>
                 {examScores.map((sc, i) => (
-                  <td key={i} style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center' }}>{sc}</td>
+                  <td key={i} style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', color: '#1A1A2E', fontWeight: 600 }}>{sc}</td>
                 ))}
                 <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 700, background: '#e8f5ee' }}>{Math.round(score)}</td>
                 <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 700 }}>{grade.grade}</td>
                 <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', background: '#fff4e5', color: '#BF6A02', fontWeight: 700 }}>{Math.round(best)}</td>
                 <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 700 }}>{sp ? `${sp.pos}/${sp.outOf}` : '—'}</td>
-                <td style={{ border: '1px solid #000', padding: '6px 8px', color: '#555', fontSize: 11 }}>{gradeComment(grade)}</td>
-                <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontSize: 10.5, color: '#333' }}>{initialsFor(student, sub.id)}</td>
+                <td style={{ border: '1px solid #000', padding: '6px 8px', color: '#1A1A2E', fontSize: 11, fontWeight: 500 }}>{gradeComment(grade)}</td>
+                <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontSize: 10.5, color: '#1A1A2E', fontWeight: 600 }}>{initialsFor(student, sub.id)}</td>
               </tr>
               );
             })}
@@ -895,7 +896,7 @@ const Reports = ({ schoolConfig, examsList }) => {
               <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center', fontWeight: 900 }}>{belowMinimum ? '—' : overallGrade.grade}</td>
               <td style={{ border: '1px solid #000', padding: '6px 8px', textAlign: 'center' }}>AVG: {belowMinimum ? '—' : `${Math.round(average)}%`}</td>
               <td style={{ border: '1px solid #000' }} />
-              <td style={{ border: '1px solid #000', padding: '6px 8px' }} colSpan={2}>{belowMinimum ? remark : gradeComment(overallGrade)}</td>
+              <td style={{ border: '1px solid #000', padding: '6px 8px', color: '#1A1A2E', fontWeight: 500 }} colSpan={2}>{belowMinimum ? remark : gradeComment(overallGrade)}</td>
             </tr>
           </tfoot>
         </table>
@@ -986,7 +987,7 @@ const Reports = ({ schoolConfig, examsList }) => {
             with space + signature line. */}
         <div style={{ border: '1px solid #000', padding: '10px', marginBottom: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 5 }}>CLASS TEACHER'S REMARKS:</div>
-          <div style={{ minHeight: 34, background: '#F9F9F9' }}>{remark}</div>
+          <div style={{ minHeight: 34, background: '#F9F9F9', color: '#1A1A2E', fontWeight: 500, padding: '2px 4px' }}>{remark}</div>
           <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
             <span>Name: <u style={{ display: 'inline-block', minWidth: 150 }}>{classTeacherName(student) || ' '}</u> &nbsp; Sign: <u style={{ display: 'inline-block', minWidth: 70 }}>&nbsp;</u></span>
             <span>Date: <u style={{ display: 'inline-block', minWidth: 90 }}>&nbsp;</u></span>
@@ -996,7 +997,7 @@ const Reports = ({ schoolConfig, examsList }) => {
         {/* Principal's remarks — from the configured comment set (blank if unset). */}
         <div style={{ border: '1px solid #000', padding: '10px', marginBottom: 20 }}>
           <div style={{ fontWeight: 700, marginBottom: 5 }}>PRINCIPAL'S REMARKS:</div>
-          <div style={{ minHeight: 34, background: '#F9F9F9' }}>{principalRemark || ' '}</div>
+          <div style={{ minHeight: 34, background: '#F9F9F9', color: '#1A1A2E', fontWeight: 500, padding: '2px 4px' }}>{principalRemark || ' '}</div>
           <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
             <span>Name: <u style={{ display: 'inline-block', minWidth: 150 }}>{schoolInfo?.principal_name || ' '}</u> &nbsp; Sign: <u style={{ display: 'inline-block', minWidth: 70 }}>&nbsp;</u></span>
             <span>Date: <u style={{ display: 'inline-block', minWidth: 90 }}>&nbsp;</u></span>
@@ -1020,7 +1021,7 @@ const Reports = ({ schoolConfig, examsList }) => {
     const cellFont = printCellFont(printFont, 12);
     win.document.write(`<html><head><title>Bulk Report Cards</title>
     <style>
-      body { font-family: Arial, sans-serif; font-size: ${cellFont}px; zoom: ${printScale / 100}; }
+      body { font-family: Arial, sans-serif; font-size: ${cellFont}px; zoom: ${printScale / 100}; ${printBW ? `filter: ${BW_FILTER};` : ''} }
       table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
       th, td { border: 1px solid #000; padding: ${cellFont <= 10 ? '3px 5px' : '6px 8px'}; font-size: ${cellFont}px; }
       .page { max-width: 750px; margin: 0 auto; padding: calc(20px + 10mm); page-break-after: always; }
@@ -1126,14 +1127,14 @@ const Reports = ({ schoolConfig, examsList }) => {
               const sp = subjectPosFor(student.id, sub.id);
               return `
               <tr>
-                <td>${sub.name}</td>
-                ${examScores.map(sc => `<td style="text-align:center">${sc}</td>`).join('')}
+                <td style="color:#1A1A2E">${sub.name}</td>
+                ${examScores.map(sc => `<td style="text-align:center;color:#1A1A2E;font-weight:600">${sc}</td>`).join('')}
                 <td style="text-align:center;font-weight:700;background:#e8f5ee">${Math.round(score)}</td>
                 <td style="text-align:center;font-weight:700">${grade.grade}</td>
                 <td style="text-align:center;background:#fff4e5;font-weight:700">${Math.round(best)}</td>
                 <td style="text-align:center;font-weight:700">${sp ? `${sp.pos}/${sp.outOf}` : '—'}</td>
-                <td style="font-size:11px;color:#555">${gradeComment(grade)}</td>
-                <td style="text-align:center;font-size:10px">${initialsFor(student, sub.id)}</td>
+                <td style="font-size:11px;color:#1A1A2E;font-weight:500">${gradeComment(grade)}</td>
+                <td style="text-align:center;font-size:10px;color:#1A1A2E;font-weight:600">${initialsFor(student, sub.id)}</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -1145,7 +1146,7 @@ const Reports = ({ schoolConfig, examsList }) => {
               <td style="text-align:center;font-weight:900">${belowMinimum ? '—' : overallGrade.grade}</td>
               <td style="text-align:center">AVG: ${belowMinimum ? '—' : `${Math.round(average)}%`}</td>
               <td></td>
-              <td colspan="2">${belowMinimum ? remark : gradeComment(overallGrade)}</td>
+              <td colspan="2" style="color:#1A1A2E;font-weight:500">${belowMinimum ? remark : gradeComment(overallGrade)}</td>
             </tr>
           </tfoot>
         </table>
@@ -1191,12 +1192,12 @@ const Reports = ({ schoolConfig, examsList }) => {
         </div>` : ''}
         <div class="remarks">
           <b>CLASS TEACHER'S REMARKS:</b>
-          <div style="min-height:34px;background:#F9F9F9">${remark}</div>
+          <div style="min-height:34px;background:#F9F9F9;color:#1A1A2E;font-weight:500;padding:2px 4px">${remark}</div>
           <div class="rem-sign"><span>Name: <u>&nbsp;&nbsp;${classTeacherName(student) || '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'}&nbsp;&nbsp;</u> &nbsp; Sign: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span><span>Date: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span></div>
         </div>
         <div class="remarks">
           <b>PRINCIPAL'S REMARKS:</b>
-          <div style="min-height:34px;background:#F9F9F9">${principalRemark || '&nbsp;'}</div>
+          <div style="min-height:34px;background:#F9F9F9;color:#1A1A2E;font-weight:500;padding:2px 4px">${principalRemark || '&nbsp;'}</div>
           <div class="rem-sign"><span>Name: <u>&nbsp;&nbsp;${schoolInfo?.principal_name || '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'}&nbsp;&nbsp;</u> &nbsp; Sign: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span><span>Date: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span></div>
         </div>
         <div class="rem-sign" style="padding:4px 2px 0"><span><b>Parent / Guardian:</b> Name: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u> &nbsp; Sign: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span><span>Date: <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span></div>
@@ -1227,7 +1228,10 @@ const Reports = ({ schoolConfig, examsList }) => {
       import('html2canvas'),
       import('jspdf'),
     ]);
-    const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#fff', useCORS: true });
+    const canvas = await html2canvas(el, {
+      scale: 2, backgroundColor: '#fff', useCORS: true,
+      onclone: (doc) => { if (printBW) { const n = doc.getElementById('report-preview'); if (n) n.style.filter = BW_FILTER; } },
+    });
     const pdf = new jsPDF('p', 'mm', 'a4');
     const fontRatio = printFont === 'auto' ? 1 : Math.max(0.5, Number(printFont) / 12);
     const shrink = Math.min(1, ((printScale || 100) / 100) * fontRatio);
@@ -1415,13 +1419,13 @@ const Reports = ({ schoolConfig, examsList }) => {
       {/* Preview Panel */}
       <div style={{ background: '#fff', border: '1px solid #E8EAF0', borderRadius: 12, padding: 20, overflowY: 'auto', minHeight: 400 }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 20 }}>
-          <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} />
+          <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} bw={printBW} setBw={setPrintBW} />
           <button
             onClick={() => {
               if (selectedStudent) {
                 const cellFont = printCellFont(printFont, 12);
                 const w = window.open('', '_blank');
-                w.document.write(`<html><head><title>Report Card</title><style>body{font-family:Arial;font-size:${cellFont}px;zoom:${printScale / 100};padding:10mm;box-sizing:border-box} table{width:100%;border-collapse:collapse} th,td{border:1px solid #000;padding:${cellFont <= 10 ? '3px 5px' : '6px 8px'};font-size:${cellFont}px} @media print{@page{margin:0}}</style></head><body>`);
+                w.document.write(`<html><head><title>Report Card</title><style>body{font-family:Arial;font-size:${cellFont}px;zoom:${printScale / 100};padding:10mm;box-sizing:border-box;${printBW ? `filter:${BW_FILTER};` : ''}} table{width:100%;border-collapse:collapse} th,td{border:1px solid #000;padding:${cellFont <= 10 ? '3px 5px' : '6px 8px'};font-size:${cellFont}px} @media print{@page{margin:0}}</style></head><body>`);
                 w.document.write(document.getElementById('report-preview').innerHTML);
                 w.document.write('</body></html>');
                 w.document.close();
@@ -1445,7 +1449,7 @@ const Reports = ({ schoolConfig, examsList }) => {
         </div>
 
         {selectedStudent ? (
-          <div id="report-preview">
+          <div id="report-preview" style={{ filter: printBW ? BW_FILTER : 'none' }}>
             <ReportCard student={selectedStudent} />
           </div>
         ) : (

@@ -5,7 +5,7 @@ import { defaultGradesFor } from '../data/mockData';
 import { LEVELS, GRADE_CODE_TO_NAME, GRADE_NAME_TO_CODE, gradesByLevelForSchool } from '../lib/schoolLevels';
 import { applyAggregationPolicy } from '../lib/aggregation';
 import Letterhead from '../components/Letterhead';
-import PrintSizer, { printCellFont, usePageEstimate } from '../components/PrintSizer';
+import PrintSizer, { printCellFont, usePageEstimate, BW_FILTER } from '../components/PrintSizer';
 
 const levelNameForClass = (classId) => {
   const name = GRADE_CODE_TO_NAME[classId];
@@ -81,6 +81,7 @@ const Analysis = ({ schoolConfig, examsList }) => {
   const [showGrades, setShowGrades] = useState(true);
   const [printScale, setPrintScale] = useState(100);
   const [printFont, setPrintFont] = useState('auto');
+  const [printBW, setPrintBW] = useState(false); // black & white output
 
   const [students, setStudents] = useState([]);
   const [dbSubjects, setDbSubjects] = useState([]);
@@ -322,7 +323,7 @@ const Analysis = ({ schoolConfig, examsList }) => {
     // The letterhead is inside the printable container, so it carries over.
     const cellFont = printCellFont(printFont, isLandscape ? 8 : 11);
     win.document.write(`<html><head><title>${reportLabel}</title><style>
-      body{font-family:Arial,sans-serif;font-size:${isLandscape ? '9' : '12'}px;padding:10px;color:#111;zoom:${printScale / 100}}
+      body{font-family:Arial,sans-serif;font-size:${isLandscape ? '9' : '12'}px;padding:10px;color:#111;zoom:${printScale / 100}${printBW ? `;filter:${BW_FILTER}` : ''}}
       table{width:100%;border-collapse:collapse;margin-bottom:14px}
       th,td{border:1px solid #333;padding:${cellFont <= 7 ? '1px 2px' : isLandscape ? '3px 4px' : '5px 8px'};font-size:${cellFont}px}
       th{background:#eee;text-align:left}
@@ -974,7 +975,7 @@ const Analysis = ({ schoolConfig, examsList }) => {
           <label style={filterLabel}>Year</label>
           <select value={selectedYear} onChange={e => setSelectedYear(parseInt(e.target.value))} style={filterSelect}>{[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}</select>
         </div>
-        <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} />
+        <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} bw={printBW} setBw={setPrintBW} />
         <div>
           <button onClick={handlePrint} style={{ padding: '10px 20px', background: '#1B6B3A', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', height: 40, whiteSpace: 'nowrap' }}>🖨️ Print</button>
         </div>
@@ -994,7 +995,7 @@ const Analysis = ({ schoolConfig, examsList }) => {
 
       {/* Report body */}
       <div style={{ overflowX: 'auto', background: '#f5f4f1', padding: 20, borderRadius: 12, border: '1px solid #e6dfd8', display: 'flex', justifyContent: 'center' }}>
-        <div id="analysis-print" style={{ zoom: printScale / 100, width: '100%', maxWidth: (reportType === 'merit' || reportType === 'comparative') ? 'none' : 1000, background: '#fff', padding: 24, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+        <div id="analysis-print" style={{ zoom: printScale / 100, filter: printBW ? BW_FILTER : 'none', width: '100%', maxWidth: (reportType === 'merit' || reportType === 'comparative') ? 'none' : 1000, background: '#fff', padding: 24, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
           <Letterhead
           schoolConfig={schoolConfig}
           schoolInfo={schoolInfo}

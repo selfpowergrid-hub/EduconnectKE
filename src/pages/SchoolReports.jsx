@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { GRADE_CODE_TO_NAME, GRADE_NAME_TO_CODE, gradesByLevelForSchool } from '../lib/schoolLevels';
 import Letterhead from '../components/Letterhead';
-import PrintSizer, { printCellFont, usePageEstimate } from '../components/PrintSizer';
+import PrintSizer, { printCellFont, usePageEstimate, BW_FILTER } from '../components/PrintSizer';
 
 // General & statutory school reports: student lists, guardians, emergency
 // contacts, KEMIS learner register, termly enrolment returns.
@@ -40,6 +40,7 @@ const SchoolReports = ({ schoolConfig }) => {
   const [loading, setLoading] = useState(false);
   const [printScale, setPrintScale] = useState(100);
   const [printFont, setPrintFont] = useState('auto');
+  const [printBW, setPrintBW] = useState(false); // black & white output
 
   useEffect(() => {
     if (!schoolConfig?.id) return;
@@ -188,7 +189,7 @@ const SchoolReports = ({ schoolConfig }) => {
     // carries it (with logo) without a separate header here.
     const cellFont = printCellFont(printFont, 11);
     win.document.write(`<html><head><title>${effectiveTitle}</title><style>
-      body{font-family:Arial,sans-serif;font-size:12px;padding:16px;color:#111;zoom:${printScale / 100}}
+      body{font-family:Arial,sans-serif;font-size:12px;padding:16px;color:#111;zoom:${printScale / 100}${printBW ? `;filter:${BW_FILTER}` : ''}}
       table{width:100%;border-collapse:collapse;margin-bottom:14px}
       th,td{border:1px solid #333;padding:${cellFont <= 8 ? '2px 4px' : '5px 8px'};font-size:${cellFont}px}th{background:#eee;text-align:left}
       img{max-width:80px;max-height:80px}
@@ -442,7 +443,7 @@ const SchoolReports = ({ schoolConfig }) => {
             {streamsForScope.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </div>
-        <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} />
+        <PrintSizer scale={printScale} setScale={setPrintScale} font={printFont} setFont={setPrintFont} pages={estPages} bw={printBW} setBw={setPrintBW} />
         <button onClick={exportExcel} style={{ padding: '10px 18px', background: '#1A5F9C', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', height: 40, whiteSpace: 'nowrap' }}>📥 Excel</button>
         <button onClick={handlePrint} style={{ padding: '10px 18px', background: '#1B6B3A', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', height: 40, whiteSpace: 'nowrap' }}>🖨️ Print</button>
       </div>
@@ -464,7 +465,7 @@ const SchoolReports = ({ schoolConfig }) => {
       </div>
 
       <div style={{ overflowX: 'auto', background: '#f5f4f1', padding: 20, borderRadius: 12, border: '1px solid #e6dfd8', display: 'flex', justifyContent: 'center' }}>
-        <div id="school-report-print" style={{ zoom: printScale / 100, width: '100%', maxWidth: 1000, background: '#fff', padding: 24, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+        <div id="school-report-print" style={{ zoom: printScale / 100, filter: printBW ? BW_FILTER : 'none', width: '100%', maxWidth: 1000, background: '#fff', padding: 24, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
           <Letterhead
           schoolConfig={schoolConfig}
           schoolInfo={schoolInfo}

@@ -31,10 +31,29 @@ export function usePageEstimate({ containerId, scale, font, autoPx = 11, landsca
   return pages;
 }
 
-const PrintSizer = ({ scale, setScale, font, setFont, pages, autoLabel = 'Auto' }) => {
+// Grayscale filter string: apply to a print container (and preview) for a
+// clean black-and-white output on mono printers. Slight contrast lift keeps
+// grayed colour fills legible.
+export const BW_FILTER = 'grayscale(1) contrast(1.05)';
+
+const PrintSizer = ({ scale, setScale, font, setFont, pages, bw, setBw, autoLabel = 'Auto' }) => {
   const btn = { width: 28, height: '100%', border: 'none', background: '#fff', cursor: 'pointer', fontSize: 15, fontWeight: 800, color: '#1B6B3A' };
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      {setBw && (
+        <button
+          type="button"
+          onClick={() => setBw(!bw)}
+          title="Black & white — clearer on non-colour printers and saves colour ink"
+          style={{
+            height: 36, padding: '0 12px', borderRadius: 8,
+            border: bw ? '1px solid #2a2421' : '1px solid #d1dee5',
+            background: bw ? '#2a2421' : '#fff', color: bw ? '#fff' : '#4A4A6A',
+            fontSize: 12, fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}
+        >◑ B&amp;W {bw ? 'ON' : ''}</button>
+      )}
       <div title="Print scale — shrink to fit one page" style={{ display: 'flex', alignItems: 'center', border: '1px solid #d1dee5', borderRadius: 8, height: 36, overflow: 'hidden', background: '#fff' }}>
         <button type="button" onClick={() => setScale(Math.max(50, (scale || 100) - 5))} style={btn}>−</button>
         <span style={{ width: 44, textAlign: 'center', fontSize: 12, fontWeight: 800, color: '#2a2421', borderLeft: '1px solid #eef2f5', borderRight: '1px solid #eef2f5', lineHeight: '36px' }}>{scale}%</span>
