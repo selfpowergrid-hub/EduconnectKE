@@ -1,0 +1,15 @@
+{
+  "name": "@logiq/catalog-templates",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit --strict index.ts",
+    "test": "echo 'templates land in M2'",
+    "lint": "echo 'no lint configured yet'"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

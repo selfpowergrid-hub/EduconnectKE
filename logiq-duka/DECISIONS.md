@@ -1,0 +1,12 @@
+# DECISIONS.md — deviations & clarifications against PRD.md
+
+Log of implementation decisions where the PRD was ambiguous or physically constrained.
+Format: date · decision · rationale · PRD ref.
+
+- **2026-07-22 · Event dedupe via `event_registry` table.** `events` is partitioned monthly by `server_ts` (PRD §26); Postgres requires unique constraints on partitioned tables to include the partition key, which would break global `event_id` idempotency. A slim unpartitioned `event_registry (event_id pk)` provides the global dedupe guarantee; ingest inserts registry first with `on conflict do nothing`. §26, §28.
+- **2026-07-22 · Shared reducers reach Edge Functions via generated copy.** Supabase Edge Functions can only bundle files under `supabase/functions/`; they cannot import `packages/shared` directly. `pnpm sync:functions` copies `packages/shared/src` → `supabase/functions/_shared/gen/` (committed, header-marked GENERATED); CI runs a drift check. This preserves "one reducer codebase" (§28) with a build step instead of a duplicate implementation.
+- **2026-07-22 · Sync engine core lives in `packages/shared/src/sync`, not `apps/mobile/src/sync`.** The pusher/puller/outbox logic is platform-agnostic behind `SyncStorage`/`SyncTransport` interfaces; the mobile app contributes only the expo-sqlite + fetch adapters. This lets the §28 definition-of-done property tests run in Node/Vitest with in-memory adapters. §11.2, §24, §28.
+- **2026-07-22 · Reducers emit declarative `Effect[]`, executed by per-platform stores.** Reducers are pure (event → effects); an effect executor applies them to SQLite (mobile), Postgres (edge fn), or an in-memory store (tests). `stock_levels` is folded from movement effects identically on all sides; server additionally has a DB trigger as belt-and-braces. §28.
+- **2026-07-22 · PIN hashing: PBKDF2-SHA256, 100k iterations, per-user salt, via WebCrypto.** Available identically in React Native (with polyfill), Deno, and Node; no native dependency. Verification is local-first so attendants can log in offline. §11.2 device management, §7.5.
+- **2026-07-22 · `categories` table added.** `products.category_id` is referenced in §26 but no categories table is specified; added a minimal tenant-scoped `categories` table.
+- **2026-07-22 · Monorepo temporarily hosted under `logiq-duka/` in the EduconnectKE repo.** The session's GitHub credentials cannot create repositories (403). The tree is fully self-contained; migrate by copying the directory into the new `logiq-duka` repo root (fresh history is fine at this stage). §23.

@@ -1,0 +1,18 @@
+# Supabase CLI config — minimal; used for local `supabase db start` + `supabase test db`.
+project_id = "logiq-duka"
+
+[db]
+port = 54322
+major_version = 15
+
+[api]
+port = 54321
+schemas = ["public", "app"]
+extra_search_path = ["public", "app"]
+
+[auth]
+enable_signup = true
+
+[auth.sms]
+enable_signup = true
+enable_confirmations = true
