@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { GRADE_NAME_TO_CODE, GRADE_CODE_TO_NAME, gradesByLevelForSchool } from '../lib/schoolLevels';
 
@@ -104,6 +105,7 @@ const Fees = ({ schoolConfig }) => {
   const appliedWorkingYear = useRef(false); // apply the school's working year once
   const [feeCats, setFeeCats] = useState([]);              // Day/Boarder + special categories
   const [studentFeeCats, setStudentFeeCats] = useState([]); // per-year, per-term special category assignments
+  const [openingBalances, setOpeningBalances] = useState([]); // manual per-student lump balances (mid-year adoption)
   const [isLoading, setIsLoading] = useState(true);
 
   // Fee Balances term filter + per-student drill-down
@@ -157,6 +159,22 @@ const Fees = ({ schoolConfig }) => {
 
   // Collapsible "Payments & Receipts" list inside the breakdown modal.
   const [showPayList, setShowPayList] = useState(false);
+
+  // "Student Balances" tab — manual per-student lump balances (mid-year adoption).
+  const [balanceVh, setBalanceVh] = useState('');        // votehead for the batch
+  const [balanceMode, setBalanceMode] = useState('replace'); // 'replace' | 'add'
+  const [balanceInputs, setBalanceInputs] = useState({}); // studentId -> typed amount
+  const [isSavingBalances, setIsSavingBalances] = useState(false);
+  // Excel import into the Student Balances tab (auto-detect cols, preview, apply).
+  const [importPanel, setImportPanel] = useState(false);
+  const [importSheets, setImportSheets] = useState([]);   // [{ name, aoa }]
+  const [importSheetIdx, setImportSheetIdx] = useState(0);
+  const [importHeaders, setImportHeaders] = useState([]);
+  const [importRows, setImportRows] = useState([]);      // data rows (arrays)
+  const [importAdmCol, setImportAdmCol] = useState(-1);
+  const [importBalCol, setImportBalCol] = useState(-1);
+  const [importFileName, setImportFileName] = useState('');
+  const balanceFileRef = useRef(null);
 
   const openStudentCharges = (student) => {
     const existing = studentCharges.filter(c => c.student_id === student.id);
@@ -317,10 +335,159 @@ const Fees = ({ schoolConfig }) => {
     if (schoolConfig?.id) loadAll();
   }, [schoolConfig?.id, year]);
 
+  // Student Balances tab: auto-pick a votehead, then seed the amount inputs
+  // (and the replace/add mode) from what's already saved for that votehead.
+  useEffect(() => {
+    if (activeTab !== 'student_balances') return;
+    const activeVhs = Object.values(voteheadsById).filter(v => v.is_active !== false);
+    if (!balanceVh && activeVhs.length) {
+      setBalanceVh([...activeVhs].sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999))[0].id);
+      return;
+    }
+    const seed = {};
+    let seededMode = null;
+    openingBalances.forEach(o => { if (o.votehead_id === balanceVh) { seed[o.student_id] = String(o.amount); seededMode = o.mode; } });
+    setBalanceInputs(seed);
+    if (seededMode) setBalanceMode(seededMode);
+  }, [activeTab, balanceVh, openingBalances, voteheadsById]);
+
+  // Save the batch: shown students with a positive amount are upserted (with the
+  // chosen votehead + mode); ones cleared to blank/0 have their balance removed.
+  const handleSaveBalances = async () => {
+    if (!balanceVh) { alert('Choose a votehead first.'); return; }
+    setIsSavingBalances(true);
+    try {
+      const user = (await supabase.auth.getUser()).data.user;
+      const existingByStudent = {};
+      openingBalances.forEach(o => { if (o.votehead_id === balanceVh) existingByStudent[o.student_id] = o; });
+      const toUpsert = [], toDelete = [];
+      filteredStudents.forEach(s => {
+        const raw = balanceInputs[s.id];
+        const amt = (raw === '' || raw === undefined || raw === null) ? 0 : Number(raw);
+        if (amt > 0) {
+          toUpsert.push({ school_id: schoolConfig.id, student_id: s.id, votehead_id: balanceVh, year, amount: amt, mode: balanceMode, created_by: user?.id || null });
+        } else if (existingByStudent[s.id]) {
+          toDelete.push(existingByStudent[s.id].id);
+        }
+      });
+      if (toDelete.length) {
+        const { error } = await supabase.from('student_opening_balances').delete().in('id', toDelete);
+        if (error) throw error;
+      }
+      if (toUpsert.length) {
+        const { error } = await supabase.from('student_opening_balances')
+          .upsert(toUpsert, { onConflict: 'school_id,student_id,votehead_id,year' });
+        if (error) throw error;
+      }
+      await loadAll();
+      alert(`Saved ${toUpsert.length} balance${toUpsert.length === 1 ? '' : 's'}${toDelete.length ? `, cleared ${toDelete.length}` : ''}.`);
+    } catch (err) {
+      alert((err.message || '').includes('row-level security')
+        ? 'Your sign-in session appears to have expired. Refresh the page and try again.'
+        : 'Failed to save balances: ' + err.message);
+    } finally {
+      setIsSavingBalances(false);
+    }
+  };
+
+  // --- Excel balance import -------------------------------------------------
+  const normAdm = (v) => String(v ?? '').trim().toUpperCase();
+
+  // Export the shown students as a fill-in template (guarantees exact adm nos).
+  const downloadBalanceTemplate = () => {
+    const rows = [['Adm No', 'Student Name', 'Balance']];
+    filteredStudents.forEach(s => rows.push([s.adm_no || '', studentName(s), '']));
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 14 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Balances');
+    const cls = (GRADE_CODE_TO_NAME[selectedGrade] || selectedGrade || 'students').replace(/\s+/g, '_');
+    XLSX.writeFile(wb, `balances_template_${cls}_${year}.xlsx`);
+  };
+
+  const ADM_PATS = [/adm/, /admission/, /\breg/, /index/];
+  const BAL_PATS = [/balance/, /amount/, /\bfees?\b/, /arrears/, /owed/, /\bbal\b/];
+  const cellMatches = (cell, pats) => { const c = String(cell ?? '').toLowerCase().trim(); return !!c && pats.some(p => p.test(c)); };
+  const detectCol = (headers, patterns) => headers.findIndex(h => cellMatches(h, patterns));
+
+  // The real header row may sit below a title/banner. Prefer the first row that
+  // has BOTH an admission-like and a balance-like heading; else first non-empty.
+  const findHeaderRow = (aoa) => {
+    for (let i = 0; i < Math.min(aoa.length, 25); i++) {
+      const row = aoa[i] || [];
+      if (row.some(c => cellMatches(c, ADM_PATS)) && row.some(c => cellMatches(c, BAL_PATS))) return i;
+    }
+    return aoa.findIndex(r => (r || []).some(c => String(c).trim() !== ''));
+  };
+
+  // Derive headers/rows/detected columns from one sheet of the loaded workbook.
+  const applyImportSheet = (sheets, idx) => {
+    setImportSheetIdx(idx);
+    const aoa = sheets[idx]?.aoa || [];
+    const hr = findHeaderRow(aoa);
+    if (hr < 0) { setImportHeaders([]); setImportRows([]); setImportAdmCol(-1); setImportBalCol(-1); return; }
+    const headers = aoa[hr].map(h => String(h).trim());
+    const dataRows = aoa.slice(hr + 1).filter(r => r.some(c => String(c).trim() !== ''));
+    setImportHeaders(headers);
+    setImportRows(dataRows);
+    setImportAdmCol(detectCol(headers, ADM_PATS));
+    setImportBalCol(detectCol(headers, BAL_PATS));
+  };
+
+  const handleBalanceFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: 'array' });
+        const sheets = wb.SheetNames.map(name => ({
+          name,
+          aoa: XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '', raw: false }),
+        }));
+        if (!sheets.length) { alert('The workbook has no sheets.'); return; }
+        setImportSheets(sheets);
+        // Auto-pick the sheet that looks most like a balances table: a header
+        // row with both adm + balance columns wins, then most data rows.
+        const score = (s) => {
+          const hr = findHeaderRow(s.aoa);
+          if (hr < 0) return -1;
+          const header = (s.aoa[hr] || []);
+          const both = header.some(c => cellMatches(c, ADM_PATS)) && header.some(c => cellMatches(c, BAL_PATS));
+          const dataCount = s.aoa.slice(hr + 1).filter(r => r.some(c => String(c).trim() !== '')).length;
+          return (both ? 1e6 : 0) + dataCount;
+        };
+        let best = 0, bestScore = -Infinity;
+        sheets.forEach((s, i) => { const sc = score(s); if (sc > bestScore) { bestScore = sc; best = i; } });
+        applyImportSheet(sheets, best);
+        setImportPanel(true);
+      } catch (err) {
+        alert('Could not read the file: ' + err.message);
+      } finally {
+        if (balanceFileRef.current) balanceFileRef.current.value = '';
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const applyBalanceImport = () => {
+    if (!balanceImportPreview) return;
+    setBalanceInputs(prev => {
+      const next = { ...prev };
+      balanceImportPreview.matched.forEach(m => { next[m.id] = String(m.amount); });
+      return next;
+    });
+    setImportPanel(false);
+    setImportRows([]); setImportHeaders([]); setImportSheets([]);
+  };
+
+  const cancelBalanceImport = () => { setImportPanel(false); setImportRows([]); setImportHeaders([]); setImportSheets([]); };
+
   const loadAll = async () => {
     setIsLoading(true);
     try {
-      const [students, structures, vhs, pays, invs, strms, spons, adjs, burs, allocs, settings, cats, scharges, sfcats] = await Promise.all([
+      const [students, structures, vhs, pays, invs, strms, spons, adjs, burs, allocs, settings, cats, scharges, sfcats, obals] = await Promise.all([
         supabase.from('students').select('id, adm_no, first_name, last_name, level_id, stream_id, dorm_id, boarding_status, fee_category_id')
           .eq('school_id', schoolConfig.id),
         supabase.from('fee_structures').select('fee_level, votehead_id, category_id, t1, t2, t3, status')
@@ -357,6 +524,8 @@ const Fees = ({ schoolConfig }) => {
           .eq('school_id', schoolConfig.id).eq('year', year),
         supabase.from('student_fee_categories').select('*')
           .eq('school_id', schoolConfig.id).eq('year', year),
+        supabase.from('student_opening_balances').select('*')
+          .eq('school_id', schoolConfig.id).eq('year', year),
       ]);
 
       if (students.error) throw students.error;
@@ -388,6 +557,7 @@ const Fees = ({ schoolConfig }) => {
       setFeeCats(cats.data || []);
       setStudentCharges(scharges.data || []);
       setStudentFeeCats(sfcats.data || []);
+      setOpeningBalances(obals.data || []);
 
       // Receipts (separate query: table may hold many years; key by payment)
       const paymentIds = (pays.data || []).map(p => p.id);
@@ -624,6 +794,22 @@ const Fees = ({ schoolConfig }) => {
         });
       }
     });
+    // Manual opening balances (mid-year adoption): a lump per votehead placed in
+    // the school's current working term. 'replace' makes it the ONLY bill (the
+    // structure and any category are ignored); 'add' bills it on top.
+    const obs = openingBalances.filter(o => o.student_id === s.id);
+    if (obs.length) {
+      const curTerm = Number(termDefaultSetting) || 1;
+      const tk = `t${curTerm}`;
+      if (obs.some(o => o.mode === 'replace')) merged.clear();
+      obs.forEach(o => {
+        const vh = voteheadsById[o.votehead_id];
+        if (!vh || vh.is_active === false) return;
+        const row = merged.get(o.votehead_id) || { votehead_id: o.votehead_id, t1: 0, t2: 0, t3: 0, fee_level: s.level_id };
+        row[tk] = Number(row[tk] || 0) + Number(o.amount);
+        merged.set(o.votehead_id, row);
+      });
+    }
     return [...merged.values()];
   };
 
@@ -806,6 +992,40 @@ const Fees = ({ schoolConfig }) => {
     });
     return rows;
   }, [studentsList, structureRows, studentCharges, studentFeeCats, voteheadsById, feeCats, paidByStudent, concessionByStudent, realByStudent, allocModeDefault, termFilter, searchTerm, selectedLevel, selectedGrade, selectedStream, sortKey, sortDir]);
+
+  // Match an uploaded file against the shown students. Returns the fill list +
+  // a verification breakdown; nothing is written here. Declared after
+  // filteredStudents since it depends on it.
+  const balanceImportPreview = useMemo(() => {
+    if (!importPanel || importAdmCol < 0 || importBalCol < 0) return null;
+    const entries = importRows.map(r => {
+      const key = normAdm(r[importAdmCol]);
+      const balRaw = r[importBalCol];
+      const cleaned = String(balRaw ?? '').replace(/[^0-9.-]/g, ''); // drop KES, commas, spaces
+      const num = Number(cleaned);
+      // Must actually contain a digit — a text value like "abc" strips to ""
+      // (which Number() would read as 0), so guard against that.
+      const valid = cleaned.trim() !== '' && /\d/.test(cleaned) && isFinite(num) && num >= 0;
+      return { key, keyZ: key.replace(/^0+/, ''), balRaw, num, valid };
+    }).filter(e => e.key);
+
+    const seen = {}; entries.forEach(e => { seen[e.key] = (seen[e.key] || 0) + 1; });
+    const dupKeys = new Set(Object.keys(seen).filter(k => seen[k] > 1));
+    const byKey = new Map(), byKeyZ = new Map();
+    entries.forEach(e => { if (dupKeys.has(e.key)) return; byKey.set(e.key, e); if (!byKeyZ.has(e.keyZ)) byKeyZ.set(e.keyZ, e); });
+
+    const matched = []; const notInFile = []; let invalid = 0; const usedKeys = new Set();
+    filteredStudents.forEach(s => {
+      const key = normAdm(s.adm_no);
+      const e = byKey.get(key) || byKeyZ.get(key.replace(/^0+/, ''));
+      if (!e) { if (!dupKeys.has(key)) notInFile.push(s); return; }
+      usedKeys.add(e.key);
+      if (!e.valid) { invalid++; return; }
+      matched.push({ id: s.id, adm: s.adm_no, name: studentName(s), amount: e.num });
+    });
+    const extraInFile = [...byKey.keys()].filter(k => !usedKeys.has(k)).length;
+    return { matched, stats: { matched: matched.length, notInFile: notInFile.length, extraInFile, dupes: dupKeys.size, invalid } };
+  }, [importPanel, importRows, importAdmCol, importBalCol, filteredStudents]);
 
   const studentById = useMemo(() => {
     const m = {};
@@ -1454,6 +1674,7 @@ const Fees = ({ schoolConfig }) => {
         <div onClick={() => setActiveTab("concessions")} style={tabStyle(activeTab === "concessions")}>Discounts &amp; Bursaries</div>
         <div onClick={() => setActiveTab("student_charges")} style={tabStyle(activeTab === "student_charges")}>Student Charges</div>
         <div onClick={() => setActiveTab("categories")} style={tabStyle(activeTab === "categories")}>⭐ Fee Categories</div>
+        <div onClick={() => setActiveTab("student_balances")} style={tabStyle(activeTab === "student_balances")}>💰 Student Balances</div>
       </div>
 
       <div className="grid-1" style={{ marginBottom: 16, display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center" }}>
@@ -1462,7 +1683,7 @@ const Fees = ({ schoolConfig }) => {
             <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13 }}>🔍</span>
             <input
               type="text"
-              placeholder={activeTab === "balances" || activeTab === "student_charges" || activeTab === "categories" ? "Search student..." : activeTab === "invoices" ? "Search invoice or student..." : "Search payment..."}
+              placeholder={activeTab === "balances" || activeTab === "student_charges" || activeTab === "categories" || activeTab === "student_balances" ? "Search student..." : activeTab === "invoices" ? "Search invoice or student..." : "Search payment..."}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{ width: "100%", padding: "10px 12px 10px 32px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, outline: "none", boxSizing: "border-box" }}
@@ -1491,7 +1712,7 @@ const Fees = ({ schoolConfig }) => {
             </div>
           )}
 
-          {(activeTab === "balances" || activeTab === "student_charges" || activeTab === "categories") && (
+          {(activeTab === "balances" || activeTab === "student_charges" || activeTab === "categories" || activeTab === "student_balances") && (
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", whiteSpace: "nowrap" }}>LEVEL:</span>
@@ -1702,6 +1923,86 @@ const Fees = ({ schoolConfig }) => {
               })}
             </tbody>
           </table>
+          </>
+        ) : activeTab === "student_balances" ? (
+          <>
+          {(() => {
+            const activeVhs = Object.values(voteheadsById).filter(v => v.is_active !== false)
+              .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
+            const vh = voteheadsById[balanceVh];
+            const shown = filteredStudents;
+            const enteredCount = shown.filter(s => Number(balanceInputs[s.id]) > 0).length;
+            const enteredTotal = shown.reduce((sum, s) => sum + (Number(balanceInputs[s.id]) || 0), 0);
+            const modeBtn = (m, label) => (
+              <button onClick={() => setBalanceMode(m)} style={{ padding: "7px 12px", borderRadius: 8, border: balanceMode === m ? "1px solid #1A5F9C" : "1px solid #E8EAF0", background: balanceMode === m ? "#EAF2FA" : "#fff", color: balanceMode === m ? "#1A5F9C" : "#4A4A6A", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>{balanceMode === m ? "◉" : "○"} {label}</button>
+            );
+            return (
+              <>
+              <div style={{ padding: "10px 16px", background: "#FDF9F0", border: "1px solid #EAD9A8", borderRadius: 10, margin: "0 0 12px", fontSize: 12, color: "#8A6A1F", lineHeight: 1.5 }}>
+                💰 For schools starting mid-year: enter each student's outstanding <strong>balance</strong> under one votehead instead of building the full fee structure. It becomes what they owe and pay against for the period.
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", padding: "12px 16px", background: "#FAFBFC", border: "1px solid #E8EAF0", borderRadius: 10, marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: "#8A8FA8" }}>VOTEHEAD:</span>
+                  <select value={balanceVh} onChange={(e) => setBalanceVh(e.target.value)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, fontWeight: 600, background: "#fff", cursor: "pointer" }}>
+                    {activeVhs.length === 0 && <option value="">No voteheads — create one under Fee Structure</option>}
+                    {activeVhs.map(v => <option key={v.id} value={v.id}>{v.code} — {v.description}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: "#8A8FA8" }}>THESE BALANCES:</span>
+                  {modeBtn('replace', 'Are the whole bill')}
+                  {modeBtn('add', 'Add to fee structure')}
+                </div>
+                <div style={{ flex: 1 }} />
+                <button onClick={downloadBalanceTemplate} title="Download the shown students as an Excel template to fill" style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #1A5F9C", background: "#fff", color: "#1A5F9C", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>⬇ Template</button>
+                <button onClick={() => balanceFileRef.current?.click()} title="Upload an Excel/CSV of admission numbers + balances" style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #B4690E", background: "#fff", color: "#B4690E", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>⬆ Upload Excel</button>
+                <input ref={balanceFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleBalanceFile} style={{ display: "none" }} />
+                <span style={{ fontSize: 12, color: "#8A8FA8" }}>{enteredCount} entered · <strong style={{ color: "#1A5F9C", fontFamily: "monospace" }}>KES {Math.round(enteredTotal).toLocaleString()}</strong></span>
+                <button onClick={handleSaveBalances} disabled={isSavingBalances || !balanceVh} style={{ padding: "9px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 700, color: "#fff", background: isSavingBalances ? "#8A8FA8" : "#1B6B3A", cursor: isSavingBalances ? "wait" : "pointer" }}>{isSavingBalances ? "⌛ Saving…" : "💾 Save balances"}</button>
+              </div>
+              <div style={{ fontSize: 11.5, color: "#8A8FA8", padding: "0 4px 10px" }}>
+                {balanceMode === 'replace'
+                  ? `“Whole bill”: for every student below with a balance, the level fee structure is ignored — they owe only what you type here (under ${vh ? vh.code : 'the votehead'}).`
+                  : `“Add to fee structure”: the amount below is billed on top of each student's normal fee structure.`} Set a student to blank/0 to remove their balance.
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
+                <thead style={{ background: "#FAFBFC", borderBottom: "1px solid #E8EAF0" }}>
+                  <tr>
+                    <th style={{ ...thStyle, cursor: "pointer", userSelect: "none" }} onClick={() => toggleSort('adm')} title="Sort by admission number">ADM No.{sortArrow('adm')}</th>
+                    <th style={{ ...thStyle, cursor: "pointer", userSelect: "none" }} onClick={() => toggleSort('name')} title="Sort by name">Student Name{sortArrow('name')}</th>
+                    <th className="hide-mobile" style={thStyle}>Class · Stream</th>
+                    <th className="hide-mobile" style={thStyle}>Current Bill ({year})</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>Balance (KES)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shown.length === 0 ? (
+                    <tr><td colSpan="5" style={{ textAlign: "center", padding: 30, color: "#8A8FA8" }}>No students match this filter.</td></tr>
+                  ) : shown.slice(0, 200).map((s, idx) => {
+                    const streamName = streamsList.find(x => x.id === s.stream_id)?.name;
+                    return (
+                      <tr key={s.id} style={{ borderBottom: "1px solid #F7F8FA", background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
+                        <td style={{ padding: "10px 18px", fontWeight: 600, color: "#1A5F9C" }}>{s.adm_no}</td>
+                        <td style={{ padding: "10px 18px", fontWeight: 700, color: "#1A1A2E" }}>{studentName(s)}</td>
+                        <td className="hide-mobile" style={{ padding: "10px 18px", color: "#4A4A6A" }}>{GRADE_CODE_TO_NAME[s.level_id] || s.level_id}{streamName ? ` · ${streamName}` : ''}</td>
+                        <td className="hide-mobile" style={{ padding: "10px 18px", fontFamily: "monospace", color: "#8A8FA8" }}>KES {s.billed.toLocaleString()}</td>
+                        <td style={{ padding: "6px 18px", textAlign: "right" }}>
+                          <input
+                            type="number" min="0" placeholder="—"
+                            value={balanceInputs[s.id] ?? ''}
+                            onChange={(e) => setBalanceInputs(prev => ({ ...prev, [s.id]: e.target.value }))}
+                            style={{ width: 130, padding: "8px 10px", textAlign: "right", border: "1px solid #cddbe6", borderRadius: 6, fontSize: 13, fontFamily: "monospace", outline: "none" }}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              </>
+            );
+          })()}
           </>
         ) : activeTab === "invoices" ? (
           <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
@@ -2167,6 +2468,79 @@ const Fees = ({ schoolConfig }) => {
           </div>
         );
       })()}
+
+      {/* Excel balance import — column confirm + verification preview */}
+      {importPanel && (
+        <div onClick={cancelBalanceImport} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 12px 40px rgba(0,0,0,0.2)" }}>
+            <div style={{ padding: "18px 22px", borderBottom: "1px solid #E8EAF0" }}>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: "#2a2421" }}>Import balances from Excel</h3>
+              <div style={{ fontSize: 12, color: "#8A8FA8", marginTop: 3 }}>{importFileName} · {importRows.length} data row{importRows.length === 1 ? "" : "s"}</div>
+            </div>
+            <div style={{ padding: "18px 22px" }}>
+              {importSheets.length > 1 && (
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: 11, fontWeight: 800, color: "#8A8FA8", display: "block", marginBottom: 4 }}>SHEET</label>
+                  <select value={importSheetIdx} onChange={(e) => applyImportSheet(importSheets, Number(e.target.value))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff", fontWeight: 600 }}>
+                    {importSheets.map((s, i) => {
+                      const hr = findHeaderRow(s.aoa);
+                      const n = hr < 0 ? 0 : s.aoa.slice(hr + 1).filter(r => r.some(c => String(c).trim() !== '')).length;
+                      return <option key={i} value={i}>{s.name} ({n} row{n === 1 ? '' : 's'})</option>;
+                    })}
+                  </select>
+                </div>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 800, color: "#8A8FA8", display: "block", marginBottom: 4 }}>ADMISSION NO. COLUMN</label>
+                  <select value={importAdmCol} onChange={(e) => setImportAdmCol(Number(e.target.value))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff" }}>
+                    <option value={-1}>— none —</option>
+                    {importHeaders.map((h, i) => <option key={i} value={i}>{h || `Column ${i + 1}`}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 800, color: "#8A8FA8", display: "block", marginBottom: 4 }}>BALANCE COLUMN</label>
+                  <select value={importBalCol} onChange={(e) => setImportBalCol(Number(e.target.value))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E8EAF0", fontSize: 13, background: "#fff" }}>
+                    <option value={-1}>— none —</option>
+                    {importHeaders.map((h, i) => <option key={i} value={i}>{h || `Column ${i + 1}`}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {(importAdmCol < 0 || importBalCol < 0) ? (
+                <div style={{ padding: "12px 14px", background: "#FDF0ED", border: "1px solid #f2c2b6", borderRadius: 8, fontSize: 12.5, color: "#C0392B" }}>
+                  Pick both the admission-number and balance columns to see the match preview.
+                </div>
+              ) : balanceImportPreview && (() => {
+                const st = balanceImportPreview.stats;
+                const line = (color, label, n) => (
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #F0F2F5", fontSize: 13 }}>
+                    <span style={{ color: "#4A4A6A" }}>{label}</span><strong style={{ color, fontFamily: "monospace" }}>{n}</strong>
+                  </div>
+                );
+                return (
+                  <div>
+                    {line("#1B6B3A", "✅ Matched — will fill", st.matched)}
+                    {line("#8A6A1F", "⚠️ On screen, not in file — left blank", st.notInFile)}
+                    {line("#8A6A1F", "⚠️ In file, not on this list — ignored", st.extraInFile)}
+                    {line("#C0392B", "⚠️ Duplicate adm no. in file — skipped", st.dupes)}
+                    {line("#C0392B", "⚠️ Invalid balance (blank/text/negative) — skipped", st.invalid)}
+                    <div style={{ marginTop: 12, fontSize: 11.5, color: "#8A8FA8", lineHeight: 1.5 }}>
+                      Applying fills the {st.matched} matched input{st.matched === 1 ? "" : "s"} (overwriting any current value). Nothing is saved until you press <strong>Save balances</strong>.
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+            <div style={{ padding: "14px 22px", background: "#f5f2eb", borderTop: "1px solid #E8EAF0", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button onClick={cancelBalanceImport} style={{ padding: "10px 18px", borderRadius: 8, border: "1px solid #e6dfd8", background: "#fff", color: "#8a8fa8", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Cancel</button>
+              <button onClick={applyBalanceImport} disabled={!balanceImportPreview || balanceImportPreview.stats.matched === 0} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: (!balanceImportPreview || balanceImportPreview.stats.matched === 0) ? "#8A8FA8" : "#1B6B3A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: (!balanceImportPreview || balanceImportPreview.stats.matched === 0) ? "not-allowed" : "pointer" }}>
+                Apply {balanceImportPreview ? `${balanceImportPreview.stats.matched} balance${balanceImportPreview.stats.matched === 1 ? "" : "s"}` : ""}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Record Payment Modal */}
       {payModalFor && (
