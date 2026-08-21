@@ -106,6 +106,7 @@ const Fees = ({ schoolConfig }) => {
   const [feeCats, setFeeCats] = useState([]);              // Day/Boarder + special categories
   const [studentFeeCats, setStudentFeeCats] = useState([]); // per-year, per-term special category assignments
   const [openingBalances, setOpeningBalances] = useState([]); // manual per-student lump balances (mid-year adoption)
+  const [openingCredits, setOpeningCredits] = useState([]);   // brought-forward prepayments (credit on account)
   const [isLoading, setIsLoading] = useState(true);
 
   // Fee Balances term filter + per-student drill-down
@@ -347,9 +348,11 @@ const Fees = ({ schoolConfig }) => {
     const seed = {};
     let seededMode = null;
     openingBalances.forEach(o => { if (o.votehead_id === balanceVh) { seed[o.student_id] = String(o.amount); seededMode = o.mode; } });
+    // A prepayment shows as a negative figure.
+    openingCredits.forEach(c => { if (seed[c.student_id] === undefined) seed[c.student_id] = String(-Number(c.amount)); });
     setBalanceInputs(seed);
     if (seededMode) setBalanceMode(seededMode);
-  }, [activeTab, balanceVh, openingBalances, voteheadsById]);
+  }, [activeTab, balanceVh, openingBalances, openingCredits, voteheadsById]);
 
   // Save the batch: shown students with a positive amount are upserted (with the
   // chosen votehead + mode); ones cleared to blank/0 have their balance removed.
@@ -358,29 +361,33 @@ const Fees = ({ schoolConfig }) => {
     setIsSavingBalances(true);
     try {
       const user = (await supabase.auth.getUser()).data.user;
-      const existingByStudent = {};
-      openingBalances.forEach(o => { if (o.votehead_id === balanceVh) existingByStudent[o.student_id] = o; });
-      const toUpsert = [], toDelete = [];
+      // Existing rows for this batch's votehead (arrears) and per-student credits.
+      const existBal = {}; openingBalances.forEach(o => { if (o.votehead_id === balanceVh) existBal[o.student_id] = o; });
+      const existCred = {}; openingCredits.forEach(c => { existCred[c.student_id] = c; });
+      const balUpsert = [], balDelete = [], credUpsert = [], credDelete = [];
       filteredStudents.forEach(s => {
         const raw = balanceInputs[s.id];
-        const amt = (raw === '' || raw === undefined || raw === null) ? 0 : Number(raw);
-        if (amt > 0) {
-          toUpsert.push({ school_id: schoolConfig.id, student_id: s.id, votehead_id: balanceVh, year, amount: amt, mode: balanceMode, created_by: user?.id || null });
-        } else if (existingByStudent[s.id]) {
-          toDelete.push(existingByStudent[s.id].id);
+        const blank = raw === '' || raw === undefined || raw === null || String(raw).trim() === '';
+        const amt = blank ? 0 : Number(raw);
+        if (!isFinite(amt) || amt === 0) {                 // clear both
+          if (existBal[s.id]) balDelete.push(existBal[s.id].id);
+          if (existCred[s.id]) credDelete.push(existCred[s.id].id);
+        } else if (amt > 0) {                              // arrear (owes)
+          balUpsert.push({ school_id: schoolConfig.id, student_id: s.id, votehead_id: balanceVh, year, amount: amt, mode: balanceMode, created_by: user?.id || null });
+          if (existCred[s.id]) credDelete.push(existCred[s.id].id);
+        } else {                                            // negative = prepayment / credit
+          credUpsert.push({ school_id: schoolConfig.id, student_id: s.id, year, amount: -amt, created_by: user?.id || null });
+          if (existBal[s.id]) balDelete.push(existBal[s.id].id);
         }
       });
-      if (toDelete.length) {
-        const { error } = await supabase.from('student_opening_balances').delete().in('id', toDelete);
-        if (error) throw error;
-      }
-      if (toUpsert.length) {
-        const { error } = await supabase.from('student_opening_balances')
-          .upsert(toUpsert, { onConflict: 'school_id,student_id,votehead_id,year' });
-        if (error) throw error;
-      }
+      const run = async (table, del, up, conflict) => {
+        if (del.length) { const { error } = await supabase.from(table).delete().in('id', del); if (error) throw error; }
+        if (up.length) { const { error } = await supabase.from(table).upsert(up, { onConflict: conflict }); if (error) throw error; }
+      };
+      await run('student_opening_balances', balDelete, balUpsert, 'school_id,student_id,votehead_id,year');
+      await run('student_opening_credits', credDelete, credUpsert, 'school_id,student_id,year');
       await loadAll();
-      alert(`Saved ${toUpsert.length} balance${toUpsert.length === 1 ? '' : 's'}${toDelete.length ? `, cleared ${toDelete.length}` : ''}.`);
+      alert(`Saved ${balUpsert.length} balance${balUpsert.length === 1 ? '' : 's'}${credUpsert.length ? `, ${credUpsert.length} credit${credUpsert.length === 1 ? '' : 's'}` : ''}.`);
     } catch (err) {
       alert((err.message || '').includes('row-level security')
         ? 'Your sign-in session appears to have expired. Refresh the page and try again.'
@@ -487,7 +494,7 @@ const Fees = ({ schoolConfig }) => {
   const loadAll = async () => {
     setIsLoading(true);
     try {
-      const [students, structures, vhs, pays, invs, strms, spons, adjs, burs, allocs, settings, cats, scharges, sfcats, obals] = await Promise.all([
+      const [students, structures, vhs, pays, invs, strms, spons, adjs, burs, allocs, settings, cats, scharges, sfcats, obals, ocreds] = await Promise.all([
         supabase.from('students').select('id, adm_no, first_name, last_name, level_id, stream_id, dorm_id, boarding_status, fee_category_id')
           .eq('school_id', schoolConfig.id),
         supabase.from('fee_structures').select('fee_level, votehead_id, category_id, t1, t2, t3, status')
@@ -526,6 +533,8 @@ const Fees = ({ schoolConfig }) => {
           .eq('school_id', schoolConfig.id).eq('year', year),
         supabase.from('student_opening_balances').select('*')
           .eq('school_id', schoolConfig.id).eq('year', year),
+        supabase.from('student_opening_credits').select('*')
+          .eq('school_id', schoolConfig.id).eq('year', year),
       ]);
 
       if (students.error) throw students.error;
@@ -558,6 +567,7 @@ const Fees = ({ schoolConfig }) => {
       setStudentCharges(scharges.data || []);
       setStudentFeeCats(sfcats.data || []);
       setOpeningBalances(obals.data || []);
+      setOpeningCredits(ocreds.data || []);
 
       // Receipts (separate query: table may hold many years; key by payment)
       const paymentIds = (pays.data || []).map(p => p.id);
@@ -825,7 +835,15 @@ const Fees = ({ schoolConfig }) => {
     return m;
   }, [adjustments, bursaries]);
   const concessionFor = (s) => concessionByStudent[s.id] || 0;
-  const balanceFor = (s) => billedFor(s) - paidFor(s) - concessionFor(s);
+  // Brought-forward prepayment (money on account) reduces the balance like a
+  // settlement — same side as cash and concessions.
+  const openingCreditByStudent = useMemo(() => {
+    const m = {};
+    openingCredits.forEach(c => { m[c.student_id] = (m[c.student_id] || 0) + Number(c.amount); });
+    return m;
+  }, [openingCredits]);
+  const openingCreditFor = (s) => openingCreditByStudent[s.id] || 0;
+  const balanceFor = (s) => billedFor(s) - paidFor(s) - concessionFor(s) - openingCreditFor(s);
 
   // Which (student, term) pairs have real invoices generated (non-cancelled).
   const invoicedTermByStudent = useMemo(() => {
@@ -934,9 +952,10 @@ const Fees = ({ schoolConfig }) => {
       };
     });
 
+    const credit = openingCreditFor(s);
     const yr = {
-      owed: billedFor(s), paid: totalCash, concession: concessionFor(s),
-      balance: billedFor(s) - totalCash - concessionFor(s),
+      owed: billedFor(s), paid: totalCash, concession: concessionFor(s), credit,
+      balance: billedFor(s) - totalCash - concessionFor(s) - credit,
     };
     yr.overpay = yr.balance < 0 ? -yr.balance : 0;
     return { terms, year: yr };
@@ -1004,8 +1023,9 @@ const Fees = ({ schoolConfig }) => {
       const cleaned = String(balRaw ?? '').replace(/[^0-9.-]/g, ''); // drop KES, commas, spaces
       const num = Number(cleaned);
       // Must actually contain a digit — a text value like "abc" strips to ""
-      // (which Number() would read as 0), so guard against that.
-      const valid = cleaned.trim() !== '' && /\d/.test(cleaned) && isFinite(num) && num >= 0;
+      // (which Number() would read as 0), so guard against that. A negative
+      // value is allowed: it means a prepayment / credit.
+      const valid = cleaned.trim() !== '' && /\d/.test(cleaned) && isFinite(num);
       return { key, keyZ: key.replace(/^0+/, ''), balRaw, num, valid };
     }).filter(e => e.key);
 
@@ -1939,7 +1959,7 @@ const Fees = ({ schoolConfig }) => {
             return (
               <>
               <div style={{ padding: "10px 16px", background: "#FDF9F0", border: "1px solid #EAD9A8", borderRadius: 10, margin: "0 0 12px", fontSize: 12, color: "#8A6A1F", lineHeight: 1.5 }}>
-                💰 For schools starting mid-year: enter each student's outstanding <strong>balance</strong> under one votehead instead of building the full fee structure. It becomes what they owe and pay against for the period.
+                💰 For schools starting mid-year: enter each student's outstanding <strong>balance</strong> under one votehead instead of building the full fee structure — it becomes what they owe and pay against for the period. Enter a <strong style={{ color: "#1A5F9C" }}>negative</strong> figure for a student who has <strong style={{ color: "#1A5F9C" }}>prepaid</strong> (a credit brought forward).
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", padding: "12px 16px", background: "#FAFBFC", border: "1px solid #E8EAF0", borderRadius: 10, marginBottom: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -1964,7 +1984,7 @@ const Fees = ({ schoolConfig }) => {
               <div style={{ fontSize: 11.5, color: "#8A8FA8", padding: "0 4px 10px" }}>
                 {balanceMode === 'replace'
                   ? `“Whole bill”: for every student below with a balance, the level fee structure is ignored — they owe only what you type here (under ${vh ? vh.code : 'the votehead'}).`
-                  : `“Add to fee structure”: the amount below is billed on top of each student's normal fee structure.`} Set a student to blank/0 to remove their balance.
+                  : `“Add to fee structure”: the amount below is billed on top of each student's normal fee structure.`} A negative figure is a prepayment/credit. Set a student to blank/0 to remove their balance.
               </div>
               <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
                 <thead style={{ background: "#FAFBFC", borderBottom: "1px solid #E8EAF0" }}>
@@ -1988,12 +2008,19 @@ const Fees = ({ schoolConfig }) => {
                         <td className="hide-mobile" style={{ padding: "10px 18px", color: "#4A4A6A" }}>{GRADE_CODE_TO_NAME[s.level_id] || s.level_id}{streamName ? ` · ${streamName}` : ''}</td>
                         <td className="hide-mobile" style={{ padding: "10px 18px", fontFamily: "monospace", color: "#8A8FA8" }}>KES {s.billed.toLocaleString()}</td>
                         <td style={{ padding: "6px 18px", textAlign: "right" }}>
-                          <input
-                            type="number" min="0" placeholder="—"
-                            value={balanceInputs[s.id] ?? ''}
-                            onChange={(e) => setBalanceInputs(prev => ({ ...prev, [s.id]: e.target.value }))}
-                            style={{ width: 130, padding: "8px 10px", textAlign: "right", border: "1px solid #cddbe6", borderRadius: 6, fontSize: 13, fontFamily: "monospace", outline: "none" }}
-                          />
+                          {(() => {
+                            const v = Number(balanceInputs[s.id]);
+                            const isCredit = balanceInputs[s.id] !== '' && balanceInputs[s.id] != null && isFinite(v) && v < 0;
+                            return (
+                              <input
+                                type="number" placeholder="—"
+                                value={balanceInputs[s.id] ?? ''}
+                                onChange={(e) => setBalanceInputs(prev => ({ ...prev, [s.id]: e.target.value }))}
+                                title={isCredit ? "Negative = prepayment / credit on account" : ""}
+                                style={{ width: 130, padding: "8px 10px", textAlign: "right", border: `1px solid ${isCredit ? "#1A5F9C" : "#cddbe6"}`, borderRadius: 6, fontSize: 13, fontFamily: "monospace", outline: "none", color: isCredit ? "#1A5F9C" : "#2a2421", background: isCredit ? "#F4F9FE" : "#fff" }}
+                              />
+                            );
+                          })()}
                         </td>
                       </tr>
                     );
@@ -2806,7 +2833,8 @@ const Fees = ({ schoolConfig }) => {
               <div style={{ padding: "8px 24px 20px" }}>
                 {/* Year summary strip */}
                 <div style={{ display: "flex", gap: 10, margin: "12px 0 6px", flexWrap: "wrap" }}>
-                  {[["Billed", bd.year.owed, "#4A4A6A"], ["Paid", bd.year.paid, "#1B6B3A"], ["Concessions", bd.year.concession, "#6C3483"]].map(([lbl, val, col]) => (
+                  {[["Billed", bd.year.owed, "#4A4A6A"], ["Paid", bd.year.paid, "#1B6B3A"], ["Concessions", bd.year.concession, "#6C3483"],
+                    ...(bd.year.credit > 0 ? [["Credit b/f", bd.year.credit, "#1A5F9C"]] : [])].map(([lbl, val, col]) => (
                     <div key={lbl} style={{ flex: 1, minWidth: 120, padding: "8px 12px", background: "#F8FAFC", borderRadius: 8 }}>
                       <div style={{ fontSize: 10, fontWeight: 800, color: "#8A8FA8", textTransform: "uppercase" }}>{lbl}</div>
                       <div style={{ fontSize: 14, fontWeight: 800, fontFamily: "monospace", color: col }}>KES {Number(val).toLocaleString()}</div>
